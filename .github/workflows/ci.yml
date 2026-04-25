@@ -24,7 +24,7 @@ jobs:
       typescript: ${{ steps.filter.outputs.typescript }}
       python: ${{ steps.filter.outputs.python }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -53,7 +53,7 @@ jobs:
     if: needs.changes.outputs.proto == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: bufbuild/buf-setup-action@v1
@@ -75,7 +75,7 @@ jobs:
       run:
         working-directory: core/engine
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -102,7 +102,7 @@ jobs:
       run:
         working-directory: ${{ matrix.module }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v5
         with:
           go-version: stable
@@ -130,7 +130,7 @@ jobs:
       run:
         working-directory: adapters/playwright
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
         with:
           version: 9
@@ -160,7 +160,7 @@ jobs:
       run:
         working-directory: ${{ matrix.package }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
