@@ -75,23 +75,44 @@ within one week.
 
 ### Required tooling
 
-- Rust (stable) — for `core/engine`
-- Go (1.22+) — for `core/control-plane` and `adapters/curl-impersonate`
-- Node.js (20+) and `pnpm` — for `adapters/playwright`
-- Python (3.10+) and `uv` — for `adapters/seleniumbase` and
-  `tools/conformance`
-- `buf` — for protobuf
-- `just` — for build orchestration
-- `pre-commit` — for local hooks
+| Tool                          | Used for                                                  |
+|-------------------------------|-----------------------------------------------------------|
+| Rust (stable)                 | `core/engine`                                             |
+| Go (1.22+)                    | `core/control-plane`, `adapters/curl-impersonate`         |
+| `goimports`                   | Pre-commit Go imports hook                                |
+| Node.js (20+) and `pnpm` (9+) | `adapters/playwright`                                     |
+| Python (3.10+) and `uv`       | `adapters/seleniumbase`, `tools/conformance`              |
+| `buf`                         | Protobuf lint, format, breaking-change detection          |
+| `just`                        | Build orchestration (`just check`, `just bootstrap`, ...) |
+| `pre-commit`                  | Local Git hooks                                           |
+| `actionlint` (optional)       | Validates `.github/workflows/*.yml` locally               |
+
+#### Install on macOS
+
+```bash
+brew install just buf actionlint pre-commit uv
+go install golang.org/x/tools/cmd/goimports@latest
+# pnpm: corepack is no longer bundled with recent Node releases. Pick one:
+npm install -g corepack && corepack enable pnpm
+# or:
+npm install -g pnpm
+```
+
+#### Install on Linux
+
+Use the upstream installation guides for `just`, `buf`, `actionlint`, and
+`uv` (each provides a one-line installer). `goimports` and `pnpm` follow
+the same commands as macOS.
 
 ### First-time setup
 
 ```bash
 git clone https://github.com/FabioCaffarello/spectre.git
 cd spectre
-pre-commit install
-just bootstrap   # installs all per-language dependencies
-just check       # runs lint and tests across all components
+pre-commit install            # commit hooks
+pre-commit install --hook-type commit-msg   # Conventional Commits check
+just bootstrap                # installs all per-language dependencies
+just check                    # runs lint and tests across all components
 ```
 
 ### Per-language work
