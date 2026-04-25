@@ -80,6 +80,7 @@ within one week.
 | Rust (stable)                 | `core/engine`                                             |
 | Go (1.22+)                    | `core/control-plane`, `adapters/curl-impersonate`         |
 | `goimports`                   | Pre-commit Go imports hook                                |
+| `golangci-lint`               | Go lint aggregator (used by `just cp-lint`)               |
 | Node.js (20+) and `pnpm` (9+) | `adapters/playwright`                                     |
 | Python (3.10+) and `uv`       | `adapters/seleniumbase`, `tools/conformance`              |
 | `buf`                         | Protobuf lint, format, breaking-change detection          |
@@ -90,7 +91,7 @@ within one week.
 #### Install on macOS
 
 ```bash
-brew install just buf actionlint pre-commit uv
+brew install just buf actionlint pre-commit uv golangci-lint
 go install golang.org/x/tools/cmd/goimports@latest
 # pnpm: corepack is no longer bundled with recent Node releases. Pick one:
 npm install -g corepack && corepack enable pnpm
