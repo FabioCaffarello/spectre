@@ -14,9 +14,6 @@ jobs:
   breaking:
     name: Detect breaking changes
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: proto
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,7 +28,7 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          OUTPUT=$(buf breaking --against "https://github.com/${{ github.repository }}.git#branch=${{ github.base_ref }},subdir=proto" 2>&1)
+          OUTPUT=$(buf breaking --against "https://github.com/${{ github.repository }}.git#branch=${{ github.base_ref }}" 2>&1)
           STATUS=$?
           {
             echo 'output<<BREAKING_EOF'

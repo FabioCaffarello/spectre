@@ -1,0 +1,37 @@
+// THIS PROTOCOL IS UNSTABLE.
+// Breaking changes are expected until v1.0.
+// See docs/adr/0004-protocol-versioning-strategy.md.
+
+syntax = "proto3";
+
+package spectre.driver.v1alpha1;
+
+// Capabilities is what a driver declares at handshake. The engine
+// matches each job against this declaration at compile time and
+// refuses to run if a required capability is missing.
+//
+// `names` is a flat list of strings rather than a structured message
+// to keep the contract trivially extensible. Standard capability
+// names recognised by the engine (subject to evolution before v1):
+//
+//   navigation              basic URL navigation via Navigate
+//   js_execution            eval-style extraction modes
+//   network_intercept       request/response interception
+//   screenshot_full_page    capture beyond the viewport
+//   cookies_persist         cookie jar across requests
+//   header_overrides        per-session HTTP header configuration
+//   proxy_per_session       proxy URI declared at Initialize
+//   cdp_passthrough         raw CDP message passthrough
+//   multipage_concurrent    multiple pages within a single session
+//
+// Drivers may declare additional capabilities by namespacing them
+// (`pw.cdp.session_attach`, `sb.uc_mode_v2`). Namespaced capabilities
+// are opaque to the engine and must be requested explicitly by jobs.
+message Capabilities {
+  repeated string names = 1;
+  // Driver implementation version, e.g. "0.3.1".
+  string driver_version = 2;
+  // Underlying runtime version, e.g. "playwright@1.49.0" or
+  // "seleniumbase@4.32.0". Free-form; for diagnostics only.
+  string runtime_version = 3;
+}

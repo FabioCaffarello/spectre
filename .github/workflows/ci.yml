@@ -52,9 +52,6 @@ jobs:
     needs: changes
     if: needs.changes.outputs.proto == 'true'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: proto
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,6 +63,8 @@ jobs:
         run: buf lint
       - name: Format check
         run: buf format --diff --exit-code
+      - name: Build
+        run: buf build
 
   rust:
     name: Rust (engine)

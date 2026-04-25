@@ -51,17 +51,23 @@ actionlint:
 proto-bootstrap:
     @command -v buf >/dev/null || { echo "buf not installed (https://buf.build/docs/installation)" >&2; exit 1; }
 
+# Buf workspace lives at the repo root (see buf.yaml). All recipes run
+# from the root and use the workspace config to resolve modules.
+
 proto-fmt:
-    cd proto && buf format -w
+    buf format -w
 
 proto-lint:
-    cd proto
     buf lint
     buf format --diff --exit-code
 
 # Compare the working tree against origin/main (push-ready check)
 proto-breaking:
-    cd proto && buf breaking --against ".git#branch=main,subdir=proto"
+    buf breaking --against ".git#branch=main"
+
+# Generate language bindings into proto/gen/ (gitignored)
+proto-generate:
+    cd proto && buf generate
 
 # ---------------------------------------------------------------------------
 # Rust engine (core/engine)

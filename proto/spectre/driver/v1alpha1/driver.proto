@@ -1,0 +1,128 @@
+// THIS PROTOCOL IS UNSTABLE.
+// Breaking changes are expected until v1.0.
+// Drivers should pin to a specific version path
+// (e.g. `protocol_version: spectre.driver.v1alpha1` in driver.yaml).
+// See docs/adr/0004-protocol-versioning-strategy.md.
+
+syntax = "proto3";
+
+package spectre.driver.v1alpha1;
+
+import "google/protobuf/duration.proto";
+import "spectre/driver/v1alpha1/capabilities.proto";
+import "spectre/driver/v1alpha1/errors.proto";
+import "spectre/driver/v1alpha1/extraction.proto";
+
+// Driver is the contract between the Spectre engine and any
+// browser-automation runtime. A driver implements this service and
+// declares its capabilities at handshake time; the engine uses the
+// declared capabilities to decide at compile time whether a job is
+// runnable.
+//
+// All RPCs are unary in v1alpha1. Streaming RPCs (network event
+// watch, DOM mutation watch) are deferred to a later version.
+service Driver {
+  rpc Initialize(InitializeRequest) returns (InitializeResponse);
+  rpc Navigate(NavigateRequest) returns (NavigateResponse);
+  rpc Query(QueryRequest) returns (QueryResponse);
+  rpc Extract(ExtractRequest) returns (ExtractResponse);
+  rpc Screenshot(ScreenshotRequest) returns (ScreenshotResponse);
+  rpc Close(CloseRequest) returns (CloseResponse);
+}
+
+// SessionConfig is what the engine asks the driver to reproduce for
+// the duration of a session. Drivers honor these on a best-effort
+// basis; fields the underlying runtime cannot enforce should be
+// reflected in the declared Capabilities (omit `header_overrides`,
+// for instance, if the runtime cannot set arbitrary HTTP headers).
+message SessionConfig {
+  string user_agent = 1;
+  string locale = 2;
+  string timezone = 3;
+  Viewport viewport = 4;
+  string proxy_uri = 5;
+  map<string, string> extra_headers = 6;
+}
+
+message Viewport {
+  uint32 width = 1;
+  uint32 height = 2;
+  double device_scale_factor = 3;
+  bool mobile = 4;
+}
+
+message InitializeRequest {
+  // Expected: "spectre.driver.v1alpha1". Drivers refuse mismatched
+  // values with CODE_PROTOCOL_VIOLATION.
+  string protocol_version = 1;
+  SessionConfig session = 2;
+  // Hint to the driver about which capabilities the upcoming job will
+  // exercise. Drivers may use this to skip expensive setup for
+  // unrequested features. The declared `Capabilities` returned in the
+  // response is authoritative regardless.
+  repeated string requested_capabilities = 3;
+}
+
+message InitializeResponse {
+  string session_id = 1;
+  Capabilities capabilities = 2;
+  DriverError error = 3;
+}
+
+enum WaitCondition {
+  WAIT_CONDITION_UNSPECIFIED = 0;
+  WAIT_CONDITION_LOAD = 1;
+  WAIT_CONDITION_DOM_CONTENT_LOADED = 2;
+  WAIT_CONDITION_NETWORK_IDLE = 3;
+}
+
+message NavigateRequest {
+  string session_id = 1;
+  string url = 2;
+  WaitCondition wait = 3;
+  google.protobuf.Duration timeout = 4;
+}
+
+message NavigateResponse {
+  // The URL after any redirects.
+  string final_url = 1;
+  uint32 status_code = 2;
+  google.protobuf.Duration elapsed = 3;
+  DriverError error = 4;
+}
+
+enum ScreenshotScope {
+  SCREENSHOT_SCOPE_UNSPECIFIED = 0;
+  SCREENSHOT_SCOPE_VIEWPORT = 1;
+  SCREENSHOT_SCOPE_FULL_PAGE = 2;
+  SCREENSHOT_SCOPE_ELEMENT = 3;
+}
+
+enum ScreenshotFormat {
+  SCREENSHOT_FORMAT_UNSPECIFIED = 0;
+  SCREENSHOT_FORMAT_PNG = 1;
+  SCREENSHOT_FORMAT_JPEG = 2;
+}
+
+message ScreenshotRequest {
+  string session_id = 1;
+  ScreenshotScope scope = 2;
+  // Required if scope is SCREENSHOT_SCOPE_ELEMENT, otherwise ignored.
+  ElementRef element = 3;
+  ScreenshotFormat format = 4;
+}
+
+message ScreenshotResponse {
+  bytes image = 1;
+  // MIME content type, e.g. "image/png" or "image/jpeg".
+  string content_type = 2;
+  DriverError error = 3;
+}
+
+message CloseRequest {
+  string session_id = 1;
+}
+
+message CloseResponse {
+  DriverError error = 1;
+}

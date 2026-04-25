@@ -1,0 +1,23 @@
+# Buf workspace configuration.
+#
+# The protocol module lives at `proto/`. Additional modules (for
+# example a future internal API protocol or a separate driver
+# extension namespace) can be added to the `modules` list below.
+
+version: v2
+
+modules:
+  - path: proto
+
+lint:
+  use:
+    - STANDARD
+  except:
+    # The protocol exposes a single service named `Driver`. The
+    # `*Service` suffix is redundant in this context and the project
+    # prefers the shorter, semantically clearer name.
+    - SERVICE_SUFFIX
+
+breaking:
+  use:
+    - FILE

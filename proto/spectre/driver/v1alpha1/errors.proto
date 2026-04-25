@@ -1,0 +1,41 @@
+// THIS PROTOCOL IS UNSTABLE.
+// Breaking changes are expected until v1.0.
+// See docs/adr/0004-protocol-versioning-strategy.md.
+
+syntax = "proto3";
+
+package spectre.driver.v1alpha1;
+
+import "google/protobuf/duration.proto";
+
+// DriverError is the canonical error envelope returned by every RPC.
+// Drivers must surface failures via this message rather than as
+// transport-level exceptions or unstructured stderr output.
+message DriverError {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    // Internal driver error; retry is unlikely to succeed.
+    CODE_INTERNAL = 1;
+    // Network or DNS failure reaching the target.
+    CODE_TARGET_UNREACHABLE = 2;
+    // Operation exceeded its time budget.
+    CODE_TIMEOUT = 3;
+    // The remote target rejected the request (e.g. 403, 429).
+    CODE_BLOCKED = 4;
+    // Selector returned no matches, or the requested resource is missing.
+    CODE_NOT_FOUND = 5;
+    // Engine sent a malformed or unsupported request.
+    CODE_INVALID_ARGUMENT = 6;
+    // Engine asked for a capability the driver did not declare.
+    CODE_CAPABILITY_MISSING = 7;
+    // Driver returned a response that violates the protocol contract.
+    CODE_PROTOCOL_VIOLATION = 8;
+  }
+
+  Code code = 1;
+  string message = 2;
+  // Hint to the engine for retry pacing. Zero means "no specific advice".
+  google.protobuf.Duration retry_after = 3;
+  // Free-form structured details for diagnostics. Keys are driver-defined.
+  map<string, string> details = 4;
+}

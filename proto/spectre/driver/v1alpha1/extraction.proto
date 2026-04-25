@@ -1,0 +1,86 @@
+// THIS PROTOCOL IS UNSTABLE.
+// Breaking changes are expected until v1.0.
+// See docs/adr/0004-protocol-versioning-strategy.md.
+
+syntax = "proto3";
+
+package spectre.driver.v1alpha1;
+
+import "spectre/driver/v1alpha1/errors.proto";
+
+// ElementRef is an opaque handle returned by Query and consumed by
+// Extract. The engine treats the value as opaque and never inspects
+// or constructs it. Drivers may use any internal scheme (DOM node id,
+// locator handle, internal index) provided the reference remains
+// valid for subsequent calls within the same session.
+message ElementRef {
+  string opaque_id = 1;
+}
+
+enum SelectorKind {
+  SELECTOR_KIND_UNSPECIFIED = 0;
+  SELECTOR_KIND_CSS = 1;
+  SELECTOR_KIND_XPATH = 2;
+  SELECTOR_KIND_TEXT = 3;
+  SELECTOR_KIND_ATTRIBUTE = 4;
+}
+
+message QueryRequest {
+  string session_id = 1;
+  string selector = 2;
+  SelectorKind kind = 3;
+  // Maximum number of elements to return. Zero means "no limit".
+  uint32 limit = 4;
+}
+
+message QueryResponse {
+  repeated ElementRef elements = 1;
+  // Set on failure. When set, `elements` is empty.
+  DriverError error = 2;
+}
+
+// Field describes one column to read from a queried element.
+message Field {
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    MODE_TEXT_CONTENT = 1;
+    MODE_INNER_TEXT = 2;
+    MODE_INNER_HTML = 3;
+    MODE_OUTER_HTML = 4;
+    // `arg` is the attribute name.
+    MODE_ATTR = 5;
+    // `arg` is a JS expression. Requires the `js_execution` capability.
+    MODE_EVAL = 6;
+  }
+
+  string name = 1;
+  Mode mode = 2;
+  // Optional argument. Required for MODE_ATTR and MODE_EVAL.
+  string arg = 3;
+}
+
+message ExtractRequest {
+  string session_id = 1;
+  ElementRef element = 2;
+  repeated Field fields = 3;
+}
+
+// ExtractedValues carries the result of one Extract call.
+//
+// Values are JSON-encoded as strings to keep the v1alpha1 wire format
+// simple. Typed values (numbers, booleans, structured data) can be
+// added in v1alpha2 as a separate `oneof` per field, without breaking
+// existing consumers — both forms can coexist.
+message ExtractedValues {
+  message Entry {
+    string name = 1;
+    string json_value = 2;
+  }
+  repeated Entry fields = 1;
+}
+
+message ExtractResponse {
+  ExtractedValues values = 1;
+  // Set on failure. When set, `values` is empty.
+  DriverError error = 2;
+}
