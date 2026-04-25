@@ -1,7 +1,7 @@
 # Master Prompt — Spectre Repository Bootstrap
 
 > Paste this entire document as your first message in Claude Code, working
-> from inside the empty repository at `github.com/FabioCaffarello/baas`.
+> from inside the empty repository at `github.com/FabioCaffarello/spectre`.
 > Do not summarize this document. Read it in full before taking any action.
 
 ---
@@ -130,46 +130,65 @@ Path-based versioning (`spectre/driver/v1/`, future
 not replacing. Drivers declare which version they speak in their
 manifest. This is the Google API and Kubernetes API pattern.
 
+### 3.7 Docker-first execution model
+
+Every service, adapter, and tool in the repository **must** ship a
+`Dockerfile` that produces a production-ready container image. Docker is
+the canonical execution boundary.
+
+- **CI/CD: Docker is mandatory.** All CI pipelines build, test, and
+  publish via Docker. The CI matrix runs each component's test suite
+  inside its container — never directly on the runner host. This
+  guarantees environment parity between CI and production and eliminates
+  "works on the runner" class of bugs. Compose files
+  (`docker-compose.ci.yml` or equivalent) orchestrate multi-service
+  integration tests.
+- **Local development: Docker is optional.** Contributors may run
+  components natively (cargo, go, pnpm, uv) for fast iteration, or via
+  `docker compose up` for full-stack local environments. Both paths must
+  be documented and kept working. The `justfile` (or build tool) exposes
+  targets for both modes (e.g., `just test` runs natively,
+  `just test-docker` runs inside containers).
+- **Dockerfiles follow multi-stage build pattern.** Stage 1 builds,
+  stage 2 produces a minimal runtime image (distroless or alpine-based).
+  No development dependencies in the final image. Images are tagged with
+  the git SHA and semantic version.
+- **No component is considered shippable without a working Dockerfile.**
+  A skeleton without a Dockerfile may exist temporarily during initial
+  development, but the component is not merged to `main` without one.
+
+This pillar ensures that "it runs in Docker" is never an afterthought
+but an integral part of every component's definition of done.
+
 ---
 
-## Section 4 — Decisions still pending owner input
+## Section 4 — Confirmed decisions
 
-These four decisions affect everything downstream. **Before doing any
-significant work, ask the owner.** Frame the question with your
-recommendation and rationale.
+These decisions were confirmed by the project owner on 2026-04-25.
 
-### 4.1 Project name
+### 4.1 Project name — **Spectre**
 
-Working name in this document is **Spectre**. Other candidates discussed:
-Wraith, Phantom, Cipher. The repository is currently named `baas` which
-the owner may want to rename or keep as the host for the
-differently-named project. Confirm:
+The project is named **Spectre**. The repository has been renamed from
+`baas` to `spectre` at `github.com/FabioCaffarello/spectre`. All
+package names, CLI binaries, module paths, and documentation use this
+name.
 
-- Final project name (used in CLI, package names, branding)
-- Whether to rename the repository or keep `baas` as the container
+### 4.2 License — **Apache 2.0**
 
-### 4.2 License
+Apache 2.0 selected for maximum adoption and career visibility. Includes
+explicit patent grant. Recorded in ADR-0005.
 
-Recommend **Apache 2.0** for maximum adoption and career visibility.
-Alternatives: BSL 1.1 (commercial protection but legal departments avoid
-non-OSI licenses), AGPL 3.0 (strong copyleft, scares companies). The
-owner's stated goal is professional visibility leading to opportunities,
-which weighs toward Apache 2.0. Confirm before generating LICENSE file.
+### 4.3 Build orchestration — **Just** (`justfile`)
 
-### 4.3 Build orchestration
-
-Recommend **Just** (`justfile`). Modern syntax, no magic, polyglot,
-trivial install. Alternatives: Make (universal but archaic syntax),
-Bazel (overkill for current scale, excellent at 50+ components), Nx
-(JS-centric). Confirm.
+Just selected for its modern syntax, polyglot support, and zero-magic
+philosophy. Recorded in ADR-0006.
 
 ### 4.4 GitHub location and Go module path
 
-Repository is currently `github.com/FabioCaffarello/baas`. This affects
-Go module paths (`module github.com/FabioCaffarello/baas/core/control-plane`),
-container image registries, badge URLs, documentation links. If the owner
-plans to migrate to a dedicated GitHub organization later, raise this
-now — module path migrations are painful.
+Repository lives at `github.com/FabioCaffarello/spectre` under the
+owner's personal account. No dedicated organization planned. Go module
+paths follow the pattern `github.com/FabioCaffarello/spectre/<path>`
+(e.g., `github.com/FabioCaffarello/spectre/core/control-plane`).
 
 ---
 
@@ -275,7 +294,7 @@ deferred to later phases.
 ├── .gitattributes                         # Line endings, linguist hints
 ├── .editorconfig                          # Cross-editor consistency
 ├── .pre-commit-config.yaml                # Hooks per language, fast-only
-├── justfile                               # Or Makefile, per owner choice
+├── justfile                               # Just build orchestration (confirmed)
 ├── CHANGELOG.md                           # Empty with header, populated on first release
 ├── CODE_OF_CONDUCT.md                     # Contributor Covenant 2.1, unmodified
 ├── CONTRIBUTING.md                        # Contributor onboarding, points to writing-a-driver
@@ -289,7 +308,6 @@ deferred to later phases.
 
 ### Explicitly NOT created in this phase
 
-- `Dockerfile` for any component (created when component has runnable code)
 - `helm/` charts (created in Phase 3 with K8s operator)
 - `sdks/` directory (created in Phase 2 after protocol stabilizes)
 - Documentation site (Docusaurus/Mkdocs) — Phase 4+
@@ -441,6 +459,13 @@ license: Apache-2.0
 
 ### 7.1 ci.yml
 
+**All CI jobs run inside Docker containers** (see Pillar 3.7). Each
+component's Dockerfile defines the build and test environment. The CI
+pipeline builds the Docker image, then runs lint, test, and build steps
+inside that container. This ensures perfect parity between CI and any
+environment that runs the same image. Runner-native tool installation is
+limited to Docker itself and workflow utilities (e.g., `actions/checkout`).
+
 Per-language jobs running in parallel with path filters so that a TS-only
 change does not rebuild Rust.
 
@@ -455,8 +480,9 @@ change does not rebuild Rust.
   `uv sync`, `ruff check`, `ruff format --check`, `mypy`, `pytest`
 
 Use modern tooling: `uv` for Python (not poetry), `pnpm` for TS (not
-npm), recent Rust stable, recent Go stable. Cache aggressively with
-`actions/cache` keyed on lockfiles.
+npm), recent Rust stable, recent Go stable. Docker layer caching
+(`docker/build-push-action` with `cache-from`/`cache-to`) replaces
+runner-level `actions/cache` for build dependencies.
 
 ### 7.2 proto-check.yml
 
