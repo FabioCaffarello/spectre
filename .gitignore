@@ -58,3 +58,5 @@ proto/gen/
 # Logs and local caches
 *.log
 .cache/
+
+*.zip
