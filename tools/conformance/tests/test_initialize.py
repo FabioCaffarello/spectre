@@ -1,25 +1,63 @@
-"""Conformance suite smoke test.
+"""Live ``Initialize`` handshake conformance test.
 
-The real conformance suite exercises a driver via the Driver Protocol
-and verifies handshake, capability declarations, error-envelope
-shape, and per-capability behaviour. That work lands in Phase 1 of
-the project roadmap.
+This test launches the Playwright adapter as a subprocess on a
+per-test Unix domain socket, dials it as a gRPC client, sends an
+``InitializeRequest``, and validates the ``InitializeResponse``.
 
-Until then this module contains a single self-contained smoke test
-that asserts the protocol-version target string the suite expects
-matches the shape the schema commits to. The target is sourced from
-the generated FileDescriptor (see ADR-0007), not declared as a
-literal here.
+Capability declaration: the response's ``capabilities.names`` must
+match the list in the adapter's ``driver.yaml`` byte-for-byte. PR3
+declares no capabilities at runtime; the assertion is meaningful for
+later PRs that expand the set.
 """
 
 from __future__ import annotations
 
-from spectre.driver.v1alpha1 import driver_pb2 as _driver_pb2
+import pytest
+from spectre.driver.v1alpha1 import driver_pb2, driver_pb2_grpc
 
-PROTOCOL_VERSION_TARGET: str = str(_driver_pb2.DESCRIPTOR.package)
+from spectre_conformance.harness import DriverHarness
+
+PROTOCOL_VERSION_TARGET: str = str(driver_pb2.DESCRIPTOR.package)
+PER_TEST_DEADLINE_S = 30.0
+
+
+@pytest.mark.timeout(PER_TEST_DEADLINE_S)
+def test_initialize_returns_a_session(
+    playwright_adapter: DriverHarness,
+    playwright_manifest: dict[str, object],
+) -> None:
+    stub = driver_pb2_grpc.DriverStub(playwright_adapter.dial())
+
+    request = driver_pb2.InitializeRequest(
+        protocol_version=PROTOCOL_VERSION_TARGET,
+        session=driver_pb2.SessionConfig(),
+        requested_capabilities=[],
+    )
+    response = stub.Initialize(request, timeout=10.0)
+
+    assert response.session_id, "session_id must be populated"
+    assert response.HasField("capabilities"), (
+        "capabilities envelope must be set even when names is empty"
+    )
+    assert not response.HasField("error"), f"unexpected error: {response.error.message!r}"
+
+    declared_raw = playwright_manifest.get("capabilities") or []
+    assert isinstance(declared_raw, list), (
+        f"driver.yaml `capabilities` must be a list, got {type(declared_raw).__name__}"
+    )
+    declared: list[str] = [str(name) for name in declared_raw]
+    assert list(response.capabilities.names) == declared, (
+        "Capabilities returned by Initialize must match driver.yaml. "
+        f"Returned: {list(response.capabilities.names)}, declared: {declared}"
+    )
+
+    assert response.capabilities.driver_version, "driver_version must be populated"
+    assert response.capabilities.runtime_version, "runtime_version must be populated"
 
 
 def test_protocol_version_target_shape() -> None:
+    """The static target string keeps the v1alpha1 package shape."""
+
     parts = PROTOCOL_VERSION_TARGET.split(".")
     assert len(parts) == 3, "expected three dot-separated components"
     assert parts[0] == "spectre"

@@ -13,6 +13,11 @@ dependencies = [
     # `proto/gen/python` (gitignored, produced by
     # `just proto-generate`). See ADR-0007.
     "spectre-driver-protocol",
+    # Conformance harness reads driver.yaml manifests.
+    "pyyaml>=6.0",
+    # gRPC client used by the harness. The runtime is also a transitive
+    # dep of spectre-driver-protocol; declared here for clarity.
+    "grpcio>=1.60",
 ]
 
 [project.urls]
@@ -23,7 +28,9 @@ Repository = "https://github.com/FabioCaffarello/spectre"
 dev = [
     "mypy>=1.13",
     "pytest>=8.3",
+    "pytest-timeout>=2.3",
     "ruff>=0.8",
+    "types-pyyaml>=6.0",
 ]
 
 # This project is dev-tooling only; it is not packaged or installed.
@@ -51,7 +58,8 @@ select = [
 [tool.mypy]
 python_version = "3.10"
 strict = true
-files = ["tests"]
+files = ["src", "tests"]
+mypy_path = ["src"]
 
 # Generated protobuf modules are untyped. Treat them as Any-typed at
 # the boundary; we re-annotate values pulled from the descriptor in
@@ -61,6 +69,13 @@ module = ["spectre.driver.v1alpha1.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
+# `grpcio` ships without bundled type stubs. Treat the public API as
+# Any-typed; the harness wraps it so leakage is bounded.
+[[tool.mypy.overrides]]
+module = ["grpc", "grpc.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 addopts = "-q"
