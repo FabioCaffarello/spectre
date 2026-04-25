@@ -20,7 +20,7 @@ target/
 **/*.rs.bk
 
 # Go
-/bin/
+bin/
 *.exe
 *.test
 *.out

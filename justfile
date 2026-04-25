@@ -111,7 +111,7 @@ cp-test:
     cd core/control-plane && go test ./...
 
 cp-build:
-    cd core/control-plane && go build ./...
+    cd core/control-plane && go build -o bin/controller ./cmd/controller
 
 # ---------------------------------------------------------------------------
 # Go curl-impersonate adapter (adapters/curl-impersonate)
@@ -134,7 +134,7 @@ curl-imp-test:
     cd adapters/curl-impersonate && go test ./...
 
 curl-imp-build:
-    cd adapters/curl-impersonate && go build ./...
+    cd adapters/curl-impersonate && go build -o bin/adapter ./cmd/adapter
 
 # ---------------------------------------------------------------------------
 # TypeScript Playwright adapter (adapters/playwright)

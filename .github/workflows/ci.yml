@@ -117,7 +117,9 @@ jobs:
       - name: Test
         run: go test ./...
       - name: Build
-        run: go build ./...
+        # Verify every package compiles without writing binaries to the
+        # working tree.
+        run: go build -o /dev/null ./...
 
   typescript:
     name: TypeScript (playwright adapter)
