@@ -1,0 +1,69 @@
+name: Bug Report
+description: Report defective behavior in the engine, control plane, an adapter, or the protocol.
+title: "[Bug] "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to file a bug report. Please complete
+        the sections below so the maintainers can reproduce and triage it
+        quickly. Redact any URLs, credentials, or PII before submitting.
+
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      description: Which part of Spectre is affected?
+      placeholder: "core/engine, adapters/playwright, proto, control-plane, ..."
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit SHA
+      description: Spectre release tag or the commit you are running against.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: |
+        A self-contained snippet, job spec, or repository link that reproduces
+        the issue.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, language toolchain versions, container runtime, etc.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: shell
+    validations:
+      required: false

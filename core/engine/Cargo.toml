@@ -1,0 +1,27 @@
+[package]
+name = "spectre-engine"
+version = "0.1.0-alpha.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Spectre engine core: DSL parsing, planning, and execution scheduling."
+repository = "https://github.com/FabioCaffarello/spectre"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["spectre", "browser-automation", "extraction"]
+categories = ["development-tools"]
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Deferred. Added when the engine starts speaking the Driver Protocol
+# over gRPC: tonic, prost, tokio, tonic-build (in build-dependencies).
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

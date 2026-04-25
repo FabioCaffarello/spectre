@@ -1,0 +1,19 @@
+# hello-hackernews — extract titles and URLs from the HN front page.
+#
+# This job is aspirational. The engine and Playwright adapter are not
+# yet runnable end-to-end. See ../README.md for status.
+
+spectre: v1alpha1
+driver: playwright
+
+steps:
+  - navigate: https://news.ycombinator.com
+  - extract:
+      selector: .titleline > a
+      fields:
+        title: textContent
+        url: href
+
+output:
+  format: jsonl
+  path: ./stories.jsonl

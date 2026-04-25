@@ -1,0 +1,48 @@
+# Default: detect text, normalize to LF on commit
+* text=auto eol=lf
+
+# Source files (force LF)
+*.rs       text eol=lf
+*.go       text eol=lf
+*.ts       text eol=lf
+*.tsx      text eol=lf
+*.js       text eol=lf
+*.jsx      text eol=lf
+*.mjs      text eol=lf
+*.cjs      text eol=lf
+*.py       text eol=lf
+*.pyi      text eol=lf
+*.proto    text eol=lf
+*.toml     text eol=lf
+*.yaml     text eol=lf
+*.yml      text eol=lf
+*.json     text eol=lf
+*.sh       text eol=lf
+Makefile   text eol=lf
+justfile   text eol=lf
+
+# Documentation
+*.md       text diff=markdown eol=lf
+
+# Generated code (Linguist: hide from language stats and diff summaries)
+proto/gen/**         linguist-generated=true
+**/*.pb.go           linguist-generated=true
+**/*_pb.ts           linguist-generated=true
+**/*_pb.d.ts         linguist-generated=true
+**/*_pb2.py          linguist-generated=true
+**/*_pb2.pyi         linguist-generated=true
+
+# Vendored / third-party
+vendor/**            linguist-vendored=true
+
+# Binary
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.ico      binary
+*.pdf      binary
+*.zip      binary
+*.tar.gz   binary
+*.woff     binary
+*.woff2    binary

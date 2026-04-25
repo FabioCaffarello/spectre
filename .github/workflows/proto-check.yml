@@ -1,0 +1,82 @@
+name: proto-check
+
+on:
+  pull_request:
+    paths:
+      - 'proto/**'
+      - '.github/workflows/proto-check.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  breaking:
+    name: Detect breaking changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # When the base branch does not yet contain `proto/` (e.g. the
+      # bootstrap PR that introduces the schema), there is nothing to
+      # compare against. Skip the breaking check rather than fail.
+      - name: Check baseline has proto
+        id: baseline
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          if git ls-tree --name-only "origin/${{ github.base_ref }}" -- proto/ 2>/dev/null | grep -q .; then
+            echo "has_proto=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "has_proto=false" >>"$GITHUB_OUTPUT"
+            echo "::notice::No proto/ on origin/${{ github.base_ref }}; skipping breaking check (baseline not yet established)."
+          fi
+
+      - name: Run buf breaking
+        id: buf-breaking
+        if: steps.baseline.outputs.has_proto == 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          OUTPUT=$(buf breaking --against "https://github.com/${{ github.repository }}.git#branch=${{ github.base_ref }}" 2>&1)
+          STATUS=$?
+          {
+            echo 'output<<BREAKING_EOF'
+            echo "$OUTPUT"
+            echo 'BREAKING_EOF'
+          } >>"$GITHUB_OUTPUT"
+          echo "$OUTPUT"
+          exit $STATUS
+
+      - name: Comment on PR
+        if: steps.buf-breaking.outcome == 'failure'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: proto-breaking
+          message: |
+            **Breaking changes detected in `proto/`.**
+
+            ```
+            ${{ steps.buf-breaking.outputs.output }}
+            ```
+
+            If this is intentional, add a new version path
+            (`v1alpha1` -> `v1alpha2` or `v1beta1`) and place new messages
+            alongside the existing ones rather than modifying them in place.
+            See `docs/adr/0004-protocol-versioning-strategy.md`.
+
+      - name: Resolve sticky comment
+        if: steps.buf-breaking.outcome == 'success'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: proto-breaking
+          delete: true
+
+      - name: Fail if breaking
+        if: steps.buf-breaking.outcome == 'failure'
+        run: exit 1
