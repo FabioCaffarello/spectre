@@ -52,6 +52,18 @@ A future `--driver=PATH/TO/driver.yaml` pytest option will spawn the
 driver under test and connect to it. Until that lands, the smoke
 test is self-contained and does not require a running driver.
 
+## Generated code
+
+The conformance suite imports the Driver Protocol Python bindings
+from
+[`proto/gen/python/spectre/driver/v1alpha1/`](../../proto/gen/python)
+via a uv editable source — the same mechanism used by the
+SeleniumBase adapter. The smoke test sources
+`PROTOCOL_VERSION_TARGET` from the generated `FileDescriptor`
+rather than declaring it as a literal. Run `just proto-generate` (or
+`just conf-bootstrap`, which depends on it) before `uv sync`. See
+[ADR-0007](../../docs/adr/0007-protocol-code-generation.md).
+
 ## References
 
 - [Driver Protocol design](../../docs/architecture/driver-protocol.md)

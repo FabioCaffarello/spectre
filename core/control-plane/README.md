@@ -52,6 +52,15 @@ land. Public packages (intended for downstream import by SDKs) will
 live in a `pkg/` directory introduced when there is something to
 export.
 
+## Generated code
+
+The Driver Protocol Go bindings live at
+[`proto/gen/go/spectre/driver/v1alpha1/`](../../proto/gen/go) — a
+gitignored, generated tree produced by `just proto-generate`. This
+module consumes them via a local `replace` directive in `go.mod`. The
+import path is `github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1`.
+See [ADR-0007](../../docs/adr/0007-protocol-code-generation.md).
+
 ## Architectural references
 
 - [Architecture overview](../../docs/architecture/overview.md)

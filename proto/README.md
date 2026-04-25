@@ -55,31 +55,33 @@ buf build              # parse and confirm the schema is well-formed
 
 ## Code generation
 
-`buf.gen.yaml` produces typed bindings for downstream consumers. The
-output goes to `proto/gen/`, which is gitignored — regenerate locally
-or in CI rather than checking generated code into the repository.
+`buf.gen.yaml` produces typed bindings for downstream consumers. All
+generator outputs are gitignored — regenerate locally or in CI
+rather than checking generated code into the repository. The
+contract and rationale are recorded in
+[ADR-0007](../docs/adr/0007-protocol-code-generation.md).
 
 ```bash
-cd proto
-buf generate
+just proto-generate            # writes Go, Python, and TypeScript
 ```
 
-Or via the justfile from the repo root:
+Or directly:
 
 ```bash
-just proto-generate
+cd proto && buf generate       # then bash tools/codegen/post-generate.sh
 ```
 
-The current configuration generates Go bindings (used eventually by
-`core/control-plane` and `adapters/curl-impersonate`). Other languages
-are added as their consumers land:
+Output paths:
 
-- **Rust** (`core/engine`): generates in-tree via `tonic-build` inside
-  the engine crate.
-- **TypeScript** (`adapters/playwright`): generates via the adapter's
-  own `buf` invocation, configured in its `package.json`.
-- **Python** (`adapters/seleniumbase`, `tools/conformance`): will be
-  added when the adapter starts importing the protocol.
+| Language    | Path                                              | Consumed by                               |
+|-------------|---------------------------------------------------|-------------------------------------------|
+| Go          | `proto/gen/go/spectre/driver/v1alpha1/`           | `core/control-plane`, `adapters/curl-impersonate` (via local `replace`) |
+| Python      | `proto/gen/python/spectre/driver/v1alpha1/`       | `adapters/seleniumbase`, `tools/conformance` (via uv editable source) |
+| TypeScript  | `adapters/playwright/src/proto/spectre/driver/v1alpha1/` | `adapters/playwright`                  |
+| Rust        | cargo `OUT_DIR` (per-build artifact dir)          | `core/engine` (via `tonic-build` in `build.rs`) |
+
+Rust generation is lazy: it runs at `cargo build`/`cargo test` time
+via `core/engine/build.rs` rather than during `just proto-generate`.
 
 ## Conventions
 

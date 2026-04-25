@@ -50,6 +50,15 @@ DOM manipulation, or screenshots will not be declared by this driver
 — jobs that depend on those capabilities should select a
 browser-based adapter (Playwright, SeleniumBase) at compile time.
 
+## Generated code
+
+Like the control plane, this module consumes the Driver Protocol Go
+bindings from the gitignored
+[`proto/gen/go/`](../../proto/gen/go) tree via a local `replace`
+directive. Run `just proto-generate` (or `just curl-imp-bootstrap`,
+which depends on it) before `go build`/`go test`. See
+[ADR-0007](../../docs/adr/0007-protocol-code-generation.md).
+
 ## References
 
 - [Driver Protocol design](../../docs/architecture/driver-protocol.md)

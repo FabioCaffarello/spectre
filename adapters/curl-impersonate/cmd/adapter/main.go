@@ -17,13 +17,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	driverv1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1"
 )
 
 const (
-	binaryName      = "spectre-curl-impersonate"
-	version         = "0.1.0-alpha.0"
-	protocolVersion = "spectre.driver.v1alpha1"
+	binaryName = "spectre-curl-impersonate"
+	version    = "0.1.0-alpha.0"
 )
+
+// protocolVersion is sourced from the generated protobuf package
+// path so the engine, the control plane, and every adapter share
+// one provenance. See ADR-0007.
+var protocolVersion = string(driverv1alpha1.File_spectre_driver_v1alpha1_driver_proto.Package())
 
 func main() {
 	if err := run(os.Stdout); err != nil {

@@ -52,6 +52,18 @@ adapters/seleniumbase/
 - Capability declarations in `driver.yaml`, added incrementally as
   each capability passes the conformance suite.
 
+## Generated code
+
+The Driver Protocol Python bindings live at
+[`proto/gen/python/spectre/driver/v1alpha1/`](../../proto/gen/python) —
+a gitignored, generated tree produced by `just proto-generate`. The
+adapter consumes it via a uv editable source declared in
+`pyproject.toml`; the package's `__init__.py` re-exports
+`PROTOCOL_VERSION` from the generated `FileDescriptor`. Run `just
+proto-generate` (or `just sb-bootstrap`, which depends on it) before
+`uv sync`. See
+[ADR-0007](../../docs/adr/0007-protocol-code-generation.md).
+
 ## References
 
 - [Driver Protocol design](../../docs/architecture/driver-protocol.md)

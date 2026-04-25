@@ -8,7 +8,11 @@ Thumbs.db
 *.swp
 *.swo
 *~
-.claude/settings.local.json
+.claude/
+
+# Claude Code memory (private to each contributor's local agent)
+MEMORY.md
+memory/
 
 # Environment
 .env
@@ -52,8 +56,10 @@ venv/
 coverage.xml
 htmlcov/
 
-# Generated code from protobuf (regenerated via buf)
+# Generated code from protobuf (regenerated via buf or build.rs).
+# See `docs/adr/0007-protocol-code-generation.md` for the layout.
 proto/gen/
+adapters/playwright/src/proto/
 
 # Logs and local caches
 *.log

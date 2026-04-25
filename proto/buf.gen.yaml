@@ -1,18 +1,30 @@
 # Code generation for the Driver Protocol.
 #
-# Output is written to `proto/gen/<lang>/`, which is gitignored.
-# Regenerate locally or in CI; do not check generated code into the
-# repository.
+# Outputs are written to language-specific paths inside (or, for Go and
+# Python, beside) the consuming components. Every output path is
+# gitignored — see `.gitignore` and `docs/adr/0007-protocol-code-generation.md`.
 #
-# This file is intentionally minimal. The Rust engine generates its
-# bindings via tonic-build inside its crate, and the TypeScript
-# Playwright adapter generates via its own buf invocation. Languages
-# whose drivers do not yet live in this repository will be added here
-# as they land.
+# Run from the repository root via `just proto-generate`, or directly:
+#   cd proto && buf generate
+#
+# Path notes (resolved relative to this file):
+#   ./gen/go/         -> repo:proto/gen/go/         (consumed by Go modules via `replace`)
+#   ./gen/python/     -> repo:proto/gen/python/     (consumed by uv editable source)
+#   ../adapters/...   -> repo:adapters/playwright/src/proto/
+#
+# Rust generation does NOT happen here. The Rust engine generates its
+# tonic + prost types in `core/engine/build.rs` at cargo build time;
+# the schema input is the same `proto/spectre/driver/v1alpha1/`
+# tree.
 
 version: v2
 
 plugins:
+  # -------------------------------------------------------------------------
+  # Go — protocolbuffers/go writes message types; grpc/go writes service
+  # stubs. Both land in the same tree and are consumed by every Go module
+  # via a local `replace` directive in their go.mod.
+  # -------------------------------------------------------------------------
   - remote: buf.build/protocolbuffers/go
     out: gen/go
     opt:
@@ -23,3 +35,30 @@ plugins:
     opt:
       - paths=source_relative
       - require_unimplemented_servers=false
+
+  # -------------------------------------------------------------------------
+  # Python — protocolbuffers/python writes `*_pb2.py`; grpc/python writes
+  # `*_pb2_grpc.py`. Output is consumed by the SeleniumBase adapter and
+  # the conformance suite via uv editable sources.
+  # -------------------------------------------------------------------------
+  - remote: buf.build/protocolbuffers/python
+    out: gen/python
+
+  - remote: buf.build/grpc/python
+    out: gen/python
+
+  # -------------------------------------------------------------------------
+  # TypeScript — protoc-gen-es writes `*_pb.ts`. Output lands inside the
+  # Playwright adapter's `src/`, where tsc and prettier already see the
+  # rest of the source.
+  # -------------------------------------------------------------------------
+  - remote: buf.build/bufbuild/es
+    out: ../adapters/playwright/src/proto
+    opt:
+      - target=ts
+      # NodeNext + verbatimModuleSyntax in the Playwright adapter's
+      # tsconfig requires explicit module extensions on relative
+      # imports. protoc-gen-es emits `.js` in imports even though the
+      # source is TypeScript — tsc resolves the .ts at build time and
+      # emits .js.
+      - import_extension=js

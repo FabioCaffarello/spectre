@@ -24,8 +24,8 @@ jobs:
       typescript: ${{ steps.filter.outputs.typescript }}
       python: ${{ steps.filter.outputs.python }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -53,7 +53,7 @@ jobs:
     if: needs.changes.outputs.proto == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: bufbuild/buf-setup-action@v1
@@ -75,10 +75,17 @@ jobs:
       run:
         working-directory: core/engine
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # tonic-build invokes prost-build, which requires a protoc
+      # binary on PATH. The Rust build script (`build.rs`) runs as
+      # part of every cargo invocation below, so protoc must be
+      # available before any of them. See ADR-0007.
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core/engine
@@ -102,17 +109,36 @@ jobs:
       run:
         working-directory: ${{ matrix.module }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
-          cache-dependency-path: ${{ matrix.module }}/go.sum
+          # Pin to the version declared in our go.mod files. Using
+          # `stable` picks up newer toolchains whose modules can
+          # contain build-constrained source that golangci-lint's
+          # bundled type-checker (built against an older Go) cannot
+          # parse.
+          go-version: "1.24"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Generate the protocol bindings before any Go invocation. The
+      # Go consumer modules resolve `proto/gen/go` via a local
+      # `replace` directive (see ADR-0007); without this step the
+      # downstream `go vet`/`go test`/`go build` would fail.
+      - name: Generate protocol bindings
+        working-directory: ${{ github.workspace }}
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
       - name: go vet
         run: go vet ./...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.62
+          # Pinned to a version built with the same Go toolchain as our
+          # modules target (go 1.24+). v1.62 was built with go 1.23 and
+          # refuses configs whose `go` directive is newer.
+          version: latest
           working-directory: ${{ matrix.module }}
       - name: Test
         run: go test ./...
@@ -130,15 +156,25 @@ jobs:
       run:
         working-directory: adapters/playwright
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
         with:
           version: 9
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: pnpm
           cache-dependency-path: adapters/playwright/pnpm-lock.yaml
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Generate the TypeScript bindings before tsc/vitest/prettier
+      # see the source tree (see ADR-0007).
+      - name: Generate protocol bindings
+        working-directory: ${{ github.workspace }}
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
@@ -160,13 +196,25 @@ jobs:
       run:
         working-directory: ${{ matrix.package }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Generate the Python bindings before `uv sync` resolves the
+      # `spectre-driver-protocol` editable source. Post-generate
+      # silently skips the Go module init when `go` is not on PATH
+      # (this job does not install Go); see ADR-0007.
+      - name: Generate protocol bindings
+        working-directory: ${{ github.workspace }}
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
       - run: uv sync --all-extras --dev
       - run: uv run ruff check .
       - run: uv run ruff format --check .

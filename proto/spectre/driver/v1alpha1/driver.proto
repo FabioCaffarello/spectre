@@ -13,6 +13,8 @@ import "spectre/driver/v1alpha1/capabilities.proto";
 import "spectre/driver/v1alpha1/errors.proto";
 import "spectre/driver/v1alpha1/extraction.proto";
 
+option go_package = "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1;driverv1alpha1";
+
 // Driver is the contract between the Spectre engine and any
 // browser-automation runtime. A driver implements this service and
 // declares its capabilities at handshake time; the engine uses the
