@@ -1,0 +1,60 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.claude/settings.local.json
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Rust
+target/
+**/*.rs.bk
+
+# Go
+/bin/
+*.exe
+*.test
+*.out
+vendor/
+
+# Node / TypeScript
+node_modules/
+dist/
+build/
+.pnpm-store/
+.turbo/
+.tsbuildinfo
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.python-version
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Generated code from protobuf (regenerated via buf)
+proto/gen/
+
+# Logs and local caches
+*.log
+.cache/
