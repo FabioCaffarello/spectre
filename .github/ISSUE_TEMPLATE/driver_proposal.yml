@@ -1,0 +1,64 @@
+name: Driver Proposal
+description: Propose a new browser-automation driver implementation.
+title: "[Driver] "
+labels: [driver, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Spectre is designed so any browser-automation tool can implement the
+        Driver Protocol. New drivers are welcome. The core team does not
+        maintain community drivers but will help with conformance and
+        protocol questions.
+
+  - type: input
+    id: tool
+    attributes:
+      label: Target automation tool
+      placeholder: "e.g. Puppeteer, Patchright, nodriver, undetected-chromedriver"
+    validations:
+      required: true
+
+  - type: input
+    id: language
+    attributes:
+      label: Implementation language
+      placeholder: "e.g. TypeScript, Python, Go, Rust"
+    validations:
+      required: true
+
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Capabilities planned
+      description: |
+        Which protocol capabilities will the driver declare in its manifest?
+        See `proto/spectre/driver/v1alpha1/capabilities.proto`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Why this driver?
+      description: What does this driver enable that existing reference adapters cannot?
+    validations:
+      required: true
+
+  - type: input
+    id: maintainer
+    attributes:
+      label: Maintainer (you)
+      description: GitHub handle. Driver authors maintain their own driver.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: commitments
+    attributes:
+      label: Commitments
+      options:
+        - label: I will pass the conformance suite before requesting inclusion in the ecosystem registry.
+          required: true
+        - label: I will track the protocol version my driver targets in `driver.yaml`.
+          required: true

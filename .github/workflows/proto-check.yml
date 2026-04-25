@@ -1,0 +1,70 @@
+name: proto-check
+
+on:
+  pull_request:
+    paths:
+      - 'proto/**'
+      - '.github/workflows/proto-check.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  breaking:
+    name: Detect breaking changes
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: proto
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run buf breaking
+        id: buf-breaking
+        continue-on-error: true
+        run: |
+          set +e
+          OUTPUT=$(buf breaking --against "https://github.com/${{ github.repository }}.git#branch=${{ github.base_ref }},subdir=proto" 2>&1)
+          STATUS=$?
+          {
+            echo 'output<<BREAKING_EOF'
+            echo "$OUTPUT"
+            echo 'BREAKING_EOF'
+          } >>"$GITHUB_OUTPUT"
+          echo "$OUTPUT"
+          exit $STATUS
+
+      - name: Comment on PR
+        if: steps.buf-breaking.outcome == 'failure'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: proto-breaking
+          message: |
+            **Breaking changes detected in `proto/`.**
+
+            ```
+            ${{ steps.buf-breaking.outputs.output }}
+            ```
+
+            If this is intentional, add a new version path
+            (`v1alpha1` -> `v1alpha2` or `v1beta1`) and place new messages
+            alongside the existing ones rather than modifying them in place.
+            See `docs/adr/0004-protocol-versioning-strategy.md`.
+
+      - name: Resolve sticky comment
+        if: steps.buf-breaking.outcome == 'success'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: proto-breaking
+          delete: true
+
+      - name: Fail if breaking
+        if: steps.buf-breaking.outcome == 'failure'
+        run: exit 1

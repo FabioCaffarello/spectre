@@ -1,0 +1,19 @@
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Currently the project is maintainer-led with a single owner. As the team
+# grows, expand area-specific owners below. The protocol and ADR directories
+# always require owner approval.
+
+# Default
+*                                @FabioCaffarello
+
+# Protocol and architectural decisions
+/proto/                          @FabioCaffarello
+/docs/adr/                       @FabioCaffarello
+
+# Per-area
+/core/engine/                    @FabioCaffarello
+/core/control-plane/             @FabioCaffarello
+/adapters/                       @FabioCaffarello
+/tools/                          @FabioCaffarello
+/.github/                        @FabioCaffarello
