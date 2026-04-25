@@ -23,8 +23,23 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+      # When the base branch does not yet contain `proto/` (e.g. the
+      # bootstrap PR that introduces the schema), there is nothing to
+      # compare against. Skip the breaking check rather than fail.
+      - name: Check baseline has proto
+        id: baseline
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          if git ls-tree --name-only "origin/${{ github.base_ref }}" -- proto/ 2>/dev/null | grep -q .; then
+            echo "has_proto=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "has_proto=false" >>"$GITHUB_OUTPUT"
+            echo "::notice::No proto/ on origin/${{ github.base_ref }}; skipping breaking check (baseline not yet established)."
+          fi
+
       - name: Run buf breaking
         id: buf-breaking
+        if: steps.baseline.outputs.has_proto == 'true'
         continue-on-error: true
         run: |
           set +e
