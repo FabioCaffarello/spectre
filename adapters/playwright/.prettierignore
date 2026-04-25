@@ -1,3 +1,7 @@
-dist
-node_modules
+# Generated protobuf bindings (regenerated via `just proto-generate`).
+src/proto/
+
+# Build output and dependencies.
+dist/
+node_modules/
 pnpm-lock.yaml

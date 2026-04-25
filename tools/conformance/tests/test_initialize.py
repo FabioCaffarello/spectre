@@ -7,12 +7,16 @@ the project roadmap.
 
 Until then this module contains a single self-contained smoke test
 that asserts the protocol-version target string the suite expects
-matches the shape the schema commits to.
+matches the shape the schema commits to. The target is sourced from
+the generated FileDescriptor (see ADR-0007), not declared as a
+literal here.
 """
 
 from __future__ import annotations
 
-PROTOCOL_VERSION_TARGET = "spectre.driver.v1alpha1"
+from spectre.driver.v1alpha1 import driver_pb2 as _driver_pb2
+
+PROTOCOL_VERSION_TARGET: str = str(_driver_pb2.DESCRIPTOR.package)
 
 
 def test_protocol_version_target_shape() -> None:

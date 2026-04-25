@@ -79,6 +79,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # tonic-build invokes prost-build, which requires a protoc
+      # binary on PATH. The Rust build script (`build.rs`) runs as
+      # part of every cargo invocation below, so protoc must be
+      # available before any of them. See ADR-0007.
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core/engine
@@ -106,7 +113,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Generate the protocol bindings before any Go invocation. The
+      # Go consumer modules resolve `proto/gen/go` via a local
+      # `replace` directive (see ADR-0007); without this step the
+      # downstream `go vet`/`go test`/`go build` would fail.
+      - name: Generate protocol bindings
+        working-directory: ${{ github.workspace }}
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
       - name: go vet
         run: go vet ./...
       - name: golangci-lint
@@ -139,6 +157,16 @@ jobs:
           node-version: 20
           cache: pnpm
           cache-dependency-path: adapters/playwright/pnpm-lock.yaml
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Generate the TypeScript bindings before tsc/vitest/prettier
+      # see the source tree (see ADR-0007).
+      - name: Generate protocol bindings
+        working-directory: ${{ github.workspace }}
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
@@ -167,6 +195,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Generate the Python bindings before `uv sync` resolves the
+      # `spectre-driver-protocol` editable source. Post-generate
+      # silently skips the Go module init when `go` is not on PATH
+      # (this job does not install Go); see ADR-0007.
+      - name: Generate protocol bindings
+        working-directory: ${{ github.workspace }}
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
       - run: uv sync --all-extras --dev
       - run: uv run ruff check .
       - run: uv run ruff format --check .

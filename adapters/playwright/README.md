@@ -50,6 +50,16 @@ adapters/playwright/
 - Capability declarations in `driver.yaml`, added incrementally as
   each capability passes the conformance suite.
 
+## Generated code
+
+The Driver Protocol TypeScript bindings live at
+`src/proto/spectre/driver/v1alpha1/` — a gitignored, generated tree
+produced by `just proto-generate` via `@bufbuild/protoc-gen-es`.
+`src/index.ts` imports the generated `FileDescriptor` to source
+`PROTOCOL_VERSION` from one place. Run `just proto-generate` (or
+`just pw-bootstrap`, which depends on it) before `pnpm typecheck`.
+See [ADR-0007](../../docs/adr/0007-protocol-code-generation.md).
+
 ## References
 
 - [Driver Protocol design](../../docs/architecture/driver-protocol.md)

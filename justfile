@@ -14,8 +14,9 @@ default:
 # Aggregates
 # ---------------------------------------------------------------------------
 
-# Install dependencies for every component
-bootstrap: proto-bootstrap engine-bootstrap cp-bootstrap curl-imp-bootstrap pw-bootstrap sb-bootstrap conf-bootstrap
+# Install dependencies for every component (runs `proto-generate` first
+# transitively via the per-component recipes — see ADR-0007).
+bootstrap: engine-bootstrap cp-bootstrap curl-imp-bootstrap pw-bootstrap sb-bootstrap conf-bootstrap
 
 # Format every component in place
 fmt: proto-fmt engine-fmt cp-fmt curl-imp-fmt pw-fmt sb-fmt conf-fmt
@@ -65,24 +66,28 @@ proto-lint:
 proto-breaking:
     buf breaking --against ".git#branch=main"
 
-# Generate language bindings into proto/gen/ (gitignored)
-proto-generate:
+# Generate language bindings (gitignored). Writes Go to proto/gen/go,
+# Python to proto/gen/python, and TypeScript to
+# adapters/playwright/src/proto/. See ADR-0007 for rationale; Rust
+# bindings are produced lazily by core/engine/build.rs at cargo
+# invocation time and are not materialised by this recipe.
+proto-generate: proto-bootstrap
     cd proto && buf generate
+    bash tools/codegen/post-generate.sh
 
 # ---------------------------------------------------------------------------
 # Rust engine (core/engine)
 # ---------------------------------------------------------------------------
 
-engine-bootstrap:
+engine-bootstrap: proto-generate
     cd core/engine && cargo fetch
 
 engine-fmt:
     cd core/engine && cargo fmt --all
 
 engine-lint:
-    cd core/engine
-    cargo fmt --all -- --check
-    cargo clippy --all-targets --all-features -- -D warnings
+    cd core/engine && cargo fmt --all -- --check
+    cd core/engine && cargo clippy --all-targets --all-features -- -D warnings
 
 engine-test:
     cd core/engine && cargo test --all-features
@@ -94,18 +99,16 @@ engine-build:
 # Go control plane (core/control-plane)
 # ---------------------------------------------------------------------------
 
-cp-bootstrap:
+cp-bootstrap: proto-generate
     cd core/control-plane && go mod download
 
 cp-fmt:
-    cd core/control-plane
-    gofmt -l -w .
-    goimports -l -w .
+    cd core/control-plane && gofmt -l -w .
+    cd core/control-plane && goimports -l -w .
 
 cp-lint:
-    cd core/control-plane
-    go vet ./...
-    golangci-lint run
+    cd core/control-plane && go vet ./...
+    cd core/control-plane && golangci-lint run
 
 cp-test:
     cd core/control-plane && go test ./...
@@ -117,18 +120,16 @@ cp-build:
 # Go curl-impersonate adapter (adapters/curl-impersonate)
 # ---------------------------------------------------------------------------
 
-curl-imp-bootstrap:
+curl-imp-bootstrap: proto-generate
     cd adapters/curl-impersonate && go mod download
 
 curl-imp-fmt:
-    cd adapters/curl-impersonate
-    gofmt -l -w .
-    goimports -l -w .
+    cd adapters/curl-impersonate && gofmt -l -w .
+    cd adapters/curl-impersonate && goimports -l -w .
 
 curl-imp-lint:
-    cd adapters/curl-impersonate
-    go vet ./...
-    golangci-lint run
+    cd adapters/curl-impersonate && go vet ./...
+    cd adapters/curl-impersonate && golangci-lint run
 
 curl-imp-test:
     cd adapters/curl-impersonate && go test ./...
@@ -140,7 +141,7 @@ curl-imp-build:
 # TypeScript Playwright adapter (adapters/playwright)
 # ---------------------------------------------------------------------------
 
-pw-bootstrap:
+pw-bootstrap: proto-generate
     cd adapters/playwright && pnpm install --frozen-lockfile
 
 pw-fmt:
@@ -162,17 +163,16 @@ pw-build:
 # Python SeleniumBase adapter (adapters/seleniumbase)
 # ---------------------------------------------------------------------------
 
-sb-bootstrap:
+sb-bootstrap: proto-generate
     cd adapters/seleniumbase && uv sync --all-extras --dev
 
 sb-fmt:
     cd adapters/seleniumbase && uv run ruff format .
 
 sb-lint:
-    cd adapters/seleniumbase
-    uv run ruff check .
-    uv run ruff format --check .
-    uv run mypy .
+    cd adapters/seleniumbase && uv run ruff check .
+    cd adapters/seleniumbase && uv run ruff format --check .
+    cd adapters/seleniumbase && uv run mypy .
 
 sb-test:
     cd adapters/seleniumbase && uv run pytest
@@ -181,17 +181,16 @@ sb-test:
 # Python conformance suite (tools/conformance)
 # ---------------------------------------------------------------------------
 
-conf-bootstrap:
+conf-bootstrap: proto-generate
     cd tools/conformance && uv sync --all-extras --dev
 
 conf-fmt:
     cd tools/conformance && uv run ruff format .
 
 conf-lint:
-    cd tools/conformance
-    uv run ruff check .
-    uv run ruff format --check .
-    uv run mypy .
+    cd tools/conformance && uv run ruff check .
+    cd tools/conformance && uv run ruff format --check .
+    cd tools/conformance && uv run mypy .
 
 conf-test:
     cd tools/conformance && uv run pytest
@@ -200,13 +199,15 @@ conf-test:
 # Cleanup
 # ---------------------------------------------------------------------------
 
-# Remove build artifacts and language caches
+# Remove build artifacts, language caches, and generated protocol code.
 clean:
     rm -rf core/engine/target
     rm -rf core/control-plane/bin adapters/curl-impersonate/bin
     rm -rf adapters/playwright/{node_modules,dist}
     rm -rf adapters/seleniumbase/{.venv,dist} adapters/seleniumbase/**/__pycache__
     rm -rf tools/conformance/{.venv,dist} tools/conformance/**/__pycache__
+    rm -rf proto/gen
+    rm -rf adapters/playwright/src/proto
     find . -type d -name '.pytest_cache' -prune -exec rm -rf {} +
     find . -type d -name '.ruff_cache' -prune -exec rm -rf {} +
     find . -type d -name '.mypy_cache' -prune -exec rm -rf {} +

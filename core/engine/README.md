@@ -45,9 +45,19 @@ cargo clippy --all-targets --all-features -- -D warnings
 - The Kubernetes-native distributed scheduler is the
   [`core/control-plane`](../control-plane) Go module.
 - Drivers live under [`adapters/`](../../adapters).
-- Generated protocol bindings come from the workspace `buf.yaml` in
-  the repository root; the engine generates Rust bindings with
-  `tonic-build` once the build script is wired (deferred to Phase 1).
+
+## Generated code
+
+`build.rs` invokes `tonic-build` (which delegates message generation
+to `prost-build`) on the protocol files at
+[`proto/spectre/driver/v1alpha1/`](../../proto/spectre/driver/v1alpha1).
+The generated Rust output lands in cargo's `OUT_DIR` and is included
+into the `proto` module via `tonic::include_proto!`. `PROTOCOL_VERSION`
+is sourced from a sibling file written by the same build script, so
+the constant has the same provenance as the types it qualifies. The
+schema package directive (`spectre.driver.v1alpha1`) is the single
+source of truth. See
+[ADR-0007](../../docs/adr/0007-protocol-code-generation.md).
 
 ## Architectural references
 

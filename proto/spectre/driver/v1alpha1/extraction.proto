@@ -8,6 +8,8 @@ package spectre.driver.v1alpha1;
 
 import "spectre/driver/v1alpha1/errors.proto";
 
+option go_package = "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1;driverv1alpha1";
+
 // ElementRef is an opaque handle returned by Query and consumed by
 // Extract. The engine treats the value as opaque and never inspects
 // or constructs it. Drivers may use any internal scheme (DOM node id,
