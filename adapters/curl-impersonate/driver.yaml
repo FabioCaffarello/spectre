@@ -1,0 +1,25 @@
+name: curl-impersonate
+version: 0.1.0-alpha.0
+protocol_version: spectre.driver.v1alpha1
+
+transports:
+  - kind: grpc-uds
+    command: ["./bin/adapter"]
+
+# Capabilities are intentionally empty in the skeleton. As the adapter
+# implements each Driver Protocol RPC and verifies it against the
+# conformance suite, the corresponding capability name is added here.
+# This adapter targets HTTP-only flows; capabilities like
+# `js_execution` or `screenshot_full_page` will not be declared.
+capabilities: []
+
+runtime:
+  go: ">=1.22"
+  system_libraries:
+    - "curl-impersonate"
+
+maintainers:
+  - name: Fabio Caffarello
+    github: FabioCaffarello
+
+license: Apache-2.0
