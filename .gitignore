@@ -8,7 +8,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
-.claude/settings.local.json
+.claude/
 
 # Claude Code memory (private to each contributor's local agent)
 MEMORY.md
