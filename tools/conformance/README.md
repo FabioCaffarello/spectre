@@ -2,10 +2,11 @@
 
 The Spectre Driver Protocol conformance test suite.
 
-> **Status:** v0.1.0a0 — skeleton only. The suite exposes one
-> self-contained smoke test that validates the protocol-version
-> target string. Real driver-exercising conformance tests land in
-> Phase 1 of the [roadmap](../../docs/roadmap.md).
+> **Status:** v0.1.0a0 — exercises the live `Initialize` handshake
+> against the Playwright adapter over gRPC on a Unix domain socket,
+> and asserts unimplemented RPCs return `UNIMPLEMENTED`. Capability
+> assertions, transport equivalence, and per-capability tests follow
+> in Phase 1 of the [roadmap](../../docs/roadmap.md).
 
 ## Build
 
@@ -14,14 +15,45 @@ From the repository root:
 ```bash
 just conf-bootstrap   # uv sync --all-extras --dev
 just conf-lint        # ruff + mypy
-just conf-test        # pytest
+just conf-test        # builds the playwright adapter, then pytest
 ```
 
-Or directly:
+`just conf-test` depends on `just pw-build` so the live tests always
+run against fresh artifacts. Run directly if you've already built:
 
 ```bash
 uv sync --all-extras --dev
 uv run pytest
+```
+
+## Run the conformance suite
+
+The Playwright handshake test launches the adapter as a subprocess
+on a per-test Unix domain socket, dials it as a gRPC client, sends
+`InitializeRequest`, and validates the response:
+
+```bash
+just conf-test
+```
+
+Skip behaviour: if the Playwright `dist/` is not built, the
+Playwright fixture skips with a hint to run `just pw-build`. The CI
+job builds the adapter unconditionally before running pytest.
+
+## Layout
+
+```
+tools/conformance/
+├── src/spectre_conformance/
+│   ├── __init__.py
+│   ├── capabilities.py    # canonical capability-name constants
+│   └── harness.py         # DriverHarness — subprocess + grpc.Channel
+├── tests/
+│   ├── conftest.py        # pytest fixtures (playwright_adapter, …)
+│   ├── test_initialize.py
+│   └── test_unimplemented.py
+├── pyproject.toml
+└── README.md
 ```
 
 ## What this suite will own
@@ -46,11 +78,21 @@ responsibilities:
    JSON-RPC transports, the suite asserts they yield identical
    results.
 
-## Driver invocation (planned)
+## Driver invocation
 
-A future `--driver=PATH/TO/driver.yaml` pytest option will spawn the
-driver under test and connect to it. Until that lands, the smoke
-test is self-contained and does not require a running driver.
+`spectre_conformance.harness.DriverHarness.from_driver_yaml(<path>)`
+reads the manifest, picks a fresh per-instance socket path under
+`/tmp` (short enough to fit macOS' 104-character UDS limit),
+launches the subprocess with `--socket=<path>` (also exported as
+`SPECTRE_DRIVER_SOCKET`), waits for the driver's `ready unix:<path>`
+line on stdout, and exposes a configured `grpc.Channel` via
+`harness.dial()`. Use it as a context manager — the subprocess is
+terminated and the socket is cleaned up on exit, even when an
+assertion fails.
+
+A future `--driver=PATH/TO/driver.yaml` pytest CLI option will
+allow running the same suite against any conforming driver. The
+harness API is the seed; the CLI wraps it.
 
 ## Generated code
 

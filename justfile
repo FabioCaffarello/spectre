@@ -159,6 +159,14 @@ pw-test:
 pw-build:
     cd adapters/playwright && pnpm build
 
+# Run the Playwright adapter against a Unix domain socket.
+# Pass --socket=<path> after `--`, or set SPECTRE_DRIVER_SOCKET. The
+# server prints `ready unix:<path>` on stdout once it accepts
+# connections; SIGTERM/Ctrl-C drains, unlinks the socket, and exits 0.
+# Defaults to /tmp/spectre-pw.sock for ad-hoc local testing.
+pw-run *ARGS='--socket=/tmp/spectre-pw.sock': pw-build
+    cd adapters/playwright && node dist/index.js {{ARGS}}
+
 # ---------------------------------------------------------------------------
 # Python SeleniumBase adapter (adapters/seleniumbase)
 # ---------------------------------------------------------------------------
@@ -192,7 +200,10 @@ conf-lint:
     cd tools/conformance && uv run ruff format --check .
     cd tools/conformance && uv run mypy .
 
-conf-test:
+# Conformance test depends on the Playwright build artifact: tests
+# launch `dist/index.js` as a subprocess, so a fresh build keeps
+# them honest. See ADR-0008.
+conf-test: pw-build
     cd tools/conformance && uv run pytest
 
 # ---------------------------------------------------------------------------

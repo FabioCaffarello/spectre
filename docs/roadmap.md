@@ -29,7 +29,7 @@ knows what they are doing." Nothing has to *run* yet.
 Exit criterion: every component compiles to nothing useful but
 compiles cleanly. CI is green. **Met.** Phase 1 work is unblocked.
 
-## Phase 1 — Hello, World
+## Phase 1 — Hello, World (in progress)
 
 Goal: end-to-end execution of a trivial job through the protocol.
 
@@ -37,10 +37,14 @@ Goal: end-to-end execution of a trivial job through the protocol.
 - [ ] Engine speaks gRPC over UDS to a single driver.
 - [ ] Playwright reference adapter implements `Initialize`, `Navigate`,
       `Query`, `Extract`, `Close` for the smoke-test job.
+  - [x] `Initialize` — gRPC over UDS, with `Capabilities` declared
+        at handshake. ADR-0008.
+  - [ ] `Navigate`, `Query`, `Extract`, `Close` — incremental.
 - [ ] `spectre run hello-hackernews/job.yaml` produces a JSONL file
       with the expected rows.
-- [ ] Conformance suite runs against the Playwright adapter and passes
-      the minimal subset.
+- [x] Conformance suite runs against the Playwright adapter for the
+      `Initialize` handshake and asserts unimplemented RPCs respond
+      with `UNIMPLEMENTED`. Capability and per-RPC tests follow.
 
 Exit criterion: a new contributor can `git clone && just bootstrap &&
 spectre run examples/hello-hackernews/job.yaml` and see results.
