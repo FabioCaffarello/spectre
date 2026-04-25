@@ -15,16 +15,19 @@ knows what they are doing." Nothing has to *run* yet.
 - [x] Repository structure and foundational documents (LICENSE,
       README, CONTRIBUTING, GOVERNANCE, SECURITY).
 - [x] Editor / Git config, pre-commit, CI workflow scaffolding.
-- [x] Architecture Decision Records 0001–0006.
+- [x] Architecture Decision Records 0001–0007.
 - [x] `justfile` build orchestration.
-- [ ] Driver Protocol skeleton at `v1alpha1` (Step 2.6).
-- [ ] Three reference adapter skeletons (Playwright, SeleniumBase,
+- [x] Driver Protocol skeleton at `v1alpha1` (Step 2.6).
+- [x] Three reference adapter skeletons (Playwright, SeleniumBase,
       curl-impersonate) — directory layout, manifests, README, build
       passes (Step 2.8).
-- [ ] Conformance suite skeleton (Step 2.9).
+- [x] Conformance suite skeleton (Step 2.9).
+- [x] Protocol code-generation pipeline wired across Rust, Go,
+      Python, and TypeScript (ADR-0007). Every consumer imports
+      generated types instead of literal protocol strings.
 
 Exit criterion: every component compiles to nothing useful but
-compiles cleanly. CI is green.
+compiles cleanly. CI is green. **Met.** Phase 1 work is unblocked.
 
 ## Phase 1 — Hello, World
 

@@ -8,6 +8,8 @@ package spectre.driver.v1alpha1;
 
 import "google/protobuf/duration.proto";
 
+option go_package = "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1;driverv1alpha1";
+
 // DriverError is the canonical error envelope returned by every RPC.
 // Drivers must surface failures via this message rather than as
 // transport-level exceptions or unstructured stderr output.

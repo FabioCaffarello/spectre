@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@bufbuild/protobuf':
+        specifier: ^2.12.0
+        version: 2.12.0
     devDependencies:
       prettier:
         specifier: ^3.4.2
@@ -19,6 +23,9 @@ importers:
         version: 2.1.9
 
 packages:
+
+  '@bufbuild/protobuf@2.12.0':
+    resolution: {integrity: sha512-B/XlCaFIP8LOwzo+bz5uFzATYokcwCKQcghqnlfwSmM5eX/qTkvDBnDPs+gXtX/RyjxJ4DRikECcPJbyALA8FA==}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -521,6 +528,8 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@bufbuild/protobuf@2.12.0': {}
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true

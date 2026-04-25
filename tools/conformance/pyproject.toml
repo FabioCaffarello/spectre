@@ -8,7 +8,12 @@ requires-python = ">=3.10"
 authors = [
     { name = "Fabio Caffarello", email = "fabio.caffarello@gmail.com" },
 ]
-dependencies = []
+dependencies = [
+    # Generated bindings for the Driver Protocol. Sourced from
+    # `proto/gen/python` (gitignored, produced by
+    # `just proto-generate`). See ADR-0007.
+    "spectre-driver-protocol",
+]
 
 [project.urls]
 Homepage = "https://github.com/FabioCaffarello/spectre"
@@ -24,6 +29,9 @@ dev = [
 # This project is dev-tooling only; it is not packaged or installed.
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+spectre-driver-protocol = { path = "../../proto/gen/python", editable = true }
 
 [tool.ruff]
 line-length = 100
@@ -44,6 +52,14 @@ select = [
 python_version = "3.10"
 strict = true
 files = ["tests"]
+
+# Generated protobuf modules are untyped. Treat them as Any-typed at
+# the boundary; we re-annotate values pulled from the descriptor in
+# source files.
+[[tool.mypy.overrides]]
+module = ["spectre.driver.v1alpha1.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -6,6 +6,8 @@ syntax = "proto3";
 
 package spectre.driver.v1alpha1;
 
+option go_package = "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1;driverv1alpha1";
+
 // Capabilities is what a driver declares at handshake. The engine
 // matches each job against this declaration at compile time and
 // refuses to run if a required capability is missing.

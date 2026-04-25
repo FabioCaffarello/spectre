@@ -21,3 +21,12 @@ lint:
 breaking:
   use:
     - FILE
+  except:
+    # `go_package` is codegen metadata, not a wire-format contract.
+    # In our path-based versioning the Go import path mirrors the
+    # proto package path (`spectre.driver.vN` →
+    # `proto/gen/go/spectre/driver/vN`), so `FILE_SAME_PACKAGE`
+    # already covers the meaningful contract. Exempting this rule
+    # lets us evolve Go-specific generation knobs without forcing a
+    # version bump. See ADR-0007.
+    - FILE_SAME_GO_PACKAGE
