@@ -55,7 +55,7 @@ spectre validate examples/seleniumbase-extract/job.yaml
 Expected output (one line per link):
 
 ```json
-{"text": "More information...", "url": "https://www.iana.org/domains/example"}
+{"text":"Learn more","url":"https://iana.org/domains/example"}
 ```
 
 (example.com currently has a single link; the job is structured
