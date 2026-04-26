@@ -7,6 +7,8 @@ go 1.24.0
 // directive — see ADR-0007.
 require github.com/FabioCaffarello/spectre/proto/gen/go v0.0.0-00010101000000-000000000000
 
+require github.com/google/uuid v1.6.0
+
 require (
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
