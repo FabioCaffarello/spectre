@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SessionManager, UnknownSessionError } from "./sessions.js";
 
-const fakeLocator = (tag: string): Locator => ({ __id: tag }) as unknown as Locator;
+const fakeLocator = (tag: string): Locator =>
+  ({ __id: tag }) as unknown as Locator;
 
 interface FakeBrowser extends Browser {
   contexts(): BrowserContext[];

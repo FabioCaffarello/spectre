@@ -68,9 +68,7 @@ def _query_one(
     kind: int = extraction_pb2.SELECTOR_KIND_CSS,
 ) -> extraction_pb2.ElementRef:
     response = stub.Query(
-        extraction_pb2.QueryRequest(
-            session_id=session_id, selector=selector, kind=kind
-        ),
+        extraction_pb2.QueryRequest(session_id=session_id, selector=selector, kind=kind),
         timeout=GRPC_CALL_TIMEOUT_S,
     )
     assert not response.HasField("error"), response.error.message
@@ -92,9 +90,7 @@ def test_extract_text_content(
             session_id=session_id,
             element=element,
             fields=[
-                extraction_pb2.Field(
-                    name="title", mode=extraction_pb2.Field.MODE_TEXT_CONTENT
-                ),
+                extraction_pb2.Field(name="title", mode=extraction_pb2.Field.MODE_TEXT_CONTENT),
             ],
         ),
         timeout=GRPC_CALL_TIMEOUT_S,
@@ -122,9 +118,7 @@ def test_extract_attribute(
             session_id=session_id,
             element=element,
             fields=[
-                extraction_pb2.Field(
-                    name="href", mode=extraction_pb2.Field.MODE_ATTR, arg="href"
-                ),
+                extraction_pb2.Field(name="href", mode=extraction_pb2.Field.MODE_ATTR, arg="href"),
             ],
         ),
         timeout=GRPC_CALL_TIMEOUT_S,
@@ -149,9 +143,7 @@ def test_extract_inner_html(
             session_id=session_id,
             element=element,
             fields=[
-                extraction_pb2.Field(
-                    name="markup", mode=extraction_pb2.Field.MODE_INNER_HTML
-                ),
+                extraction_pb2.Field(name="markup", mode=extraction_pb2.Field.MODE_INNER_HTML),
             ],
         ),
         timeout=GRPC_CALL_TIMEOUT_S,
@@ -224,9 +216,7 @@ def test_extract_after_navigate_returns_invalid_argument(
             session_id=session_id,
             element=element,
             fields=[
-                extraction_pb2.Field(
-                    name="title", mode=extraction_pb2.Field.MODE_TEXT_CONTENT
-                ),
+                extraction_pb2.Field(name="title", mode=extraction_pb2.Field.MODE_TEXT_CONTENT),
             ],
         ),
         timeout=GRPC_CALL_TIMEOUT_S,

@@ -57,7 +57,9 @@ def _print_error(stage: str, error: errors_pb2.DriverError) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Drive Initialize → Navigate → Query → Extract → Close against a running adapter."
+        description=(
+            "Drive Initialize → Navigate → Query → Extract → Close against a running adapter."
+        )
     )
     parser.add_argument("--socket", required=True, type=Path, help="Adapter socket path.")
     parser.add_argument("--url", required=True, help="URL to navigate to.")
@@ -123,9 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         if query.HasField("error"):
             _print_error("Query", query.error)
             return 1
-        print(
-            f"[Query] selector={args.selector!r} matches={len(query.elements)}"
-        )
+        print(f"[Query] selector={args.selector!r} matches={len(query.elements)}")
         if not query.elements:
             print("[Query] no elements to extract; skipping Extract")
         else:
@@ -148,9 +148,7 @@ def main(argv: list[str] | None = None) -> int:
                 _print_error("Extract", extract.error)
                 return 1
             for field in extract.values.fields:
-                print(
-                    f"[Extract] {field.name}={json.loads(field.json_value)!r}"
-                )
+                print(f"[Extract] {field.name}={json.loads(field.json_value)!r}")
 
         close = stub.Close(
             driver_pb2.CloseRequest(session_id=init.session_id),

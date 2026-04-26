@@ -139,12 +139,12 @@ describe("createDriverService", () => {
 
   it("screenshot still returns Code.Unimplemented", async () => {
     const service = newService();
-    await expect(
-      service.screenshot({} as never),
-    ).rejects.toMatchObject({ code: Code.Unimplemented });
-    await expect(
-      service.screenshot({} as never),
-    ).rejects.toBeInstanceOf(ConnectError);
+    await expect(service.screenshot({} as never)).rejects.toMatchObject({
+      code: Code.Unimplemented,
+    });
+    await expect(service.screenshot({} as never)).rejects.toBeInstanceOf(
+      ConnectError,
+    );
   });
 
   it("close returns CODE_INVALID_ARGUMENT for an unknown session id", async () => {
@@ -183,10 +183,12 @@ describe("createDriverService", () => {
     const response = await service.extract({
       $typeName: "spectre.driver.v1alpha1.ExtractRequest",
       sessionId: init.sessionId,
-      element: { $typeName: "spectre.driver.v1alpha1.ElementRef", opaqueId: "" },
+      element: {
+        $typeName: "spectre.driver.v1alpha1.ElementRef",
+        opaqueId: "",
+      },
       fields: [],
     } as never);
     expect(response.error?.code).toBe(DriverError_Code.INVALID_ARGUMENT);
   });
-
 });

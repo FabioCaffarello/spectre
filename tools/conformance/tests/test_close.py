@@ -90,9 +90,7 @@ def test_close_then_navigate_returns_invalid_argument(
         ),
         timeout=GRPC_CALL_TIMEOUT_S,
     )
-    assert nav.HasField("error"), (
-        "Navigate against a closed session must surface a DriverError"
-    )
+    assert nav.HasField("error"), "Navigate against a closed session must surface a DriverError"
     assert nav.error.code == errors_pb2.DriverError.CODE_INVALID_ARGUMENT
 
 

@@ -64,7 +64,7 @@ SLOW_ROUTE_DELAY_S: float = 5.0
 ELEMENTS_HTML: bytes = (
     b"<!doctype html>"
     b'<html lang="en">'
-    b"<head><meta charset=\"utf-8\"><title>elements</title></head>"
+    b'<head><meta charset="utf-8"><title>elements</title></head>'
     b"<body>"
     b'<h1 id="title">Elements Page</h1>'
     b'<ul id="items">'
@@ -81,7 +81,7 @@ ELEMENTS_HTML: bytes = (
 ELEMENTS_TWO_HTML: bytes = (
     b"<!doctype html>"
     b'<html lang="en">'
-    b"<head><meta charset=\"utf-8\"><title>elements-2</title></head>"
+    b'<head><meta charset="utf-8"><title>elements-2</title></head>'
     b"<body>"
     b'<h1 id="title">Second Page</h1>'
     b'<p class="paragraph">A different page entirely.</p>'

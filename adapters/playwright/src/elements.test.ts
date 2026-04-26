@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import { ElementRegistry } from "./elements.js";
 
-const fakeLocator = (tag: string): Locator => ({ __id: tag }) as unknown as Locator;
+const fakeLocator = (tag: string): Locator =>
+  ({ __id: tag }) as unknown as Locator;
 
 const firstId = (ids: readonly string[]): string => {
   const id = ids[0];
@@ -37,17 +38,17 @@ describe("ElementRegistry", () => {
 
   it("returns 'unknown' for a session that has never allocated", () => {
     const reg = new ElementRegistry();
-    expect(reg.lookupRef("ghost", "00000000-0000-0000-0000-000000000000").status).toBe(
-      "unknown",
-    );
+    expect(
+      reg.lookupRef("ghost", "00000000-0000-0000-0000-000000000000").status,
+    ).toBe("unknown");
   });
 
   it("returns 'unknown' for an id that was never issued", () => {
     const reg = new ElementRegistry();
     reg.allocateRefs("s1", [fakeLocator("a")]);
-    expect(reg.lookupRef("s1", "deadbeef-dead-beef-dead-beefdeadbeef").status).toBe(
-      "unknown",
-    );
+    expect(
+      reg.lookupRef("s1", "deadbeef-dead-beef-dead-beefdeadbeef").status,
+    ).toBe("unknown");
   });
 
   it("returns 'stale' for an id whose generation has been bumped", () => {

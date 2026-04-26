@@ -110,9 +110,9 @@ adapters/playwright/
   session's generation counter, invalidating every `ElementRef`
   the session received from a previous `Query`. An `Extract`
   against a stale ref returns `CODE_INVALID_ARGUMENT` with the
-  message `"element reference is stale; query was performed
-  before a navigation"`. Re-issue `Query` after each `Navigate`.
-  See [ADR-0010](../../docs/adr/0010-element-lifecycle-and-capability-gating.md).
+  message _"element reference is stale; query was performed before
+  a navigation"_. Re-issue `Query` after each `Navigate`. See
+  [ADR-0010](../../docs/adr/0010-element-lifecycle-and-capability-gating.md).
 - **`Close` tears down one session.** The per-session
   `BrowserContext` and `Page` are closed; the shared `Browser`
   keeps running so other sessions are unaffected. Closing an

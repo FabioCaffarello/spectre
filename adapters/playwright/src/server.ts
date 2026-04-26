@@ -124,10 +124,7 @@ const errorResponse = (
     error: { code, message },
   });
 
-const queryError = (
-  code: DriverError_Code,
-  message: string,
-): QueryResponse =>
+const queryError = (code: DriverError_Code, message: string): QueryResponse =>
   create(QueryResponseSchema, {
     error: { code, message },
   });
@@ -140,10 +137,7 @@ const extractError = (
     error: { code, message },
   });
 
-const closeError = (
-  code: DriverError_Code,
-  message: string,
-): CloseResponse =>
+const closeError = (code: DriverError_Code, message: string): CloseResponse =>
   create(CloseResponseSchema, {
     error: { code, message },
   });
@@ -359,8 +353,7 @@ export const createDriverService = (
       // pages with many matches and small `limit` this is wasteful;
       // accept the cost until real workloads surface real numbers.
       const matches = await locator.all();
-      const limited =
-        req.limit > 0 ? matches.slice(0, req.limit) : matches;
+      const limited = req.limit > 0 ? matches.slice(0, req.limit) : matches;
       const ids = sessions.allocateRefs(req.sessionId, limited);
       return create(QueryResponseSchema, {
         elements: ids.map((opaqueId) => ({ opaqueId })),
@@ -428,7 +421,12 @@ export const createDriverService = (
     const entries: { name: string; jsonValue: string }[] = [];
     for (const field of req.fields) {
       try {
-        const value = await readField(locator, field.name, field.mode, field.arg);
+        const value = await readField(
+          locator,
+          field.name,
+          field.mode,
+          field.arg,
+        );
         entries.push({
           name: field.name,
           jsonValue: JSON.stringify(value),
