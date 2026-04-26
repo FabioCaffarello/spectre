@@ -37,6 +37,7 @@ A decision moves through three states:
 | 0012  | [Engine DSL surface, planner architecture, and execution pipeline](0012-engine-dsl-and-execution-pipeline.md) | accepted |
 | 0013  | [CLI as engine binary](0013-cli-as-engine-binary.md) (supersedes ADR-0002 CLI row) | accepted |
 | 0014  | [SeleniumBase adapter and cross-language conformance](0014-seleniumbase-adapter-and-cross-language-conformance.md) | accepted |
+| 0015  | [SeleniumBase element lifecycle and screenshot coverage](0015-seleniumbase-element-lifecycle-and-screenshot-coverage.md) | accepted |
 
 ## When to write an ADR
 

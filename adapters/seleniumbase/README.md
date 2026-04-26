@@ -2,13 +2,20 @@
 
 Spectre's reference SeleniumBase driver adapter.
 
-> **Status:** v0.1.0a0 — Phase 2 in progress. PR9 implements
-> `Initialize`, `Navigate`, and a thin `Close` over gRPC on a Unix
-> domain socket. Capabilities declared: `["navigation"]`. The other
-> three RPCs (`Query`, `Extract`, `Screenshot`) respond
-> `UNIMPLEMENTED`; PR10/PR11 will fill them in.
-> See [ADR-0014](../../docs/adr/0014-seleniumbase-adapter-and-cross-language-conformance.md)
-> for the PR9 decisions and the
+> **Status:** v0.1.0a0 — Phase 2 in progress. PR10 closes the
+> v1alpha1 unary surface for this driver: `Initialize`,
+> `Navigate`, `Close`, `Query`, `Extract`, and `Screenshot` all
+> ship over gRPC on a Unix domain socket. Capabilities declared:
+> twelve names — `["extract_attribute", "extract_eval",
+> "extract_html", "extract_text", "js_execution", "navigation",
+> "query_attribute", "query_css", "query_text", "query_xpath",
+> "screenshot_element", "screenshot_viewport"]`.
+> `screenshot_full_page` is *intentionally absent* — see
+> [ADR-0015 §5](../../docs/adr/0015-seleniumbase-element-lifecycle-and-screenshot-coverage.md#5-screenshot_full_page-is-omitted-from-the-seleniumbase-capability-list).
+> See
+> [ADR-0014](../../docs/adr/0014-seleniumbase-adapter-and-cross-language-conformance.md)
+> for the PR9 decisions, ADR-0015 for the PR10 deviations from
+> the Playwright contract, and the
 > [roadmap](../../docs/roadmap.md) for the full Phase 2 picture.
 
 ## Build
@@ -92,12 +99,16 @@ adapters/seleniumbase/
 │   ├── __init__.py        # PROTOCOL_VERSION, __version__
 │   ├── adapter.py         # entry point — argv + signals + lifecycle
 │   ├── server.py          # gRPC service implementation
-│   ├── sessions.py        # SessionManager + lazy Driver factory
+│   ├── sessions.py        # SessionManager + lazy Driver factory + ElementRegistry
+│   ├── elements.py        # per-session ElementRef registry (ADR-0010 §2)
+│   ├── selectors.py       # SELECTOR_KIND_TEXT XPath escape (ADR-0015 §3)
 │   ├── capabilities.py    # declared capability list + coherence check
 │   └── errors.py          # Selenium-to-DriverError mapping
 ├── tests/
 │   ├── test_smoke.py
 │   ├── test_sessions.py
+│   ├── test_elements.py
+│   ├── test_selectors.py
 │   ├── test_capabilities.py
 │   └── test_errors.py
 ├── driver.yaml            # adapter manifest (transport, capabilities, runtime)
@@ -111,13 +122,14 @@ adapters/seleniumbase/
   channel (transport configured in `driver.yaml`). Built on the
   `grpcio` Python runtime; see ADR-0008 for the framework
   rationale carried forward.
-- Implementations of `Initialize`, `Navigate`, and `Close` against
-  the SeleniumBase API. Other unary RPCs return `UNIMPLEMENTED`
-  and ship in PR10/PR11.
-- Capability declarations in `driver.yaml`, added incrementally as
-  each capability passes the conformance suite. The declared list
-  must match `src/spectre_seleniumbase/capabilities.py` exactly —
-  the conformance suite asserts this at runtime.
+- Implementations of every v1alpha1 unary RPC against the
+  SeleniumBase / Selenium WebDriver API: `Initialize`,
+  `Navigate`, `Close`, `Query`, `Extract`, and `Screenshot`
+  (viewport + element scopes only; see below).
+- Capability declarations in `driver.yaml`, added incrementally
+  as each capability passes the conformance suite. The declared
+  list must match `src/spectre_seleniumbase/capabilities.py`
+  exactly — the conformance suite asserts this at runtime.
 
 ### Navigate semantics
 
@@ -152,6 +164,55 @@ adapters/seleniumbase/
   The full table is in
   [ADR-0014 §3](../../docs/adr/0014-seleniumbase-adapter-and-cross-language-conformance.md).
 
+### Strict ElementRef contract
+
+`Query` allocates UUID-keyed `ElementRef`s for every match it
+returns; `Extract` and element-scoped `Screenshot` look those
+ids up via the per-session registry. Each ref is tagged with the
+session's generation counter at allocation time. A successful
+`Navigate` bumps the generation, so every ref allocated against
+the prior page is invalidated. The post-Navigate stale path
+returns `CODE_INVALID_ARGUMENT` with the message
+`element reference is stale; query was performed before a
+navigation` (carried over byte-for-byte from the Playwright
+contract in ADR-0010 §1).
+
+The Selenium-specific case the Playwright contract did not have
+to confront is the SPA mid-generation mutation: a JavaScript
+re-render that detaches the element's underlying DOM node
+without a protocol-level `Navigate`. Selenium raises
+`StaleElementReferenceException` from the next method call on
+the affected `WebElement`. The adapter catches it in the
+`Extract` field-reading loop and the `Screenshot` capture path,
+returning `CODE_INVALID_ARGUMENT` with the *distinct* message
+`element became stale during page state change`. Both messages
+share one wire code; the message text is the operator-facing
+signal that distinguishes the cause. ADR-0015 §2 records the
+decision.
+
+### Screenshot scope coverage
+
+The adapter declares **two** screenshot capabilities:
+`screenshot_viewport` and `screenshot_element`. The third
+Playwright capability — `screenshot_full_page` — is
+*intentionally not declared*. Selenium WebDriver returns the
+viewport by default, and the workarounds (window-resize tricks,
+Chromium-specific CDP calls) either produce wrong images on
+realistic pages or couple the adapter to one browser family.
+The capability progression contract from ADR-0014 §1 says
+declared = tested; without a reliable, browser-independent
+implementation, declaring the capability would be a lie.
+
+A `Screenshot` request with `scope == FULL_PAGE` is rejected
+with `CODE_CAPABILITY_MISSING` and the message
+`the seleniumbase driver does not declare screenshot_full_page`.
+The engine planner is the primary line of defence: a job whose
+required capabilities include `screenshot_full_page` against
+this driver will fail at `spectre validate` time, before any
+Chrome process launches. ADR-0015 §5 records the rationale and
+the v1alpha2 path forward (likely a Chromium-specific
+`screenshot_full_page_cdp` sub-capability).
+
 ### Capability coherence
 
 The startup invariant `assert_capability_coherence` rejects a
@@ -180,4 +241,6 @@ which depends on it) before `uv sync`. See
 - ADRs: [0008](../../docs/adr/0008-driver-handshake-and-conformance-harness.md),
   [0009](../../docs/adr/0009-navigate-and-session-lifecycle.md),
   [0010](../../docs/adr/0010-element-lifecycle-and-capability-gating.md),
-  [0014](../../docs/adr/0014-seleniumbase-adapter-and-cross-language-conformance.md)
+  [0011](../../docs/adr/0011-screenshot-rpc-and-payload-boundaries.md),
+  [0014](../../docs/adr/0014-seleniumbase-adapter-and-cross-language-conformance.md),
+  [0015](../../docs/adr/0015-seleniumbase-element-lifecycle-and-screenshot-coverage.md)

@@ -254,12 +254,19 @@ sb-install-chromedriver: sb-bootstrap
     cd adapters/seleniumbase && \
     .venv/bin/python -m seleniumbase install chromedriver
 
-# Run only the SeleniumBase conformance tests (Initialize + Navigate
-# in PR9; PR10/PR11 will grow this matcher). Useful for iterating
-# on the Python adapter without re-running the Playwright suite.
+# Run only the SeleniumBase conformance tests. PR9 wired
+# Initialize + Navigate; PR10 added Close, Query, Extract, and
+# Screenshot. Useful for iterating on the Python adapter without
+# re-running the Playwright suite.
 sb-conf-test: sb-bootstrap sb-install-chromedriver conf-bootstrap
     cd tools/conformance && \
-    uv run pytest tests/test_seleniumbase_initialize.py tests/test_seleniumbase_navigate.py
+    uv run pytest \
+        tests/test_seleniumbase_initialize.py \
+        tests/test_seleniumbase_navigate.py \
+        tests/test_seleniumbase_close.py \
+        tests/test_seleniumbase_query.py \
+        tests/test_seleniumbase_extract.py \
+        tests/test_seleniumbase_screenshot.py
 
 # ---------------------------------------------------------------------------
 # Python conformance suite (tools/conformance)
