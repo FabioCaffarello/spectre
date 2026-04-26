@@ -7,16 +7,29 @@ transports:
     command: ["./bin/adapter"]
 
 # Capabilities follow the "declared = tested" rule from ADR-0014 §1.
-# PR11 implements Initialize + Navigate against the conformance suite,
-# so `navigation` is the only declared capability today. PR12 will
-# grow the list to roughly five or six entries (`query_css`,
-# `query_xpath`, `extract_text`, `extract_html`, `extract_attribute`,
-# possibly `query_text` / `query_attribute`). The screenshot family
-# and `js_execution` / `extract_eval` will *never* be declared by
-# this adapter — the underlying runtime has no DOM and no JavaScript
-# engine. ADR-0016 §5 records the architectural framing.
+# Six entries, alphabetical, declared by PR12 (Close + Query +
+# Extract). The capability list will not grow further in v1alpha1:
+#
+#   - `js_execution` and `extract_eval` are absent — no JavaScript
+#     engine, the coherence rule from ADR-0010 §3 forbids declaring
+#     extract_eval without js_execution.
+#   - `screenshot_viewport`, `screenshot_full_page`,
+#     `screenshot_element` are absent — no rendering pipeline.
+#   - `query_text` and `query_attribute` are omitted under
+#     ADR-0017 §1 because cross-driver semantic equivalence cannot
+#     be honoured (Playwright's `getByText` searches rendered
+#     visible text; goquery's `:contains()` searches DOM text;
+#     SeleniumBase via XPath sits between them). A single name with
+#     three semantic interpretations defeats the planning surface.
+#
+# ADR-0016 §5 / ADR-0017 §1 record the architectural framing.
 capabilities:
+  - extract_attribute
+  - extract_html
+  - extract_text
   - navigation
+  - query_css
+  - query_xpath
 
 # The adapter invokes `curl_chrome116` by default. Operators can
 # pick a different curl-impersonate variant by setting

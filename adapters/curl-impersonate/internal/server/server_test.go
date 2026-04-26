@@ -63,8 +63,22 @@ func TestInitializeReturnsSessionAndCapabilities(t *testing.T) {
 	if caps == nil {
 		t.Fatal("Initialize must populate capabilities envelope")
 	}
-	if got := caps.GetNames(); len(got) != 1 || got[0] != "navigation" {
-		t.Fatalf("PR11 capability list must be ['navigation']; got %v", got)
+	wantNames := []string{
+		"extract_attribute",
+		"extract_html",
+		"extract_text",
+		"navigation",
+		"query_css",
+		"query_xpath",
+	}
+	got := caps.GetNames()
+	if len(got) != len(wantNames) {
+		t.Fatalf("PR12 capability list must have %d entries; got %d (%v)", len(wantNames), len(got), got)
+	}
+	for i := range wantNames {
+		if got[i] != wantNames[i] {
+			t.Fatalf("PR12 capability list must be exactly %v; got %v", wantNames, got)
+		}
 	}
 	if caps.GetDriverVersion() == "" {
 		t.Fatal("driver_version must be populated")

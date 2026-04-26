@@ -8,11 +8,47 @@ import (
 	"testing"
 )
 
-func TestNamesReturnsPR11List(t *testing.T) {
+func TestNamesReturnsPR12List(t *testing.T) {
 	got := Names()
-	want := []string{"navigation"}
+	want := []string{
+		"extract_attribute",
+		"extract_html",
+		"extract_text",
+		"navigation",
+		"query_css",
+		"query_xpath",
+	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("PR11 capability list must be exactly %v; got %v", want, got)
+		t.Fatalf("PR12 capability list must be exactly %v; got %v", want, got)
+	}
+}
+
+func TestNamesAreAlphabetical(t *testing.T) {
+	got := Names()
+	for i := 1; i < len(got); i++ {
+		if got[i-1] >= got[i] {
+			t.Fatalf("capability list must be strictly alphabetical: %v", got)
+		}
+	}
+}
+
+func TestForbiddenCapabilitiesAbsent(t *testing.T) {
+	// ADR-0016 §5 / ADR-0017 §1: this driver will never declare
+	// any of these in v1alpha1.
+	got := Names()
+	forbidden := map[string]struct{}{
+		"js_execution":         {},
+		"extract_eval":         {},
+		"screenshot_viewport":  {},
+		"screenshot_element":   {},
+		"screenshot_full_page": {},
+		"query_text":           {},
+		"query_attribute":      {},
+	}
+	for _, name := range got {
+		if _, bad := forbidden[name]; bad {
+			t.Fatalf("forbidden capability %q must not be declared", name)
+		}
 	}
 }
 
@@ -25,9 +61,9 @@ func TestNamesReturnsACopy(t *testing.T) {
 	}
 }
 
-func TestAssertCoherenceAcceptsNavigationOnly(t *testing.T) {
-	if err := AssertCoherence([]string{Navigation}); err != nil {
-		t.Fatalf("PR11 declared list must satisfy coherence: %v", err)
+func TestAssertCoherenceAcceptsDeclaredList(t *testing.T) {
+	if err := AssertCoherence(Names()); err != nil {
+		t.Fatalf("declared list must satisfy coherence: %v", err)
 	}
 }
 

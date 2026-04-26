@@ -12,11 +12,14 @@
 // asserts list-equality (not set-equality) between this constant
 // and the manifest, so a deterministic order is required.
 //
-// PR11 declares only `navigation`. PR12 will add the Query and
-// Extract capability names alongside their conformance tests
-// (declared = tested, ADR-0014 §1). The screenshot family and
-// the JS-execution family will *never* be declared by this
-// adapter — see ADR-0016 §5 for the rationale.
+// PR12 grows the list to six entries — alphabetical:
+// extract_attribute, extract_html, extract_text, navigation,
+// query_css, query_xpath. query_text and query_attribute are
+// deliberately omitted because semantic equivalence with the
+// browser drivers cannot be honoured by a static-HTML adapter
+// (ADR-0017 §1). The screenshot family and the JS-execution
+// family remain permanently absent (no DOM, no rendering, no JS
+// engine) — see ADR-0016 §5.
 package capabilities
 
 import "fmt"
@@ -47,13 +50,25 @@ const DriverVersion = "0.1.0a0"
 // names is the ordered, alphabetical list of capabilities
 // declared at handshake. Kept private so callers go through
 // Names() and cannot mutate the slice in place.
+//
+// Six entries (alphabetical) as of PR12. The list will not grow
+// further in v1alpha1 — `js_execution` and the screenshot family
+// require runtime primitives this driver does not have, and
+// `query_text` / `query_attribute` would violate the cross-driver
+// semantic-equivalence contract from ADR-0017 §1.
 var names = []string{
+	ExtractAttribute,
+	ExtractHTML,
+	ExtractText,
 	Navigation,
+	QueryCSS,
+	QueryXPath,
 }
 
 // Names returns a fresh copy of the declared capability list,
-// alphabetically ordered. PR11 declares one entry; PR12 grows
-// the list to five or six entries.
+// alphabetically ordered. The byte-for-byte conformance assertion
+// from ADR-0008 compares this against driver.yaml; the order is
+// load-bearing.
 func Names() []string {
 	out := make([]string, len(names))
 	copy(out, names)
