@@ -3,17 +3,24 @@
 A minimal Spectre job that fetches the Hacker News front page and
 extracts the title and URL of each story.
 
-> **Status:** runnable via the engine's example binary (`cargo run
-> --example hello-hackernews` from `core/engine/`). The Go
-> `spectre run` CLI is the v1alpha1 user contract; it is deferred to
-> PR8. See the [roadmap](../../docs/roadmap.md) for the full Phase 1
-> picture.
+> **Status:** runnable via `spectre run job.yaml`. ADR-0013 made
+> the engine binary the `spectre` CLI; this example is the
+> canonical input to `spectre run`. See the
+> [roadmap](../../docs/roadmap.md) for the full Phase 1 picture.
 
 ## Run it
 
+From the repository root:
+
 ```bash
-cd core/engine
-cargo run --example hello-hackernews -- --verbose
+just spectre-build
+just spectre-run examples/hello-hackernews/job.yaml --verbose
+```
+
+Or, with the binary on `$PATH`:
+
+```bash
+spectre run examples/hello-hackernews/job.yaml --verbose
 ```
 
 The first run installs the Chromium binary the Playwright adapter
@@ -24,8 +31,15 @@ The job writes one JSON object per story to `stories.jsonl`,
 resolved relative to this directory (the directory containing
 `job.yaml`). With `--verbose`, the engine prints the compiled
 `Plan` to stderr before execution so you can see the protocol-level
-RPC sequence. To pipe the output instead, set `output.path: '-'` in
-the YAML.
+RPC sequence. To pipe the output instead, set `output.path: '-'`
+in the YAML or pass `--output=-` to override it for one run.
+
+To inspect the plan without running anything (useful when editing
+the YAML), use `spectre validate`:
+
+```bash
+spectre validate examples/hello-hackernews/job.yaml
+```
 
 Expected output (one line per story):
 

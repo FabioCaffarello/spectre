@@ -24,7 +24,7 @@ A decision moves through three states:
 | ID    | Title                                                                         | Status   |
 |-------|-------------------------------------------------------------------------------|----------|
 | 0001  | [Driver protocol as architectural primitive](0001-driver-protocol-as-architectural-primitive.md) | accepted |
-| 0002  | [Polyglot language selection](0002-polyglot-language-selection.md)            | accepted |
+| 0002  | [Polyglot language selection](0002-polyglot-language-selection.md)            | accepted (CLI row superseded by ADR-0013) |
 | 0003  | [Schema-transport separation](0003-schema-transport-separation.md)            | accepted |
 | 0004  | [Protocol versioning strategy](0004-protocol-versioning-strategy.md)          | accepted |
 | 0005  | [Licensing (Apache 2.0)](0005-licensing.md)                                   | accepted |
@@ -35,6 +35,7 @@ A decision moves through three states:
 | 0010  | [Element lifecycle, capability granularity, and selector mapping](0010-element-lifecycle-and-capability-gating.md) | accepted |
 | 0011  | [Screenshot RPC, scope mapping, and payload boundaries](0011-screenshot-rpc-and-payload-boundaries.md) | accepted |
 | 0012  | [Engine DSL surface, planner architecture, and execution pipeline](0012-engine-dsl-and-execution-pipeline.md) | accepted |
+| 0013  | [CLI as engine binary](0013-cli-as-engine-binary.md) (supersedes ADR-0002 CLI row) | accepted |
 
 ## When to write an ADR
 

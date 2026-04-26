@@ -14,9 +14,13 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
-[[example]]
-name = "hello-hackernews"
-path = "examples/hello-hackernews.rs"
+# The CLI binary. ADR-0013 explains why the spectre CLI lives in the
+# engine crate rather than in a separate Go binary; the [[bin]] name is
+# the user-facing command (`cargo install spectre-engine` produces
+# `spectre` on $PATH, mirroring `cargo`/`rg`/etc.).
+[[bin]]
+name = "spectre"
+path = "src/bin/spectre.rs"
 
 [dependencies]
 # The engine speaks the Driver Protocol over gRPC. tonic provides the
@@ -46,9 +50,18 @@ serde_json = "1"
 serde_yaml_ng = "0.10"
 
 # Error plumbing: thiserror for the public `EngineError` enum;
-# anyhow is reserved for the example binary (where context-rich
-# top-level errors are appropriate).
+# anyhow gives the spectre binary context-rich top-level errors
+# without forcing a public error type on the library API.
 thiserror = "1"
+anyhow = "1"
+
+# CLI argument parsing. clap with the derive feature is the de facto
+# Rust ecosystem standard; see ADR-0013 §4 for the rationale.
+clap = { version = "4", features = ["derive"] }
+
+# tracing-subscriber initialises the binary's stderr logging. WARN by
+# default, INFO with --verbose, RUST_LOG overrides via env-filter.
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # UDS path generation, regex matching of the readiness line, URL
 # validation in DSL parsing, structured logs.
@@ -74,15 +87,6 @@ tonic-build = { version = "0.12", default-features = false, features = ["prost"]
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
-
-# anyhow gives the example binary and the integration test
-# context-rich top-level errors without forcing a public error type
-# on the library.
-anyhow = "1"
-
-# tracing-subscriber initialises stderr logging in the example binary
-# and the integration test.
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # tempfile is used by output-sink unit tests and the integration test
 # to allocate a deterministic JSONL output path.

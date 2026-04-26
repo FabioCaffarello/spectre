@@ -30,6 +30,13 @@ bin/
 *.out
 vendor/
 
+# Source-controlled `bin/` directories that are not Go build outputs.
+# `core/engine/src/bin/` hosts Cargo binary entry points (e.g. the
+# `spectre` CLI per ADR-0013); Cargo's convention names the directory
+# `bin/`, which collides with the Go rule above.
+!core/engine/src/bin/
+!core/engine/src/bin/**
+
 # Node / TypeScript
 node_modules/
 dist/

@@ -117,6 +117,8 @@ pub enum LauncherError {
 struct RawManifest {
     #[serde(default)]
     transports: Vec<RawTransport>,
+    #[serde(default)]
+    capabilities: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,6 +268,36 @@ impl Drop for DriverHandle {
             }
         }
     }
+}
+
+/// Path to a driver's manifest:
+/// `<adapters_path>/<driver>/driver.yaml`. The launcher and the
+/// `spectre validate` subcommand both consume this — keep the
+/// resolution in one place.
+#[must_use]
+pub fn manifest_path_for(adapters_path: &Path, driver: &str) -> PathBuf {
+    adapters_path.join(driver).join("driver.yaml")
+}
+
+/// Read `driver.yaml` and return its declared `capabilities:` list.
+/// Used by `spectre validate` to check a plan's required capabilities
+/// without launching the driver subprocess.
+///
+/// # Errors
+///
+/// Returns [`LauncherError::ManifestRead`] or
+/// [`LauncherError::ManifestParse`] on the corresponding failures.
+pub fn load_declared_capabilities(manifest_path: &Path) -> Result<Vec<String>, LauncherError> {
+    let raw = std::fs::read_to_string(manifest_path).map_err(|e| LauncherError::ManifestRead {
+        path: manifest_path.to_path_buf(),
+        source: e,
+    })?;
+    let manifest: RawManifest =
+        serde_yaml_ng::from_str(&raw).map_err(|e| LauncherError::ManifestParse {
+            path: manifest_path.to_path_buf(),
+            source: e,
+        })?;
+    Ok(manifest.capabilities)
 }
 
 /// Read `driver.yaml` and return the launch command for the first

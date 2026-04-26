@@ -11,29 +11,54 @@ produce JSON Lines output.
 > `extract` with a small field-spec table); the driver list is
 > hardcoded to `playwright`. See
 > [ADR-0012](../../docs/adr/0012-engine-dsl-and-execution-pipeline.md)
-> for the design and the
-> [roadmap](../../docs/roadmap.md) for what is still outstanding in
-> Phase 1.
+> for the design,
+> [ADR-0013](../../docs/adr/0013-cli-as-engine-binary.md) for why
+> the CLI lives in this crate, and the
+> [roadmap](../../docs/roadmap.md) for the project's current phase.
 
-## Run the example
+## Build the binary
 
-`hello-hackernews` is a runnable example binary that exercises the
-full pipeline against the live Hacker News front page:
+The crate produces a `[[bin]]` named `spectre` — the same binary
+that PR8 promoted from PR7's example. From the repository root:
 
 ```bash
-cd core/engine
-cargo run --example hello-hackernews -- --verbose
+just spectre-build
+# → core/engine/target/release/spectre
+```
+
+`cargo install spectre-engine` installs the same binary on
+`$PATH`. Pre-built release artifacts are out of scope for this PR
+(see ADR-0013 §5).
+
+## Run the hello-hackernews job
+
+```bash
+just spectre-build
+just spectre-run examples/hello-hackernews/job.yaml --verbose
 ```
 
 Output: one JSON row per story, written to
-`examples/hello-hackernews/stories.jsonl` relative to the job file
-(or to stdout when `output.path` is `-`).
+`examples/hello-hackernews/stories.jsonl` relative to the job
+file (or to stdout when `output.path` is `-` or `--output=-` is
+passed).
 
 The `--verbose` flag prints the compiled `Plan` to stderr before
 execution. Use it to see exactly which RPCs the engine will issue.
+Use `spectre validate examples/hello-hackernews/job.yaml` to do
+the same parse + plan + capability check without launching the
+driver — useful when iterating on YAML.
 
-The Go CLI (`spectre run`) is deferred to PR8 — until then, the
-example binary is the user-visible entry point.
+## Subcommands
+
+| Subcommand            | Purpose                                                                |
+|-----------------------|------------------------------------------------------------------------|
+| `spectre run JOB`     | Parse, plan, launch the driver, execute, and write JSONL.              |
+| `spectre validate JOB`| Parse, plan, check declared capabilities; print the plan; no launch.   |
+| `spectre version`     | Print engine and protocol versions.                                    |
+
+`run` accepts `--verbose`, `--output=<path>` (use `-` for stdout),
+and `--adapters-path=<path>` to override the default adapters
+directory resolution.
 
 ## DSL surface
 
@@ -66,25 +91,59 @@ See ADR-0012 §1 for the rationale.
 From the repository root:
 
 ```bash
-just engine-build       # release build
-just engine-test        # cargo test (unit tests; integration test is gated)
-just engine-lint        # cargo fmt --check + cargo clippy -D warnings
-just engine-run-hello   # cargo run --example hello-hackernews
+just engine-build              # release build (library + binary)
+just spectre-build             # release build of just the spectre binary
+just engine-test               # cargo test (unit tests; integration is gated)
+just engine-lint               # cargo fmt --check + cargo clippy -D warnings
+just spectre-run JOB           # spectre run <JOB>
+just spectre-validate JOB      # spectre validate <JOB>
+just spectre-version           # spectre version (smoke test)
 ```
 
 Or directly inside this directory:
 
 ```bash
-cargo build --release
+cargo build --release --bin spectre
 cargo test                                            # unit tests
 PLAYWRIGHT_AVAILABLE=1 cargo test -- --ignored        # integration test
-cargo run --example hello-hackernews -- --verbose
+./target/release/spectre run ../../examples/hello-hackernews/job.yaml --verbose
 ```
 
 The integration test is `#[ignore]` by default — it builds the
 Playwright adapter and launches Chromium. CI runs it in a dedicated
 job with the browser cache populated; locally, run it explicitly only
 when you have Chromium available.
+
+## Developer workflow
+
+When iterating on the engine itself, `cargo run --bin spectre` is
+faster than the release build:
+
+```bash
+cd core/engine
+cargo run --bin spectre -- validate ../../examples/hello-hackernews/job.yaml
+cargo run --bin spectre -- run ../../examples/hello-hackernews/job.yaml --verbose
+```
+
+`spectre validate` is the right tool for editing YAML without
+paying for a browser launch on every attempt. The release binary
+is what users install; the debug binary is what engine maintainers
+iterate against.
+
+## Static Linux build
+
+Per ADR-0013 §5, the documented Linux release target is
+`x86_64-unknown-linux-musl` for a fully static binary that runs on
+any Linux without a glibc dependency:
+
+```bash
+# Requires `musl-tools` (apt) or `cargo zigbuild` on the build host.
+cargo build --release --target x86_64-unknown-linux-musl --bin spectre
+```
+
+macOS uses the default target (`cargo build --release --bin spectre`),
+which links to ABI-stable `libSystem`. Windows is deferred (ADR-0008
+on UDS portability).
 
 ## Module layout
 

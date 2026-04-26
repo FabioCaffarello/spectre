@@ -49,9 +49,6 @@ For the full architecture, see [docs/architecture/overview.md](docs/architecture
 
 ## Quick start
 
-> **This example does not run yet.** It shows the intended experience
-> once the engine and at least one driver are functional.
-
 ```yaml
 # job.yaml — extract top stories from Hacker News
 spectre: v1alpha1
@@ -69,8 +66,18 @@ output:
 ```
 
 ```bash
-spectre run job.yaml
+git clone https://github.com/FabioCaffarello/spectre && cd spectre
+just bootstrap
+just pw-install-browsers
+just spectre-build
+just spectre-run examples/hello-hackernews/job.yaml
 ```
+
+`just spectre-build` produces `core/engine/target/release/spectre`.
+`spectre validate <job.yaml>` parses, plans, and checks declared
+capabilities without launching the driver — handy when iterating on
+YAML. See [ADR-0013](docs/adr/0013-cli-as-engine-binary.md) for why
+the CLI lives in the engine crate.
 
 ## How Spectre compares
 
@@ -93,14 +100,23 @@ exist yet.
 
 ## Project status
 
-**Phase 0 — Foundation** (current)
+**Phase 1 — Hello, World** (complete)
 
-- Repository structure established
-- Driver Protocol defined at v1alpha1
-- Three reference adapter skeletons: Playwright, SeleniumBase, curl-impersonate
-- CI/CD pipelines, pre-commit hooks, build orchestration
+- Repository structure, Driver Protocol at v1alpha1, three reference
+  adapter skeletons, CI/CD, pre-commit hooks, build orchestration.
+- Engine parses the DSL, plans against driver capabilities, launches
+  the Playwright adapter as a subprocess over a UDS, runs the full
+  RPC sequence, and emits JSONL.
+- `spectre run examples/hello-hackernews/job.yaml` produces real
+  Hacker News data. ADR-0013 records the language decision behind
+  the CLI binary.
 
-See the full [roadmap](docs/roadmap.md) for Phases 1–5.
+**Next: Phase 2 — three drivers, one protocol.** The protocol's
+value is validated when the same `job.yaml` runs unchanged across
+SeleniumBase and curl-impersonate. PR9+ introduces those drivers
+against the same v1alpha1 contract.
+
+See the full [roadmap](docs/roadmap.md) for Phases 2–5.
 
 ## Contributing
 
