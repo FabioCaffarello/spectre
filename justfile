@@ -320,6 +320,34 @@ conf-test: pw-build pw-install-browsers sb-bootstrap sb-install-chromedriver cur
     cd tools/conformance && uv run pytest
 
 # ---------------------------------------------------------------------------
+# Container images (Phase 2.5 — see ADR-0018)
+# ---------------------------------------------------------------------------
+
+# Build the engine Docker image as `spectre-engine:dev`. Single-arch
+# (linux/amd64) per ADR-0018 §5; multi-arch is release-engineering work.
+# Build context is the repo root so build.rs can resolve proto/ at the
+# same relative path it uses for native cargo builds.
+engine-image:
+    docker buildx build \
+        --platform=linux/amd64 \
+        -t spectre-engine:dev \
+        -f core/engine/Dockerfile \
+        --load \
+        .
+
+# Smoke-test the image by printing the engine and protocol versions.
+# Mirrors the CI engine-image job. The --platform flag is required on
+# Apple Silicon hosts (Docker emulates linux/amd64 via QEMU there).
+engine-image-run: engine-image
+    docker run --rm --platform=linux/amd64 spectre-engine:dev version
+
+# Devcontainer post-create entry point. Equivalent to running
+# `bash .devcontainer/post-create.sh`. Useful inside the container if
+# the contributor needs to re-bootstrap after a lockfile change.
+devcontainer-bootstrap:
+    bash .devcontainer/post-create.sh
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 
