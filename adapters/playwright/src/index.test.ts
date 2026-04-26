@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create } from "@bufbuild/protobuf";
-import type { Browser } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { describe, expect, it, vi } from "vitest";
 
 import { CAPABILITY_NAMES, DRIVER_VERSION } from "./capabilities.js";
@@ -180,6 +180,49 @@ describe("createDriverService", () => {
     expect(response.error?.message).toBe(
       "element is required when scope is SCREENSHOT_SCOPE_ELEMENT",
     );
+  });
+
+  it("screenshot does not bump the session generation (read-only contract — ADR-0011 decision 4)", async () => {
+    // A fake browser whose page returns a fixed PNG buffer from
+    // `screenshot()`. Just enough surface for the handler to walk
+    // through the VIEWPORT path without a real Chromium.
+    const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const fakePage = {
+      screenshot: vi.fn(async () => PNG_HEADER),
+    } as unknown as Page;
+    const fakeContext = {
+      newPage: vi.fn(async () => fakePage),
+      close: vi.fn(async () => undefined),
+    } as unknown as BrowserContext;
+    const fakeBrowser = {
+      newContext: vi.fn(async () => fakeContext),
+      close: vi.fn(async () => undefined),
+    } as unknown as Browser;
+    const sessions = new SessionManager(async () => fakeBrowser);
+    const service = createDriverService(sessions);
+
+    const init = await service.initialize(
+      create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
+    );
+    // Mimic a post-Navigate state: the page is open and the
+    // generation counter has been bumped to 1. Screenshot must not
+    // touch either.
+    await sessions.getOrCreatePage(init.sessionId);
+    sessions.bumpGeneration(init.sessionId);
+    const generationBefore = sessions.currentGeneration(init.sessionId);
+    expect(generationBefore).toBe(1);
+
+    const response = await service.screenshot({
+      $typeName: "spectre.driver.v1alpha1.ScreenshotRequest",
+      sessionId: init.sessionId,
+      scope: 1,
+      format: 1,
+    } as never);
+
+    expect(response.error?.code).toBeFalsy();
+    expect(response.contentType).toBe("image/png");
+    expect(response.image.byteLength).toBeGreaterThan(0);
+    expect(sessions.currentGeneration(init.sessionId)).toBe(generationBefore);
   });
 
   it("close returns CODE_INVALID_ARGUMENT for an unknown session id", async () => {
