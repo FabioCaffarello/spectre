@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -434,11 +435,244 @@ func TestQueryHonoursLimit(t *testing.T) {
 	}
 }
 
-func TestUnimplementedRPCsReturnUnimplemented(t *testing.T) {
-	// PR12 implements Query and Extract; Screenshot stays
-	// permanently Unimplemented for this adapter (ADR-0016 §5,
-	// ADR-0017 §1) — the underlying runtime has no rendering
-	// pipeline.
+// queryFirst issues a CSS Query, asserts a non-error response with
+// at least one match, and returns the first ElementRef.
+func queryFirst(t *testing.T, srv *Server, sessionID, selector string) *driverv1alpha1.ElementRef {
+	t.Helper()
+	resp, err := srv.Query(context.Background(), &driverv1alpha1.QueryRequest{
+		SessionId: sessionID,
+		Selector:  selector,
+		Kind:      driverv1alpha1.SelectorKind_SELECTOR_KIND_CSS,
+	})
+	if err != nil {
+		t.Fatalf("Query err: %v", err)
+	}
+	if resp.GetError() != nil {
+		t.Fatalf("Query error: %v", resp.GetError())
+	}
+	if got := len(resp.GetElements()); got == 0 {
+		t.Fatalf("selector %q produced no matches", selector)
+	}
+	return resp.GetElements()[0]
+}
+
+func TestExtractTextContent(t *testing.T) {
+	srv, _, id := newServerWithFixture(t)
+	ref := queryFirst(t, srv, id, "#title")
+	resp, err := srv.Extract(context.Background(), &driverv1alpha1.ExtractRequest{
+		SessionId: id,
+		Element:   ref,
+		Fields: []*driverv1alpha1.Field{
+			{Name: "title", Mode: driverv1alpha1.Field_MODE_TEXT_CONTENT},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Extract err: %v", err)
+	}
+	if resp.GetError() != nil {
+		t.Fatalf("unexpected error: %v", resp.GetError())
+	}
+	if got := len(resp.GetValues().GetFields()); got != 1 {
+		t.Fatalf("expected 1 entry, got %d", got)
+	}
+	entry := resp.GetValues().GetFields()[0]
+	if got := entry.GetJsonValue(); got != `"Elements Page"` {
+		t.Fatalf("textContent: got %q, want %q", got, `"Elements Page"`)
+	}
+}
+
+func TestExtractAttributePresent(t *testing.T) {
+	srv, _, id := newServerWithFixture(t)
+	ref := queryFirst(t, srv, id, "#link")
+	resp, err := srv.Extract(context.Background(), &driverv1alpha1.ExtractRequest{
+		SessionId: id,
+		Element:   ref,
+		Fields: []*driverv1alpha1.Field{
+			{Name: "href", Mode: driverv1alpha1.Field_MODE_ATTR, Arg: "href"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Extract err: %v", err)
+	}
+	if resp.GetError() != nil {
+		t.Fatalf("unexpected error: %v", resp.GetError())
+	}
+	want := `"https://example.com/target"`
+	if got := resp.GetValues().GetFields()[0].GetJsonValue(); got != want {
+		t.Fatalf("href: got %q, want %q", got, want)
+	}
+}
+
+func TestExtractAttributeAbsentEncodesAsNull(t *testing.T) {
+	srv, _, id := newServerWithFixture(t)
+	ref := queryFirst(t, srv, id, "#link")
+	resp, err := srv.Extract(context.Background(), &driverv1alpha1.ExtractRequest{
+		SessionId: id,
+		Element:   ref,
+		Fields: []*driverv1alpha1.Field{
+			{Name: "missing", Mode: driverv1alpha1.Field_MODE_ATTR, Arg: "no-such-attr"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Extract err: %v", err)
+	}
+	if got := resp.GetValues().GetFields()[0].GetJsonValue(); got != `null` {
+		t.Fatalf("absent attr should JSON-encode as null; got %q", got)
+	}
+}
+
+func decodeJSONString(t *testing.T, raw string) string {
+	t.Helper()
+	var s string
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		t.Fatalf("json decode %q: %v", raw, err)
+	}
+	return s
+}
+
+func TestExtractInnerHtml(t *testing.T) {
+	srv, _, id := newServerWithFixture(t)
+	ref := queryFirst(t, srv, id, "#items")
+	resp, err := srv.Extract(context.Background(), &driverv1alpha1.ExtractRequest{
+		SessionId: id,
+		Element:   ref,
+		Fields: []*driverv1alpha1.Field{
+			{Name: "markup", Mode: driverv1alpha1.Field_MODE_INNER_HTML},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Extract err: %v", err)
+	}
+	inner := decodeJSONString(t, resp.GetValues().GetFields()[0].GetJsonValue())
+	if !strings.Contains(inner, "first") || !strings.Contains(inner, "<li") {
+		t.Fatalf("innerHTML should contain list items; got %q", inner)
+	}
+}
+
+func TestExtractOuterHtml(t *testing.T) {
+	srv, _, id := newServerWithFixture(t)
+	ref := queryFirst(t, srv, id, "#title")
+	resp, err := srv.Extract(context.Background(), &driverv1alpha1.ExtractRequest{
+		SessionId: id,
+		Element:   ref,
+		Fields: []*driverv1alpha1.Field{
+			{Name: "outer", Mode: driverv1alpha1.Field_MODE_OUTER_HTML},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Extract err: %v", err)
+	}
+	outer := decodeJSONString(t, resp.GetValues().GetFields()[0].GetJsonValue())
+	if !strings.Contains(outer, `<h1`) || !strings.Contains(outer, "Elements Page") {
+		t.Fatalf("outer HTML should contain <h1>...; got %q", outer)
+	}
+}
+
+func TestExtractEvalReturnsCapabilityMissing(t *testing.T) {
+	// The headline test for ADR-0017 §5: the runtime gate fires
+	// the moment any field requests MODE_EVAL because the adapter
+	// does not declare js_execution. The whole request fails with
+	// CODE_CAPABILITY_MISSING.
+	srv, _, id := newServerWithFixture(t)
+	ref := queryFirst(t, srv, id, "#title")
+	resp, err := srv.Extract(context.Background(), &driverv1alpha1.ExtractRequest{
+		SessionId: id,
+		Element:   ref,
+		Fields: []*driverv1alpha1.Field{
+			{Name: "upper", Mode: driverv1alpha1.Field_MODE_EVAL, Arg: "arguments[0].textContent.toUpperCase()"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Extract err: %v", err)
+	}
+	if resp.GetError() == nil {
+		t.Fatal("MODE_EVAL must surface a DriverError")
+	}
+	if got := resp.GetError().GetCode(); got != driverv1alpha1.DriverError_CODE_CAPABILITY_MISSING {
+		t.Fatalf("expected CODE_CAPABILITY_MISSING, got %v", got)
+	}
+	if msg := resp.GetError().GetMessage(); !strings.Contains(msg, "js_execution") {
+		t.Fatalf("rejection message must reference js_execution; got %q", msg)
+	}
+}
+
+func TestExtractAfterNavigateReturnsStale(t *testing.T) {
+	// Strict ElementRef invalidation across Navigates (ADR-0010
+	// §1, ADR-0017 §3). The same fixture body re-served on a
+	// second Navigate would still match #title, but the registry's
+	// generation check rejects the prior ref.
+	srv, mgr, id := newServerWithFixture(t)
+	ref := queryFirst(t, srv, id, "#title")
+
+	// Second Navigate against the same URL — different parsed doc,
+	// generation bumps, prior refs go stale.
+	if _, err := srv.Navigate(context.Background(), &driverv1alpha1.NavigateRequest{
+		SessionId: id,
+		Url:       "https://example.com/",
+	}); err != nil {
+		t.Fatalf("second Navigate: %v", err)
+	}
+	_ = mgr // silence unused linter on the helper
+
+	resp, err := srv.Extract(context.Background(), &driverv1alpha1.ExtractRequest{
+		SessionId: id,
+		Element:   ref,
+		Fields: []*driverv1alpha1.Field{
+			{Name: "t", Mode: driverv1alpha1.Field_MODE_TEXT_CONTENT},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Extract err: %v", err)
+	}
+	if resp.GetError() == nil {
+		t.Fatal("post-Navigate Extract must surface a DriverError")
+	}
+	if resp.GetError().GetCode() != driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT {
+		t.Fatalf("expected CODE_INVALID_ARGUMENT, got %v", resp.GetError().GetCode())
+	}
+	msg := strings.ToLower(resp.GetError().GetMessage())
+	if !strings.Contains(msg, "stale") || !strings.Contains(msg, "before a navigation") {
+		t.Fatalf("expected stale-navigate message, got %q", resp.GetError().GetMessage())
+	}
+}
+
+func TestExtractRejectsUnknownRef(t *testing.T) {
+	srv, _, id := newServerWithFixture(t)
+	resp, err := srv.Extract(context.Background(), &driverv1alpha1.ExtractRequest{
+		SessionId: id,
+		Element:   &driverv1alpha1.ElementRef{OpaqueId: "no-such-ref"},
+		Fields: []*driverv1alpha1.Field{
+			{Name: "t", Mode: driverv1alpha1.Field_MODE_TEXT_CONTENT},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Extract err: %v", err)
+	}
+	mustErrCode(t, resp.GetError(), driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT, "unknown")
+}
+
+func TestExtractRejectsUnspecifiedMode(t *testing.T) {
+	srv, _, id := newServerWithFixture(t)
+	ref := queryFirst(t, srv, id, "#title")
+	resp, err := srv.Extract(context.Background(), &driverv1alpha1.ExtractRequest{
+		SessionId: id,
+		Element:   ref,
+		Fields: []*driverv1alpha1.Field{
+			{Name: "x"}, // MODE_UNSPECIFIED
+		},
+	})
+	if err != nil {
+		t.Fatalf("Extract err: %v", err)
+	}
+	mustErrCode(t, resp.GetError(), driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT, "unspecified mode")
+}
+
+func TestScreenshotReturnsUnimplemented(t *testing.T) {
+	// Screenshot is permanently Unimplemented for this adapter —
+	// the underlying runtime has no rendering pipeline (ADR-0016
+	// §5, ADR-0017 §1). Engine-side, the planner already rejects
+	// any plan that needs a screenshot capability against
+	// driver: curl-impersonate before launch.
 	srv, mgr := newServerWithFetcher(t, mustNotCall(t))
 	session := mgr.Create()
 

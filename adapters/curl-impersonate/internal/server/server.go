@@ -16,6 +16,8 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"runtime"
 	"strings"
@@ -26,6 +28,7 @@ import (
 
 	caps "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/capabilities"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/curlx"
+	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/elements"
 	curlerrors "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/errors"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/parser"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/sessions"
@@ -309,10 +312,145 @@ func (s *Server) Query(_ context.Context, req *driverv1alpha1.QueryRequest) (*dr
 	return &driverv1alpha1.QueryResponse{Elements: out}, nil
 }
 
-// Extract is implemented in a subsequent commit. Until it lands,
-// it inherits codes.Unimplemented from the embedded
-// UnimplementedDriverServer. Screenshot is permanently
-// Unimplemented for this adapter (ADR-0016 §5).
+// Stale / unknown element-ref messages are reproduced verbatim
+// from ADR-0010 §1. The Playwright (TypeScript) and SeleniumBase
+// (Python) adapters use the same strings; tools that key on the
+// message are cross-driver-stable.
+const (
+	staleNavigateMessage = "element reference is stale; query was performed before a navigation"
+	unknownRefMessage    = "element reference is unknown"
+	modeEvalGateMessage  = "MODE_EVAL requires the js_execution capability; this adapter does not declare it"
+)
+
+// Extract reads the requested Field values off the element
+// referenced by element.opaque_id in the session's registry.
+//
+// Behaviour summary (ADR-0017 §5):
+//
+//   - MODE_EVAL fields short-circuit the entire request with
+//     CODE_CAPABILITY_MISSING (atomic fail-the-whole-request
+//     semantics from ADR-0010 §3). curl-impersonate has no
+//     JavaScript engine; this is the conformance suite's first
+//     test of the runtime capability gate's negative path.
+//   - MODE_UNSPECIFIED rejects with CODE_INVALID_ARGUMENT.
+//   - Stale / unknown ElementRefs reject with
+//     CODE_INVALID_ARGUMENT and the documented messages.
+//   - MODE_INNER_TEXT falls back to selection.Text() — the same
+//     output as MODE_TEXT_CONTENT — because computing rendered
+//     visibility requires a layout engine. Documented
+//     approximation; see ADR-0017 §5.
+func (s *Server) Extract(_ context.Context, req *driverv1alpha1.ExtractRequest) (*driverv1alpha1.ExtractResponse, error) {
+	if req.GetSessionId() == "" {
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"session_id is required"), nil
+	}
+	if !s.sessions.Has(req.GetSessionId()) {
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"unknown session_id "+quote(req.GetSessionId())+"; call Initialize first"), nil
+	}
+	opaqueID := ""
+	if el := req.GetElement(); el != nil {
+		opaqueID = el.GetOpaqueId()
+	}
+	if opaqueID == "" {
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"element.opaque_id is required"), nil
+	}
+	fields := req.GetFields()
+	if len(fields) == 0 {
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"at least one field is required"), nil
+	}
+
+	// MODE_EVAL gate — runs before any field is evaluated. If any
+	// field requests MODE_EVAL, fail the whole request with
+	// CODE_CAPABILITY_MISSING. ADR-0010 §3, ADR-0017 §1 / §5.
+	for _, f := range fields {
+		if f.GetMode() == driverv1alpha1.Field_MODE_EVAL {
+			return extractError(driverv1alpha1.DriverError_CODE_CAPABILITY_MISSING,
+				modeEvalGateMessage), nil
+		}
+	}
+	// Reject any unspecified mode up-front so the field-reading
+	// loop only ever sees real modes.
+	for _, f := range fields {
+		if f.GetMode() == driverv1alpha1.Field_MODE_UNSPECIFIED {
+			return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+				"field "+quote(f.GetName())+" has an unspecified mode"), nil
+		}
+	}
+
+	lookup := s.sessions.LookupElement(req.GetSessionId(), opaqueID)
+	switch lookup.Status {
+	case elements.StatusStale:
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			staleNavigateMessage), nil
+	case elements.StatusUnknown:
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			unknownRefMessage), nil
+	case elements.StatusOK:
+		// fall through
+	}
+
+	entries := make([]*driverv1alpha1.ExtractedValues_Entry, 0, len(fields))
+	for _, f := range fields {
+		value, err := readFieldValue(lookup.Selection, f.GetMode(), f.GetArg())
+		if err != nil {
+			return extractError(driverv1alpha1.DriverError_CODE_INTERNAL,
+				"read field "+quote(f.GetName())+": "+err.Error()), nil
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return extractError(driverv1alpha1.DriverError_CODE_INTERNAL,
+				"json encode field "+quote(f.GetName())+": "+err.Error()), nil
+		}
+		entries = append(entries, &driverv1alpha1.ExtractedValues_Entry{
+			Name:      f.GetName(),
+			JsonValue: string(encoded),
+		})
+	}
+	return &driverv1alpha1.ExtractResponse{
+		Values: &driverv1alpha1.ExtractedValues{Fields: entries},
+	}, nil
+}
+
+// readFieldValue reads one Field's value off a *goquery.Selection.
+// Returns an `any` so the JSON encoder produces null for absent
+// attributes (preserving the "absent vs present-but-empty"
+// distinction from ADR-0017 §5).
+func readFieldValue(sel *goquery.Selection, mode driverv1alpha1.Field_Mode, arg string) (any, error) {
+	switch mode {
+	case driverv1alpha1.Field_MODE_TEXT_CONTENT:
+		return sel.Text(), nil
+	case driverv1alpha1.Field_MODE_INNER_TEXT:
+		// Static-HTML approximation: no layout engine, no
+		// visibility filtering. Same output as TEXT_CONTENT.
+		// ADR-0017 §5 records the trade-off and the v1alpha2
+		// growth path (a separate capability that adapters with
+		// renderers can declare).
+		return sel.Text(), nil
+	case driverv1alpha1.Field_MODE_INNER_HTML:
+		return sel.Html()
+	case driverv1alpha1.Field_MODE_OUTER_HTML:
+		return parser.OuterHtml(sel)
+	case driverv1alpha1.Field_MODE_ATTR:
+		value, exists := sel.Attr(arg)
+		if !exists {
+			return nil, nil
+		}
+		return value, nil
+	}
+	return nil, fmt.Errorf("unsupported field mode %v", mode)
+}
+
+func extractError(code driverv1alpha1.DriverError_Code, message string) *driverv1alpha1.ExtractResponse {
+	return &driverv1alpha1.ExtractResponse{
+		Error: &driverv1alpha1.DriverError{
+			Code:    code,
+			Message: message,
+		},
+	}
+}
 
 func queryError(code driverv1alpha1.DriverError_Code, message string) *driverv1alpha1.QueryResponse {
 	return &driverv1alpha1.QueryResponse{
