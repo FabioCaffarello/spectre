@@ -24,8 +24,8 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	caps "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/capabilities"
-	curlerrors "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/errors"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/curlx"
+	curlerrors "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/errors"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/sessions"
 	driverv1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1"
 )
