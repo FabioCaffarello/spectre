@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-26 (PR11 in review; Phase 2 in progress).
+> **Last updated:** 2026-04-26 (PR12 in review; Phase 2 closing).
 
 ## Phase 0 — Foundation (current)
 
@@ -108,7 +108,7 @@ reference runtimes.
     Playwright adapter declares the umbrella name today; the
     SeleniumBase adapter does not, validating the capability
     progression contract from ADR-0014 §1.
-- [ ] curl-impersonate reference adapter — `v1alpha1` capability set
+- [x] curl-impersonate reference adapter — `v1alpha1` capability set
       tailored to HTTP-only flows (no JS execution, no screenshots).
       Passes conformance.
   - [x] `Initialize` + `Navigate` over gRPC on a UDS, plus a thin
@@ -118,14 +118,21 @@ reference runtimes.
         table for Navigate-relevant rows. Per-session cookie-jar
         architecture readied for PR12. Subprocess-over-cgo and
         WaitCondition-as-no-op decisions recorded. ADR-0016. (PR11.)
-  - [ ] `Close` (full contract), `Query`, `Extract` — declared
-        capabilities grow to roughly five or six entries
-        (`query_css`, `query_xpath`, `extract_text`,
-        `extract_html`, `extract_attribute`, possibly `query_text`
-        / `query_attribute`). HTML parsing library (goquery or
-        x/net/html) lands here. `js_execution`, `extract_eval`,
-        and the `screenshot_*` family will *never* be declared
-        by this adapter. (PR12.)
+  - [x] `Close` (full contract), `Query`, `Extract` — declared
+        capabilities grow to **six** entries (alphabetical:
+        `extract_attribute`, `extract_html`, `extract_text`,
+        `navigation`, `query_css`, `query_xpath`). goquery
+        (CSS) and htmlquery (XPath) land as the parsing
+        libraries. The MODE_EVAL runtime gate from ADR-0010 §3
+        is exercised at conformance for the first time
+        (`test_curl_impersonate_extract_eval_returns_capability_missing`).
+        ADR-0017 §1 records the most architecturally significant
+        decision: `query_text` and `query_attribute` are
+        deliberately omitted, formalising the contract that
+        capability declaration is a cross-driver semantic-
+        equivalence promise rather than a feasibility decision.
+        `js_execution`, `extract_eval`, and the `screenshot_*`
+        family remain permanently absent from this driver. (PR12.)
 - [ ] Streaming RPCs added behind a feature flag in `v1alpha2`:
       `WatchEvents` for network monitoring, `WatchDom` for mutation
       observation.
@@ -133,9 +140,23 @@ reference runtimes.
       proxy.
 - [ ] Driver manifest validation tooling.
 
-Exit criterion: the same `job.yaml` runs unchanged across all three
-adapters where their capabilities allow. Conformance gates merges to
-`proto/`.
+**Exit criterion: the same `job.yaml` runs unchanged across all
+three adapters where their capabilities allow. Conformance gates
+merges to `proto/`. Met by PR12.** The visible proof is the
+[cross-driver equivalence demo](../examples/README.md#cross-driver-equivalence-demo-phase-2-exit-criterion-proof):
+`hello-hackernews` (Playwright), `seleniumbase-extract`
+(SeleniumBase), and `curl-impersonate-extract` (curl-impersonate)
+share DSL shape and exercise the four-capability intersection
+(`navigation`, `query_css`, `extract_text`, `extract_attribute`).
+Capability divergence:
+
+| Adapter           | Declared count | Subset relationship                              |
+|-------------------|----------------|--------------------------------------------------|
+| Playwright        | 13             | superset of SeleniumBase + `screenshot_full_page`|
+| SeleniumBase      | 12             | superset of curl-impersonate                     |
+| curl-impersonate  |  6             | strict subset of SeleniumBase                    |
+
+ADR-0017 records PR12's decisions and the final capability table.
 
 ## Phase 2.5 — Container infrastructure
 

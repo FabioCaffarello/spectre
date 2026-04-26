@@ -1,10 +1,12 @@
 """Live ``Initialize`` handshake conformance test for the curl-impersonate adapter.
 
-PR11 declares the narrowest capability list yet — exactly
-``["navigation"]``. ADR-0016 §5 records the framing as the
-strongest validation of the protocol's planning surface to date:
-three drivers spanning three languages, each declaring an
-honestly different capability set.
+PR12 grows the declared list to six entries — alphabetical:
+``extract_attribute``, ``extract_html``, ``extract_text``,
+``navigation``, ``query_css``, ``query_xpath``. The seven
+capabilities the adapter does *not* declare are the canonical
+artefact of the project's third capability divergence — see
+ADR-0016 §5 for the framing and ADR-0017 §1 for the
+``query_text`` / ``query_attribute`` omission rationale.
 """
 
 from __future__ import annotations
@@ -44,23 +46,39 @@ def test_curl_impersonate_initialize_returns_a_session(
     )
     declared: list[str] = [str(name) for name in declared_raw]
 
-    # ADR-0014 §1 / ADR-0016 §5: PR11 declares exactly one name.
-    expected = ["navigation"]
+    # ADR-0014 §1 / ADR-0017 §1: PR12 declares exactly six names.
+    expected = [
+        "extract_attribute",
+        "extract_html",
+        "extract_text",
+        "navigation",
+        "query_css",
+        "query_xpath",
+    ]
     assert declared == expected, (
-        f"PR11 curl-impersonate driver.yaml must declare exactly {expected}; got {declared}"
+        f"PR12 curl-impersonate driver.yaml must declare exactly {expected}; got {declared}"
     )
 
     # Capabilities the curl-impersonate adapter will *never* declare
-    # in v1alpha1 (no JS engine, no DOM, no rendering pipeline).
+    # in v1alpha1.
+    #
+    #   - js_execution / extract_eval — no JavaScript engine.
+    #   - screenshot_* — no rendering pipeline.
+    #   - query_text / query_attribute — would violate the
+    #     cross-driver semantic-equivalence contract from
+    #     ADR-0017 §1 (Playwright's getByText vs goquery's
+    #     :contains() are different searches under one name).
     forbidden = {
         "js_execution",
         "extract_eval",
         "screenshot_viewport",
         "screenshot_element",
         "screenshot_full_page",
+        "query_text",
+        "query_attribute",
     }
     assert not (forbidden & set(declared)), (
-        "ADR-0016 §5: curl-impersonate must not declare browser-runtime capabilities; "
+        "ADR-0016 §5 / ADR-0017 §1: curl-impersonate must not declare these capabilities; "
         f"found {forbidden & set(declared)}"
     )
 

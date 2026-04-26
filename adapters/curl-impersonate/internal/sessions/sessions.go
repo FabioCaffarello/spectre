@@ -27,7 +27,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
+
+	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/elements"
 )
 
 // CookieJarDir is where session-scoped cookie-jar files live.
@@ -48,13 +51,24 @@ const CookieJarPattern = "spectre-curl-*.cookies"
 // session_id validation, carried over to every adapter).
 var ErrUnknownSession = errors.New("unknown session_id")
 
-// Session is the per-id record. Future RPCs (PR12+) extend this
-// struct with a response cache (status_code, final_url, body)
-// without touching the session lifecycle below.
+// Session is the per-id record. PR12 adds Document, the parsed
+// HTML cached from the most recent successful Navigate. Query
+// resolves selectors against this document; Extract reads field
+// values off element references whose generation matches the
+// session's current generation in the ElementRegistry. The
+// document is replaced (not mutated) on every Navigate; the
+// generation bump that accompanies the replacement invalidates
+// every prior ElementRef. ADR-0017 §3 records the lifecycle.
 type Session struct {
 	ID            string
 	CookieJarPath string
 	Created       time.Time
+
+	// Document is the parsed HTML from the most recent successful
+	// Navigate, or nil before the first Navigate. The session
+	// manager's mutex guards access; handlers should obtain it
+	// via Manager.Document(id).
+	Document *goquery.Document
 }
 
 // Manager owns the live session registry and is concurrency-safe
@@ -62,10 +76,17 @@ type Session struct {
 // the *same* session is undefined and not protected — see
 // ADR-0016 §4 (operators must serialise per-session calls; the
 // engine's per-session linear executor satisfies this naturally).
+//
+// PR12 adds the ElementRegistry as a Manager-owned field. Handlers
+// reach element-related state through Manager methods rather than
+// the registry directly; that keeps the contract identical to the
+// SeleniumBase SessionManager (sessions.py) and Playwright
+// SessionManager (sessions.ts).
 type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
 	dir      string
+	registry *elements.Registry
 
 	// uuidFn is overridable for tests so deterministic ids land
 	// in the registry; production code uses uuid.NewString.
@@ -82,6 +103,7 @@ func newManagerIn(dir string) *Manager {
 	return &Manager{
 		sessions: make(map[string]*Session),
 		dir:      dir,
+		registry: elements.NewRegistry(),
 		uuidFn:   uuid.NewString,
 	}
 }
@@ -145,11 +167,12 @@ func (m *Manager) Get(id string) (*Session, error) {
 	return session, nil
 }
 
-// Close removes a session from the registry and deletes its
-// cookie-jar file. Returns ErrUnknownSession if the id was not
-// registered. PR11 does not implement the gRPC `Close` RPC for
-// curl-impersonate (PR12 does), so this method is exercised
-// today only by CloseAll on shutdown.
+// Close removes a session from the registry, clears its
+// ElementRegistry entry, and deletes its cookie-jar file. Returns
+// ErrUnknownSession if the id was not registered. The
+// ElementRegistry is forgotten before the cookie-jar is removed
+// so a late Lookup cannot resolve to a Selection from the
+// document of a session that is mid-teardown.
 func (m *Manager) Close(id string) error {
 	m.mu.Lock()
 	session, ok := m.sessions[id]
@@ -160,24 +183,90 @@ func (m *Manager) Close(id string) error {
 	delete(m.sessions, id)
 	m.mu.Unlock()
 
+	// ForgetSession is concurrency-safe internally and does not
+	// share the manager's mutex.
+	m.registry.ForgetSession(id)
+
 	// Remove outside the lock so a slow filesystem does not
 	// block other RPCs. The session is already de-registered.
 	_ = os.Remove(session.CookieJarPath)
 	return nil
 }
 
-// CloseAll evicts every session and removes every cookie-jar
-// file. Idempotent; called from the SIGTERM handler.
+// CloseAll evicts every session, clears every ElementRegistry
+// entry, and removes every cookie-jar file. Idempotent; called
+// from the SIGTERM handler.
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
+	ids := make([]string, 0, len(m.sessions))
 	jarPaths := make([]string, 0, len(m.sessions))
-	for _, session := range m.sessions {
+	for id, session := range m.sessions {
+		ids = append(ids, id)
 		jarPaths = append(jarPaths, session.CookieJarPath)
 	}
 	m.sessions = make(map[string]*Session)
 	m.mu.Unlock()
 
+	for _, id := range ids {
+		m.registry.ForgetSession(id)
+	}
 	for _, path := range jarPaths {
 		_ = os.Remove(path)
 	}
+}
+
+// SetDocument caches the parsed HTML for a session and bumps the
+// generation counter so prior ElementRefs are invalidated. The
+// generation bump is part of SetDocument so callers cannot
+// accidentally cache a new document without invalidating refs
+// against the old one — ADR-0010 §1's strict-invalidation
+// contract is what motivates the coupling.
+//
+// Returns ErrUnknownSession when the id is not registered.
+func (m *Manager) SetDocument(id string, doc *goquery.Document) error {
+	m.mu.Lock()
+	session, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return ErrUnknownSession
+	}
+	session.Document = doc
+	m.mu.Unlock()
+
+	m.registry.BumpGeneration(id)
+	return nil
+}
+
+// Document returns the cached *goquery.Document for a session, or
+// nil when the session has had no successful Navigate yet. Does
+// not return ErrUnknownSession — callers (Query, Extract) check
+// Has first; the dual return would just force an extra error
+// branch in already-validated code paths.
+func (m *Manager) Document(id string) *goquery.Document {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.sessions[id]
+	if !ok {
+		return nil
+	}
+	return session.Document
+}
+
+// Allocate stores each node in the selection under a fresh UUID
+// at the session's current generation and returns the ids in
+// input order. Delegates to the ElementRegistry.
+func (m *Manager) Allocate(id string, sel *goquery.Selection) []string {
+	return m.registry.Allocate(id, sel)
+}
+
+// LookupElement resolves a UUID to an elements.Lookup whose Status
+// distinguishes ok / stale / unknown.
+func (m *Manager) LookupElement(id, refID string) elements.Lookup {
+	return m.registry.Lookup(id, refID)
+}
+
+// CurrentGeneration returns the session's element-generation
+// counter; useful for tests and diagnostics.
+func (m *Manager) CurrentGeneration(id string) int {
+	return m.registry.CurrentGeneration(id)
 }

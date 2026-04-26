@@ -1,0 +1,23 @@
+# curl-impersonate-extract — query and extract against a public page using
+# the curl-impersonate adapter (HTTP-only, no browser).
+#
+# Run via: spectre run examples/curl-impersonate-extract/job.yaml
+# See README.md for status. PR12 closes the v1alpha1 unary surface for
+# the curl-impersonate adapter; this job mirrors seleniumbase-extract
+# byte-for-byte except for the `driver:` field — visible evidence that
+# one CLI runs one protocol against three runtimes in three languages.
+
+spectre: v1alpha1
+driver: curl-impersonate
+
+steps:
+  - navigate: https://example.com
+  - extract:
+      selector: a
+      fields:
+        text: textContent
+        url: href
+
+output:
+  format: jsonl
+  path: ./links.jsonl

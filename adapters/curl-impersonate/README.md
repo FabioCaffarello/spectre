@@ -5,13 +5,17 @@ Spectre's curl-impersonate driver adapter. Wraps the
 binary as a per-request subprocess and exposes a gRPC Driver
 server over a Unix domain socket.
 
-> **Status:** v0.1.0-alpha.0 — Phase 2 in progress. PR11 implements
-> `Initialize`, `Navigate`, and a thin `Close` (matching the
-> [PR9 SeleniumBase precedent](../../docs/adr/0014-seleniumbase-adapter-and-cross-language-conformance.md)
-> so the engine's executor can finish navigate-only plans). PR12
-> will add the rich `Close`, `Query`, and `Extract` RPCs.
-> `Screenshot` and `MODE_EVAL` will *never* be implemented for
-> this adapter — see ADR-0016 §5.
+> **Status:** v0.1.0-alpha.0 — Phase 2 closing. PR12 closes the
+> v1alpha1 unary surface for this adapter: full `Close`, `Query`
+> (CSS + XPath), and `Extract` (TEXT_CONTENT, INNER_TEXT,
+> INNER_HTML, OUTER_HTML, ATTR), with the `MODE_EVAL` runtime
+> gate from ADR-0010 §3 firing on every request that asks for it.
+> Six capabilities declared (alphabetical:
+> `extract_attribute`, `extract_html`, `extract_text`,
+> `navigation`, `query_css`, `query_xpath`). `Screenshot`,
+> `MODE_EVAL`, `query_text`, and `query_attribute` will *never*
+> be implemented for this adapter — see ADR-0016 §5 and
+> ADR-0017 §1 / §5.
 
 ## Module path
 
@@ -86,6 +90,45 @@ SeleniumBase) at compile time. The engine's
 `validate_capabilities` path rejects the plan before any
 adapter launches.
 
+## What this driver cannot do
+
+The capability surface is six entries: `extract_attribute`,
+`extract_html`, `extract_text`, `navigation`, `query_css`,
+`query_xpath`. Seven capabilities are absent and will remain
+absent in v1alpha1:
+
+- **`js_execution` / `extract_eval`** — no JavaScript engine.
+  `MODE_EVAL` fields trigger the runtime capability gate from
+  ADR-0010 §3 and reject the entire `Extract` request with
+  `CODE_CAPABILITY_MISSING`. The conformance suite's
+  `test_curl_impersonate_extract_eval_returns_capability_missing`
+  is the first conformance test in the project that exercises
+  the negative path of the gate.
+- **`screenshot_viewport` / `screenshot_full_page` /
+  `screenshot_element`** — no rendering pipeline. The
+  `Screenshot` RPC returns `codes.Unimplemented` permanently;
+  ADR-0016 §5 documents the framing.
+- **`query_text` / `query_attribute`** — goquery technically
+  supports both, but Playwright's `getByText` (rendered visible
+  text, case-insensitive substring) and goquery's
+  `:contains()` (DOM text, case-sensitive substring) are
+  semantically different searches. Declaring one capability
+  with two interpretations defeats the cross-driver planning
+  surface. **ADR-0017 §1** formalises the contract: capability
+  declaration is a cross-driver semantic-equivalence promise,
+  not a feasibility decision. Operators who hit
+  `SELECTOR_KIND_TEXT` / `SELECTOR_KIND_ATTRIBUTE` against this
+  adapter receive `CODE_INVALID_ARGUMENT` with a message that
+  references ADR-0017.
+
+`MODE_INNER_TEXT` is supported but is a documented semantic
+approximation: with no layout engine, the adapter cannot exclude
+hidden text the way browsers do. The fallback is the same output
+as `MODE_TEXT_CONTENT`. Clients who need true visible-text
+semantics should use `driver: playwright` or
+`driver: seleniumbase`. **ADR-0017 §5** records the trade-off
+and sketches a v1alpha2 capability split.
+
 ## Generated code
 
 Like the control plane, this module consumes the Driver Protocol
@@ -102,4 +145,11 @@ which depends on it) before `go build`/`go test`. See
 - [curl-impersonate](https://github.com/lwthiker/curl-impersonate)
 - [ADR-0016](../../docs/adr/0016-curl-impersonate-adapter-and-third-runtime-divergence.md)
   — subprocess-over-cgo, WaitCondition no-op, default variant,
-  cookie-jar architecture, and the third capability divergence.
+  cookie-jar architecture, and the third capability divergence
+  (PR11).
+- [ADR-0017](../../docs/adr/0017-curl-impersonate-extraction-and-final-capability-divergence.md)
+  — `query_text` / `query_attribute` omission as the
+  semantic-equivalence contract, goquery + htmlquery integration,
+  ElementRef simplification, SelectorKind mapping, Field.Mode
+  mapping for static HTML, and the MODE_EVAL conformance test
+  (PR12).

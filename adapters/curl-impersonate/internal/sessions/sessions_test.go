@@ -8,7 +8,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PuerkitoBio/goquery"
+
+	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/elements"
 )
+
+func mustParse(t *testing.T, body string) *goquery.Document {
+	t.Helper()
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return doc
+}
 
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
@@ -106,6 +119,83 @@ func TestCloseAllRemovesEveryJar(t *testing.T) {
 
 	// Idempotent: calling again is a no-op.
 	m.CloseAll()
+}
+
+func TestSetDocumentCachesAndBumpsGeneration(t *testing.T) {
+	m := newTestManager(t)
+	s := m.Create()
+	if got := m.CurrentGeneration(s.ID); got != 0 {
+		t.Fatalf("expected gen 0 before any Navigate, got %d", got)
+	}
+	doc := mustParse(t, `<p>hi</p>`)
+	if err := m.SetDocument(s.ID, doc); err != nil {
+		t.Fatalf("SetDocument: %v", err)
+	}
+	if got := m.CurrentGeneration(s.ID); got != 1 {
+		t.Fatalf("expected gen 1 after SetDocument, got %d", got)
+	}
+	if got := m.Document(s.ID); got == nil {
+		t.Fatal("Document must be populated after SetDocument")
+	}
+}
+
+func TestSetDocumentUnknownSession(t *testing.T) {
+	m := newTestManager(t)
+	if err := m.SetDocument("nope", mustParse(t, `<p/>`)); !errors.Is(err, ErrUnknownSession) {
+		t.Fatalf("expected ErrUnknownSession, got %v", err)
+	}
+}
+
+func TestAllocateAndLookupElement(t *testing.T) {
+	m := newTestManager(t)
+	s := m.Create()
+	doc := mustParse(t, `<ul><li>a</li><li>b</li></ul>`)
+	if err := m.SetDocument(s.ID, doc); err != nil {
+		t.Fatalf("SetDocument: %v", err)
+	}
+	ids := m.Allocate(s.ID, doc.Find("li"))
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 ids, got %d", len(ids))
+	}
+	got := m.LookupElement(s.ID, ids[0])
+	if got.Status != elements.StatusOK {
+		t.Fatalf("expected StatusOK, got %v", got.Status)
+	}
+}
+
+func TestSetDocumentSecondTimeInvalidatesPriorRefs(t *testing.T) {
+	m := newTestManager(t)
+	s := m.Create()
+	docA := mustParse(t, `<h1>A</h1>`)
+	if err := m.SetDocument(s.ID, docA); err != nil {
+		t.Fatalf("SetDocument A: %v", err)
+	}
+	ids := m.Allocate(s.ID, docA.Find("h1"))
+	docB := mustParse(t, `<h1>B</h1>`)
+	if err := m.SetDocument(s.ID, docB); err != nil {
+		t.Fatalf("SetDocument B: %v", err)
+	}
+	got := m.LookupElement(s.ID, ids[0])
+	if got.Status != elements.StatusStale {
+		t.Fatalf("expected StatusStale after re-Navigate, got %v", got.Status)
+	}
+}
+
+func TestCloseForgetsRegistryEntry(t *testing.T) {
+	m := newTestManager(t)
+	s := m.Create()
+	doc := mustParse(t, `<h1>hi</h1>`)
+	if err := m.SetDocument(s.ID, doc); err != nil {
+		t.Fatalf("SetDocument: %v", err)
+	}
+	ids := m.Allocate(s.ID, doc.Find("h1"))
+	if err := m.Close(s.ID); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	got := m.LookupElement(s.ID, ids[0])
+	if got.Status != elements.StatusUnknown {
+		t.Fatalf("expected StatusUnknown after Close, got %v", got.Status)
+	}
 }
 
 func TestSweepStaleRemovesPriorRunFiles(t *testing.T) {

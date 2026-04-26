@@ -39,6 +39,7 @@ A decision moves through three states:
 | 0014  | [SeleniumBase adapter and cross-language conformance](0014-seleniumbase-adapter-and-cross-language-conformance.md) | accepted |
 | 0015  | [SeleniumBase element lifecycle and screenshot coverage](0015-seleniumbase-element-lifecycle-and-screenshot-coverage.md) | accepted |
 | 0016  | [curl-impersonate adapter and third-runtime divergence](0016-curl-impersonate-adapter-and-third-runtime-divergence.md) | accepted |
+| 0017  | [curl-impersonate extraction and final capability divergence](0017-curl-impersonate-extraction-and-final-capability-divergence.md) | accepted |
 
 ## When to write an ADR
 

@@ -16,16 +16,21 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	caps "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/capabilities"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/curlx"
+	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/elements"
 	curlerrors "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/errors"
+	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/parser"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/sessions"
 	driverv1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1"
 )
@@ -161,6 +166,42 @@ func (s *Server) Navigate(ctx context.Context, req *driverv1alpha1.NavigateReque
 	if finalURL == "" {
 		finalURL = req.GetUrl()
 	}
+
+	// Parse the body and cache it on the session. SetDocument bumps
+	// the generation counter atomically so any prior ElementRefs
+	// allocated against the previous Navigate are invalidated. The
+	// underlying x/net/html parser is permissive and absorbs
+	// malformed HTML the same way browsers do — important for
+	// cross-driver equivalence (ADR-0017 §2). A parse failure is
+	// surfaced as CODE_INTERNAL because the body is effectively
+	// unconsumable for downstream Query/Extract; in practice the
+	// permissive parser does not fail on real HTTP responses.
+	doc, parseErr := parser.Parse(resp.Body)
+	if parseErr != nil {
+		return &driverv1alpha1.NavigateResponse{
+			FinalUrl:   finalURL,
+			StatusCode: resp.StatusCode,
+			Elapsed:    durationpb.New(elapsed),
+			Error: &driverv1alpha1.DriverError{
+				Code:    driverv1alpha1.DriverError_CODE_INTERNAL,
+				Message: "parse response body: " + parseErr.Error(),
+			},
+		}, nil
+	}
+	if err := s.sessions.SetDocument(req.GetSessionId(), doc); err != nil {
+		// SetDocument can only fail with ErrUnknownSession, which
+		// the strict-id check above already excluded. A failure
+		// here means the session was concurrently closed; report
+		// it honestly rather than mask.
+		return &driverv1alpha1.NavigateResponse{
+			Elapsed: durationpb.New(elapsed),
+			Error: &driverv1alpha1.DriverError{
+				Code:    driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+				Message: "session was closed during Navigate: " + err.Error(),
+			},
+		}, nil
+	}
+
 	return &driverv1alpha1.NavigateResponse{
 		FinalUrl:   finalURL,
 		StatusCode: resp.StatusCode,
@@ -168,16 +209,18 @@ func (s *Server) Navigate(ctx context.Context, req *driverv1alpha1.NavigateReque
 	}, nil
 }
 
-// Close is implemented as a thin session-lifecycle RPC in PR11 —
-// not because the conformance suite covers it (it does not; the
-// rich Close contract lands in PR12), but because the engine's
-// executor always issues Close at the end of a plan (ADR-0012),
-// and `examples/curl-impersonate-fetch/job.yaml` cannot complete
-// via `spectre run` without one. ADR-0014 set the precedent for
-// SeleniumBase PR9; PR11 follows it. Close carries no capability
-// declaration in v1alpha1 — it is a baseline session-lifecycle
-// RPC like Initialize — so wiring it does not violate the
-// "declared = tested" rule from ADR-0014 §1.
+// Close is the full session-teardown RPC. PR11 shipped a thin
+// implementation so the engine's executor could finish navigate-
+// only plans; PR12 promotes it to the full contract:
+//
+//   - Strict session_id validation (empty → CODE_INVALID_ARGUMENT).
+//   - Idempotent rejection of unknown / already-closed ids
+//     (second Close on the same id → CODE_INVALID_ARGUMENT).
+//   - Cookie-jar file deletion (sessions.Manager.Close).
+//   - ElementRegistry teardown for the session (sessions.Manager
+//     forgets the registry entry before deleting the jar).
+//
+// ADR-0010 §1 / ADR-0017 §3 record the lifecycle contract.
 func (s *Server) Close(_ context.Context, req *driverv1alpha1.CloseRequest) (*driverv1alpha1.CloseResponse, error) {
 	if req.GetSessionId() == "" {
 		return &driverv1alpha1.CloseResponse{
@@ -198,14 +241,225 @@ func (s *Server) Close(_ context.Context, req *driverv1alpha1.CloseRequest) (*dr
 	return &driverv1alpha1.CloseResponse{}, nil
 }
 
-// Query, Extract, and Screenshot inherit codes.Unimplemented from
-// the embedded UnimplementedDriverServer; PR11 does not override
-// them. Future PRs add the implementations (Query, Extract in
-// PR12; Screenshot will never be implemented for this adapter,
-// ADR-0016 §5). The unit tests assert the codes.Unimplemented
-// response shape so a future change that accidentally implements
-// one of these RPCs without overriding the embedding fails
-// loudly.
+// Query resolves a selector against the session's cached
+// document and returns one ElementRef per match. PR12 supports
+// CSS and XPATH only; TEXT and ATTRIBUTE are rejected because
+// the curl-impersonate adapter does not declare query_text /
+// query_attribute (ADR-0017 §1: capability declaration is a
+// cross-driver semantic-equivalence contract, not a feasibility
+// decision). Zero matches is success with an empty list, not
+// CODE_NOT_FOUND (ADR-0010 §4).
+func (s *Server) Query(_ context.Context, req *driverv1alpha1.QueryRequest) (*driverv1alpha1.QueryResponse, error) {
+	if req.GetSessionId() == "" {
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"session_id is required"), nil
+	}
+	if !s.sessions.Has(req.GetSessionId()) {
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"unknown session_id "+quote(req.GetSessionId())+"; call Initialize first"), nil
+	}
+	if req.GetSelector() == "" {
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"selector is required"), nil
+	}
+
+	switch req.GetKind() {
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_UNSPECIFIED:
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"selector kind is required; SELECTOR_KIND_UNSPECIFIED is not accepted"), nil
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_TEXT:
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"this adapter does not declare query_text; see ADR-0017 §1"), nil
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_ATTRIBUTE:
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"this adapter does not declare query_attribute; see ADR-0017 §1"), nil
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_CSS,
+		driverv1alpha1.SelectorKind_SELECTOR_KIND_XPATH:
+		// fall through
+	default:
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"unsupported selector kind"), nil
+	}
+
+	doc := s.sessions.Document(req.GetSessionId())
+	if doc == nil {
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"no page is open for this session; call Navigate first"), nil
+	}
+
+	var matches *goquery.Selection
+	switch req.GetKind() {
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_CSS:
+		matches = doc.Find(req.GetSelector())
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_XPATH:
+		sel, err := parser.XPathQuery(doc, req.GetSelector())
+		if err != nil {
+			return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+				err.Error()), nil
+		}
+		matches = sel
+	}
+
+	if limit := req.GetLimit(); limit > 0 && uint32(matches.Length()) > limit {
+		matches = matches.Slice(0, int(limit))
+	}
+
+	ids := s.sessions.Allocate(req.GetSessionId(), matches)
+	out := make([]*driverv1alpha1.ElementRef, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, &driverv1alpha1.ElementRef{OpaqueId: id})
+	}
+	return &driverv1alpha1.QueryResponse{Elements: out}, nil
+}
+
+// Stale / unknown element-ref messages are reproduced verbatim
+// from ADR-0010 §1. The Playwright (TypeScript) and SeleniumBase
+// (Python) adapters use the same strings; tools that key on the
+// message are cross-driver-stable.
+const (
+	staleNavigateMessage = "element reference is stale; query was performed before a navigation"
+	unknownRefMessage    = "element reference is unknown"
+	modeEvalGateMessage  = "MODE_EVAL requires the js_execution capability; this adapter does not declare it"
+)
+
+// Extract reads the requested Field values off the element
+// referenced by element.opaque_id in the session's registry.
+//
+// Behaviour summary (ADR-0017 §5):
+//
+//   - MODE_EVAL fields short-circuit the entire request with
+//     CODE_CAPABILITY_MISSING (atomic fail-the-whole-request
+//     semantics from ADR-0010 §3). curl-impersonate has no
+//     JavaScript engine; this is the conformance suite's first
+//     test of the runtime capability gate's negative path.
+//   - MODE_UNSPECIFIED rejects with CODE_INVALID_ARGUMENT.
+//   - Stale / unknown ElementRefs reject with
+//     CODE_INVALID_ARGUMENT and the documented messages.
+//   - MODE_INNER_TEXT falls back to selection.Text() — the same
+//     output as MODE_TEXT_CONTENT — because computing rendered
+//     visibility requires a layout engine. Documented
+//     approximation; see ADR-0017 §5.
+func (s *Server) Extract(_ context.Context, req *driverv1alpha1.ExtractRequest) (*driverv1alpha1.ExtractResponse, error) {
+	if req.GetSessionId() == "" {
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"session_id is required"), nil
+	}
+	if !s.sessions.Has(req.GetSessionId()) {
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"unknown session_id "+quote(req.GetSessionId())+"; call Initialize first"), nil
+	}
+	opaqueID := ""
+	if el := req.GetElement(); el != nil {
+		opaqueID = el.GetOpaqueId()
+	}
+	if opaqueID == "" {
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"element.opaque_id is required"), nil
+	}
+	fields := req.GetFields()
+	if len(fields) == 0 {
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"at least one field is required"), nil
+	}
+
+	// MODE_EVAL gate — runs before any field is evaluated. If any
+	// field requests MODE_EVAL, fail the whole request with
+	// CODE_CAPABILITY_MISSING. ADR-0010 §3, ADR-0017 §1 / §5.
+	for _, f := range fields {
+		if f.GetMode() == driverv1alpha1.Field_MODE_EVAL {
+			return extractError(driverv1alpha1.DriverError_CODE_CAPABILITY_MISSING,
+				modeEvalGateMessage), nil
+		}
+	}
+	// Reject any unspecified mode up-front so the field-reading
+	// loop only ever sees real modes.
+	for _, f := range fields {
+		if f.GetMode() == driverv1alpha1.Field_MODE_UNSPECIFIED {
+			return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+				"field "+quote(f.GetName())+" has an unspecified mode"), nil
+		}
+	}
+
+	lookup := s.sessions.LookupElement(req.GetSessionId(), opaqueID)
+	switch lookup.Status {
+	case elements.StatusStale:
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			staleNavigateMessage), nil
+	case elements.StatusUnknown:
+		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			unknownRefMessage), nil
+	case elements.StatusOK:
+		// fall through
+	}
+
+	entries := make([]*driverv1alpha1.ExtractedValues_Entry, 0, len(fields))
+	for _, f := range fields {
+		value, err := readFieldValue(lookup.Selection, f.GetMode(), f.GetArg())
+		if err != nil {
+			return extractError(driverv1alpha1.DriverError_CODE_INTERNAL,
+				"read field "+quote(f.GetName())+": "+err.Error()), nil
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return extractError(driverv1alpha1.DriverError_CODE_INTERNAL,
+				"json encode field "+quote(f.GetName())+": "+err.Error()), nil
+		}
+		entries = append(entries, &driverv1alpha1.ExtractedValues_Entry{
+			Name:      f.GetName(),
+			JsonValue: string(encoded),
+		})
+	}
+	return &driverv1alpha1.ExtractResponse{
+		Values: &driverv1alpha1.ExtractedValues{Fields: entries},
+	}, nil
+}
+
+// readFieldValue reads one Field's value off a *goquery.Selection.
+// Returns an `any` so the JSON encoder produces null for absent
+// attributes (preserving the "absent vs present-but-empty"
+// distinction from ADR-0017 §5).
+func readFieldValue(sel *goquery.Selection, mode driverv1alpha1.Field_Mode, arg string) (any, error) {
+	switch mode {
+	case driverv1alpha1.Field_MODE_TEXT_CONTENT:
+		return sel.Text(), nil
+	case driverv1alpha1.Field_MODE_INNER_TEXT:
+		// Static-HTML approximation: no layout engine, no
+		// visibility filtering. Same output as TEXT_CONTENT.
+		// ADR-0017 §5 records the trade-off and the v1alpha2
+		// growth path (a separate capability that adapters with
+		// renderers can declare).
+		return sel.Text(), nil
+	case driverv1alpha1.Field_MODE_INNER_HTML:
+		return sel.Html()
+	case driverv1alpha1.Field_MODE_OUTER_HTML:
+		return parser.OuterHtml(sel)
+	case driverv1alpha1.Field_MODE_ATTR:
+		value, exists := sel.Attr(arg)
+		if !exists {
+			return nil, nil
+		}
+		return value, nil
+	}
+	return nil, fmt.Errorf("unsupported field mode %v", mode)
+}
+
+func extractError(code driverv1alpha1.DriverError_Code, message string) *driverv1alpha1.ExtractResponse {
+	return &driverv1alpha1.ExtractResponse{
+		Error: &driverv1alpha1.DriverError{
+			Code:    code,
+			Message: message,
+		},
+	}
+}
+
+func queryError(code driverv1alpha1.DriverError_Code, message string) *driverv1alpha1.QueryResponse {
+	return &driverv1alpha1.QueryResponse{
+		Error: &driverv1alpha1.DriverError{
+			Code:    code,
+			Message: message,
+		},
+	}
+}
 
 func navigateError(code driverv1alpha1.DriverError_Code, message string) *driverv1alpha1.NavigateResponse {
 	return &driverv1alpha1.NavigateResponse{
