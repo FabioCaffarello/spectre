@@ -48,10 +48,13 @@ use url::Url;
 
 /// Hardcoded list of drivers the engine knows about in v1alpha1. PR9
 /// added `seleniumbase` once the Python adapter implemented
-/// `Initialize` and `Navigate` against the conformance suite; see
-/// ADR-0014. A driver registry replaces this list later in Phase 2 —
-/// see ADR-0012 §"Bad, because" for the hardcoded-list rationale.
-pub const KNOWN_DRIVERS: &[&str] = &["playwright", "seleniumbase"];
+/// `Initialize` and `Navigate` against the conformance suite (ADR-0014);
+/// PR11 added `curl-impersonate` once the Go HTTP-only adapter shipped
+/// the same handshake floor (ADR-0016). The list is alphabetical to
+/// match the byte-for-byte conformance pattern. A driver registry
+/// replaces this list later in Phase 2 — see ADR-0012 §"Bad, because"
+/// for the hardcoded-list rationale.
+pub const KNOWN_DRIVERS: &[&str] = &["curl-impersonate", "playwright", "seleniumbase"];
 
 /// The protocol version string the DSL must declare under `spectre:`.
 pub const DSL_VERSION: &str = "v1alpha1";
@@ -558,12 +561,36 @@ output:
     }
 
     #[test]
-    fn known_drivers_contains_both_phase2_adapters() {
+    fn accepts_curl_impersonate_driver() {
+        // ADR-0016: PR11 grew KNOWN_DRIVERS to include
+        // `curl-impersonate`. A job declaring it must parse
+        // successfully even though only the HTTP-only navigation
+        // capability is honoured by the underlying adapter — the
+        // engine's planner is responsible for capability checks
+        // (validate_capabilities), not the DSL parser.
+        let yaml = r#"
+spectre: v1alpha1
+driver: curl-impersonate
+steps:
+  - navigate: https://example.com
+output:
+  format: jsonl
+  path: ./out.jsonl
+"#;
+        let job = Job::from_yaml(yaml).expect("curl-impersonate must be a known driver");
+        assert_eq!(job.driver, "curl-impersonate");
+    }
+
+    #[test]
+    fn known_drivers_contains_three_phase2_adapters() {
         // Guard against accidental shrinkage of the list. The order
         // is alphabetical because the byte-for-byte conformance
         // assertion compares lists, and a stable order survives
         // editor reordering.
-        assert_eq!(KNOWN_DRIVERS, &["playwright", "seleniumbase"]);
+        assert_eq!(
+            KNOWN_DRIVERS,
+            &["curl-impersonate", "playwright", "seleniumbase"]
+        );
     }
 
     #[test]

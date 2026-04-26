@@ -6,12 +6,25 @@ transports:
   - kind: grpc-uds
     command: ["./bin/adapter"]
 
-# Capabilities are intentionally empty in the skeleton. As the adapter
-# implements each Driver Protocol RPC and verifies it against the
-# conformance suite, the corresponding capability name is added here.
-# This adapter targets HTTP-only flows; capabilities like
-# `js_execution` or `screenshot_full_page` will not be declared.
-capabilities: []
+# Capabilities follow the "declared = tested" rule from ADR-0014 §1.
+# PR11 implements Initialize + Navigate against the conformance suite,
+# so `navigation` is the only declared capability today. PR12 will
+# grow the list to roughly five or six entries (`query_css`,
+# `query_xpath`, `extract_text`, `extract_html`, `extract_attribute`,
+# possibly `query_text` / `query_attribute`). The screenshot family
+# and `js_execution` / `extract_eval` will *never* be declared by
+# this adapter — the underlying runtime has no DOM and no JavaScript
+# engine. ADR-0016 §5 records the architectural framing.
+capabilities:
+  - navigation
+
+# The adapter invokes `curl_chrome116` by default. Operators can
+# pick a different curl-impersonate variant by setting
+# SPECTRE_CURL_VARIANT before launching the adapter. Known-working
+# alternatives include `curl_chrome110`, `curl_chrome119`,
+# `curl_firefox117`, and `curl_safari16_5` — availability depends
+# on the curl-impersonate release that's installed on PATH. See
+# ADR-0016 §3.
 
 runtime:
   go: ">=1.22"

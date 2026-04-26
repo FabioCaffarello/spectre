@@ -173,6 +173,27 @@ curl-imp-test:
 curl-imp-build:
     cd adapters/curl-impersonate && go build -o bin/adapter ./cmd/adapter
 
+# Run the curl-impersonate adapter against a Unix domain socket.
+# Pass --socket=<path> after `--`, or set SPECTRE_DRIVER_SOCKET. The
+# server prints `ready unix:<path>` on stdout once it accepts
+# connections; SIGTERM/Ctrl-C drains, unlinks the socket, and
+# exits 0. Defaults to /tmp/spectre-curl.sock for ad-hoc local
+# testing. Override the curl-impersonate variant by setting
+# SPECTRE_CURL_VARIANT (default `curl_chrome116`). See ADR-0016 §3.
+curl-imp-run *ARGS='--socket=/tmp/spectre-curl.sock': curl-imp-build
+    cd adapters/curl-impersonate && \
+    ./bin/adapter {{ARGS}}
+
+# Run only the curl-impersonate conformance tests. PR11 wired
+# Initialize + Navigate; PR12 will add Close + Query + Extract.
+# Useful for iterating on the Go adapter without re-running the
+# Playwright + SeleniumBase suites.
+curl-imp-conf-test: curl-imp-build conf-bootstrap
+    cd tools/conformance && \
+    uv run pytest \
+        tests/test_curl_impersonate_initialize.py \
+        tests/test_curl_impersonate_navigate.py
+
 # ---------------------------------------------------------------------------
 # TypeScript Playwright adapter (adapters/playwright)
 # ---------------------------------------------------------------------------
@@ -290,7 +311,12 @@ conf-lint:
 # - the SeleniumBase adapter's uv-managed venv and ChromeDriver —
 #   PR9 added a Python adapter that the suite exercises in
 #   parallel with Playwright (ADR-0014).
-conf-test: pw-build pw-install-browsers sb-bootstrap sb-install-chromedriver
+# - the curl-impersonate adapter binary — PR11 added a Go adapter
+#   that the suite exercises in parallel; the curl-impersonate
+#   tests skip when the curl_chrome116 binary is not on PATH so
+#   developers without the release tarball still get green
+#   Playwright + SeleniumBase results (ADR-0016).
+conf-test: pw-build pw-install-browsers sb-bootstrap sb-install-chromedriver curl-imp-build
     cd tools/conformance && uv run pytest
 
 # ---------------------------------------------------------------------------

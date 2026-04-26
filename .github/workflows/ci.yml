@@ -48,6 +48,11 @@ jobs:
               # Conformance tests launch the Playwright adapter as a
               # subprocess; a TS-only change must still re-run them.
               - 'adapters/playwright/**'
+              # PR11: the conformance suite also exercises the Go
+              # curl-impersonate adapter via a built binary, so a
+              # change in adapters/curl-impersonate/** must re-run
+              # the Python conformance job too.
+              - 'adapters/curl-impersonate/**'
               - '.github/workflows/ci.yml'
 
   proto:
@@ -298,6 +303,43 @@ jobs:
         name: Install ChromeDriver via SeleniumBase
         working-directory: ${{ github.workspace }}/adapters/seleniumbase
         run: .venv/bin/python -m seleniumbase install chromedriver
+      # The conformance suite also exercises the Go curl-impersonate
+      # adapter (ADR-0016). Set up Go, build the adapter binary, and
+      # download the pinned curl-impersonate release tarball so
+      # `curl_chrome116` is on PATH when the conformance suite runs.
+      - if: matrix.package == 'tools/conformance'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - if: matrix.package == 'tools/conformance'
+        name: Build curl-impersonate adapter
+        working-directory: ${{ github.workspace }}/adapters/curl-impersonate
+        run: go build -o bin/adapter ./cmd/adapter
+      # Pin the curl-impersonate release. Bumping this version is a
+      # PR-sized change because different fingerprints can produce
+      # different test outcomes against fingerprint-sensitive sites.
+      # The conformance tests target a local HTTP fixture so the
+      # fingerprint itself is not asserted, but pinning keeps CI
+      # determinism. ADR-0016 §1.
+      - if: matrix.package == 'tools/conformance'
+        name: Cache curl-impersonate release
+        id: curl-imp-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/curl-impersonate
+          key: curl-impersonate-${{ runner.os }}-0.5.4
+      - if: matrix.package == 'tools/conformance' && steps.curl-imp-cache.outputs.cache-hit != 'true'
+        name: Download curl-impersonate
+        run: |
+          set -eux
+          version=0.5.4
+          url="https://github.com/lwthiker/curl-impersonate/releases/download/v${version}/curl-impersonate-v${version}.x86_64-linux-gnu.tar.gz"
+          sudo mkdir -p /opt/curl-impersonate
+          curl -fsSL "${url}" -o /tmp/curl-impersonate.tgz
+          sudo tar -xzf /tmp/curl-impersonate.tgz -C /opt/curl-impersonate
+      - if: matrix.package == 'tools/conformance'
+        name: Add curl-impersonate to PATH
+        run: echo "/opt/curl-impersonate" >> "$GITHUB_PATH"
       - run: uv run pytest
 
   engine-integration:
