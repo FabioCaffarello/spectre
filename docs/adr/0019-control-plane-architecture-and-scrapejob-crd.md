@@ -132,3 +132,110 @@ boundary explicit:
 
 Both are PR16+ work. PR14 does not anticipate their schemas in
 `ScrapeJob` fields; v1alpha1 stays minimal.
+
+### 3. Adapter execution model — subprocess inside operator pod
+
+Chosen: **the operator runs as a single Pod. When a `ScrapeJob`
+transitions to Running, the operator (in PR15+) spawns the engine
+binary as a subprocess within its own Pod. The engine, in turn,
+spawns the adapter as a subprocess within the same Pod.** Output
+(JSONL) flows from adapter → engine → operator stdout through
+stream piping. There are no per-adapter Pods, no `Job` objects, no
+sidecar containers, and no service-mesh hops between operator and
+adapter.
+
+This is the most architecturally consequential decision in the PR.
+It commits Phase 3 to the same "subprocess + protocol" pattern that
+already shapes PR7 (engine launches adapter as subprocess) and the
+conformance harness (Python pytest fixture launches each adapter as
+a subprocess). PR14's reconciler ships a stub that sleeps; PR15
+replaces the stub with a `SubprocessRunner` that invokes the
+engine. The control plane becomes the third nested subprocess
+layer, all inside one Pod.
+
+Reasons in order of weight:
+
+- **Architectural symmetry.** The project's load-bearing pattern is
+  "subprocess + protocol." Engine launches adapters as subprocesses;
+  the conformance suite launches adapters as subprocesses; the
+  operator extends the pattern by running the engine as a
+  subprocess. Three nested processes, one Pod, one process tree.
+  Anyone who understands one layer understands the others.
+- **Minimum operational complexity.** No Pod-orchestration logic in
+  the operator. No image-pull-secret threading, no Pod-lifecycle
+  state synchronisation between the reconciler and per-job Pods, no
+  service mesh between operator and adapter. The operator deals in
+  Go function calls; Kubernetes deals in one Pod.
+- **Faster startup.** Spawning a process is milliseconds; spawning
+  a Pod is seconds at best (image pull, scheduler, kubelet,
+  container runtime). v1alpha1 targets interactive jobs where
+  startup latency dominates total job time. The asymmetry matters.
+- **Existing test infrastructure carries over.** The PR7 end-to-end
+  integration test exercises exactly the code path the operator
+  will exercise. PR15 reuses it. No new test architecture is needed
+  for the engine-as-subprocess case; envtest covers the
+  reconciler-as-state-machine case.
+
+Trade-offs documented honestly:
+
+- **Resource isolation.** All adapter executions share the
+  operator Pod's resource budget. A runaway job competes with the
+  reconciler for CPU and memory. PR15 will surface adapter
+  timeouts and resource hints from `ScrapeJobSpec.Resources`, but
+  enforcement at the OS-process level is best-effort. v1alpha2
+  may revisit per-job Pods if multi-tenant pressure becomes real.
+- **Horizontal scaling.** A single operator Pod handles all
+  `ScrapeJob` reconciliations. Phase 3 follow-ups will add
+  concurrent reconciliation with a worker pool inside the operator
+  (controller-runtime's `MaxConcurrentReconciles`), which scales
+  vertically. True horizontal scaling — multiple operator
+  replicas, leader election for the reconciler, work distribution
+  — is v1alpha2 territory. v1alpha2 may also add a
+  `Job-per-ScrapeJob` mode behind a `ScrapeJobSpec.Mode` field if
+  the demand emerges.
+- **Adapter image flexibility.** The `adapterImage` field exists
+  on `ScrapeJobSpec` (a string, not a typed reference), reserved
+  for future per-Pod-per-job execution where users supply their
+  own adapter image. v1alpha1 ignores the field entirely; the
+  operator runs with whatever adapter binaries it was deployed
+  with. Documented in the CRD schema and in the architecture guide.
+
+Rejected:
+
+- **Job-per-ScrapeJob (the obvious "Kubernetes way").** Each
+  `ScrapeJob` creates a Kubernetes `Job` that runs the engine with
+  the chosen adapter image. The reconciler watches the `Job` and
+  mirrors its phase into `ScrapeJobStatus`.
+
+  - Good, because it is the textbook pattern: per-job isolation,
+    per-job resource limits, per-job image, horizontal scaling for
+    free.
+  - Bad, because Pod startup latency dominates job latency for
+    interactive workloads, which is what v1alpha1 targets.
+  - Bad, because the reconciler grows substantial Pod-lifecycle
+    code (image pulls, image-pull-secret threading, Pod
+    spec construction, container status interpretation, log
+    streaming through `kubectl logs`-equivalent APIs). All of that
+    is operational complexity that pays off only when v1alpha2
+    needs the isolation it buys.
+  - Bad, because the existing PR7 integration test does not
+    exercise this path; PR15 would have to build new test
+    infrastructure that simulates the kubelet's role.
+
+  This is the strongest rejected alternative. ADR-0019's
+  v1alpha2 follow-up may revisit it as an opt-in `Mode: Pod` on
+  `ScrapeJobSpec`.
+
+- **Pod-per-adapter sidecar model.** The operator creates a Pod
+  with engine and adapter as sidecar containers; status flows via
+  Pod conditions and shared-volume signalling. Even more complex
+  than Job-per-ScrapeJob, and does not solve a real v1alpha1
+  problem. Rejected without further consideration.
+
+- **Custom CRI executor.** Out of scope. Writing a kubelet-
+  equivalent for adapter execution would mean building a parallel
+  container-runtime stack. Mentioned only to make the rejection
+  explicit; not seriously considered.
+
+The chosen model is right for v1alpha1. v1alpha2 may revisit any
+of the three trade-offs above with a single targeted ADR.
