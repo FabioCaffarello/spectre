@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create } from "@bufbuild/protobuf";
-import { Code, ConnectError } from "@connectrpc/connect";
 import type { Browser } from "playwright";
 import { describe, expect, it, vi } from "vitest";
 
@@ -137,13 +136,49 @@ describe("createDriverService", () => {
     expect(response.error?.message).toMatch(/http\(s\)/);
   });
 
-  it("screenshot still returns Code.Unimplemented", async () => {
+  it("screenshot returns CODE_INVALID_ARGUMENT for an unknown session id", async () => {
     const service = newService();
-    await expect(service.screenshot({} as never)).rejects.toMatchObject({
-      code: Code.Unimplemented,
-    });
-    await expect(service.screenshot({} as never)).rejects.toBeInstanceOf(
-      ConnectError,
+    const response = await service.screenshot({
+      $typeName: "spectre.driver.v1alpha1.ScreenshotRequest",
+      sessionId: "ghost",
+      scope: 1,
+      format: 1,
+    } as never);
+    expect(response.error?.code).toBe(DriverError_Code.INVALID_ARGUMENT);
+    expect(response.error?.message).toMatch(/unknown session_id/);
+  });
+
+  it("screenshot returns CODE_INVALID_ARGUMENT for SCREENSHOT_SCOPE_UNSPECIFIED", async () => {
+    const sessions = new SessionManager(browserFactory);
+    const service = createDriverService(sessions);
+    const init = await service.initialize(
+      create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
+    );
+    const response = await service.screenshot({
+      $typeName: "spectre.driver.v1alpha1.ScreenshotRequest",
+      sessionId: init.sessionId,
+      scope: 0,
+      format: 1,
+    } as never);
+    expect(response.error?.code).toBe(DriverError_Code.INVALID_ARGUMENT);
+    expect(response.error?.message).toMatch(/SCREENSHOT_SCOPE_UNSPECIFIED/);
+  });
+
+  it("screenshot returns CODE_INVALID_ARGUMENT for ELEMENT scope without an element", async () => {
+    const sessions = new SessionManager(browserFactory);
+    const service = createDriverService(sessions);
+    const init = await service.initialize(
+      create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
+    );
+    const response = await service.screenshot({
+      $typeName: "spectre.driver.v1alpha1.ScreenshotRequest",
+      sessionId: init.sessionId,
+      scope: 3,
+      format: 1,
+    } as never);
+    expect(response.error?.code).toBe(DriverError_Code.INVALID_ARGUMENT);
+    expect(response.error?.message).toBe(
+      "element is required when scope is SCREENSHOT_SCOPE_ELEMENT",
     );
   });
 
