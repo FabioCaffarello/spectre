@@ -2,13 +2,14 @@
 
 The Spectre Driver Protocol conformance test suite.
 
-> **Status:** v0.1.0a0 — exercises every implemented unary RPC
+> **Status:** v0.1.0a0 — exercises every v1alpha1 unary RPC
 > against the Playwright adapter over gRPC on a Unix domain
-> socket: `Initialize`, `Navigate`, `Close`, `Query`, and
-> `Extract`. `Screenshot` is the only remaining unimplemented
-> unary RPC; the negative test cements its `UNIMPLEMENTED` status
-> until it ships. Transport equivalence and per-capability tests
-> follow in Phase 1 of the [roadmap](../../docs/roadmap.md).
+> socket: `Initialize`, `Navigate`, `Close`, `Query`, `Extract`,
+> and `Screenshot`. The Playwright adapter has no unimplemented
+> unary RPCs; SeleniumBase and curl-impersonate will reintroduce
+> equivalent negative coverage when those adapters land.
+> Transport equivalence and per-capability tests follow in
+> Phase 1 of the [roadmap](../../docs/roadmap.md).
 
 ## Build
 
@@ -60,7 +61,7 @@ tools/conformance/
 │   ├── test_initialize.py
 │   ├── test_navigate.py
 │   ├── test_query.py
-│   └── test_unimplemented.py
+│   └── test_screenshot.py
 ├── pyproject.toml
 └── README.md
 ```
@@ -103,6 +104,22 @@ A future `--driver=PATH/TO/driver.yaml` pytest CLI option will
 allow running the same suite against any conforming driver. The
 harness API is the seed; the CLI wraps it.
 
+## Screenshot test coverage
+
+`test_screenshot.py` covers every `Screenshot` axis decided in
+[ADR-0011](../../docs/adr/0011-screenshot-rpc-and-payload-boundaries.md):
+
+- viewport-PNG happy path against `/elements`, with PNG magic-byte
+  verification on the returned bytes;
+- full-page-PNG against `/long-page` returning strictly more bytes
+  than the viewport-PNG of the same URL — the fixture is built to
+  defeat PNG compression's ability to collapse the delta;
+- element-scoped JPEG against an `/elements` ref, with JPEG
+  magic-byte verification and a `content_type: image/jpeg` check;
+- element-scoped Screenshot after a Navigate returning the
+  stale-ref `CODE_INVALID_ARGUMENT` message PR5 established for
+  `Extract`.
+
 ## Manual full-cycle demo
 
 `demo_full_cycle.py` drives the complete RPC sequence
@@ -140,6 +157,7 @@ public internet. The `local_http_server` session-scoped fixture (see
 | `GET /slow`          | Sleeps 5 s, then 200. Used for timeout testing.       |
 | `GET /elements`      | Stable HTML used by Query/Extract tests.              |
 | `GET /elements-2`    | Different HTML used to test post-Navigate ref staleness. |
+| `GET /long-page`     | Page tall enough (~3000 px) to exceed the default Playwright viewport, with varied per-row text so PNG compression cannot collapse the page-vs-viewport delta. Used by Screenshot tests. |
 
 Adding a route: edit `_LocalHandler.do_GET` in
 `http_fixture.py`. The fixture is stdlib-only (no extra

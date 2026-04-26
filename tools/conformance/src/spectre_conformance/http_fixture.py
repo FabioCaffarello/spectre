@@ -126,21 +126,19 @@ def _build_long_page_html() -> bytes:
         rows.append(
             f'<div class="row" '
             f'style="height:50px;line-height:50px;'
-            f'border-bottom:1px solid #999;'
-            f'background:#{index % 16:x}{(index * 7) % 16:x}'
-            f'{(index * 13) % 16:x};'
-            f'color:#000;font-family:sans-serif;'
+            f"border-bottom:1px solid #999;"
+            f"background:#{index % 16:x}{(index * 7) % 16:x}"
+            f"{(index * 13) % 16:x};"
+            f"color:#000;font-family:sans-serif;"
             f'padding:0 12px;">'
             f"row {index:03d} — {phrase}"
             f"</div>"
         )
     body = (
-        '<!doctype html>'
+        "<!doctype html>"
         '<html lang="en">'
         '<head><meta charset="utf-8"><title>long-page</title></head>'
-        '<body style="margin:0">'
-        + "".join(rows)
-        + "</body></html>"
+        '<body style="margin:0">' + "".join(rows) + "</body></html>"
     )
     return body.encode("utf-8")
 

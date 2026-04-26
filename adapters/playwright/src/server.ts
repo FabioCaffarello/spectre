@@ -485,10 +485,7 @@ export const createDriverService = (
         "scope is required; SCREENSHOT_SCOPE_UNSPECIFIED is not accepted",
       );
     }
-    if (
-      req.scope === ScreenshotScope.ELEMENT &&
-      !req.element?.opaqueId
-    ) {
+    if (req.scope === ScreenshotScope.ELEMENT && !req.element?.opaqueId) {
       return screenshotError(
         DriverError_Code.INVALID_ARGUMENT,
         "element is required when scope is SCREENSHOT_SCOPE_ELEMENT",
