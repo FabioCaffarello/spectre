@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- spectre_v1alpha1_scrapejob.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
