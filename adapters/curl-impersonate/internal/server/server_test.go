@@ -238,6 +238,10 @@ func TestNavigateUsesRequestTimeoutWhenProvided(t *testing.T) {
 }
 
 func TestUnimplementedRPCsReturnUnimplemented(t *testing.T) {
+	// Close is implemented in PR11 (thin session lifecycle, no
+	// capability declaration); Query/Extract land in PR12, and
+	// Screenshot is permanently UnimplementedFordriver per ADR-0016
+	// §5 — but is still returned as codes.Unimplemented today.
 	srv, mgr := newServerWithFetcher(t, mustNotCall(t))
 	session := mgr.Create()
 
@@ -249,9 +253,43 @@ func TestUnimplementedRPCsReturnUnimplemented(t *testing.T) {
 
 	_, err = srv.Screenshot(context.Background(), &driverv1alpha1.ScreenshotRequest{SessionId: session.ID})
 	mustGRPCCode(t, err, codes.Unimplemented)
+}
 
-	_, err = srv.Close(context.Background(), &driverv1alpha1.CloseRequest{SessionId: session.ID})
-	mustGRPCCode(t, err, codes.Unimplemented)
+func TestCloseRejectsMissingAndUnknownIDs(t *testing.T) {
+	srv, _ := newServerWithFetcher(t, mustNotCall(t))
+
+	resp, err := srv.Close(context.Background(), &driverv1alpha1.CloseRequest{})
+	if err != nil {
+		t.Fatalf("Close err: %v", err)
+	}
+	mustErrCode(t, resp.GetError(),
+		driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT, "session_id is required")
+
+	resp, err = srv.Close(context.Background(), &driverv1alpha1.CloseRequest{SessionId: "nope"})
+	if err != nil {
+		t.Fatalf("Close err: %v", err)
+	}
+	mustErrCode(t, resp.GetError(),
+		driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT, "unknown session_id")
+}
+
+func TestCloseEvictsRegisteredSession(t *testing.T) {
+	srv, mgr := newServerWithFetcher(t, mustNotCall(t))
+	session := mgr.Create()
+	if !mgr.Has(session.ID) {
+		t.Fatal("precondition: manager must hold the session")
+	}
+
+	resp, err := srv.Close(context.Background(), &driverv1alpha1.CloseRequest{SessionId: session.ID})
+	if err != nil {
+		t.Fatalf("Close err: %v", err)
+	}
+	if resp.GetError() != nil {
+		t.Fatalf("expected no error on successful Close; got %v", resp.GetError())
+	}
+	if mgr.Has(session.ID) {
+		t.Fatal("Close must evict the session")
+	}
 }
 
 // ----------------------------------------------------------------------------

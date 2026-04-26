@@ -168,12 +168,44 @@ func (s *Server) Navigate(ctx context.Context, req *driverv1alpha1.NavigateReque
 	}, nil
 }
 
-// Inherit codes.Unimplemented for Query/Extract/Screenshot/Close
-// from the embedded UnimplementedDriverServer; PR11 does not
-// override them. Future PRs add the implementations here. The
-// unit tests assert the codes.Unimplemented response shape so a
-// future change that accidentally implements one of these RPCs
-// without overriding the embedding fails loudly.
+// Close is implemented as a thin session-lifecycle RPC in PR11 —
+// not because the conformance suite covers it (it does not; the
+// rich Close contract lands in PR12), but because the engine's
+// executor always issues Close at the end of a plan (ADR-0012),
+// and `examples/curl-impersonate-fetch/job.yaml` cannot complete
+// via `spectre run` without one. ADR-0014 set the precedent for
+// SeleniumBase PR9; PR11 follows it. Close carries no capability
+// declaration in v1alpha1 — it is a baseline session-lifecycle
+// RPC like Initialize — so wiring it does not violate the
+// "declared = tested" rule from ADR-0014 §1.
+func (s *Server) Close(_ context.Context, req *driverv1alpha1.CloseRequest) (*driverv1alpha1.CloseResponse, error) {
+	if req.GetSessionId() == "" {
+		return &driverv1alpha1.CloseResponse{
+			Error: &driverv1alpha1.DriverError{
+				Code:    driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+				Message: "session_id is required",
+			},
+		}, nil
+	}
+	if err := s.sessions.Close(req.GetSessionId()); err != nil {
+		return &driverv1alpha1.CloseResponse{
+			Error: &driverv1alpha1.DriverError{
+				Code:    driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+				Message: "unknown session_id " + quote(req.GetSessionId()),
+			},
+		}, nil
+	}
+	return &driverv1alpha1.CloseResponse{}, nil
+}
+
+// Query, Extract, and Screenshot inherit codes.Unimplemented from
+// the embedded UnimplementedDriverServer; PR11 does not override
+// them. Future PRs add the implementations (Query, Extract in
+// PR12; Screenshot will never be implemented for this adapter,
+// ADR-0016 §5). The unit tests assert the codes.Unimplemented
+// response shape so a future change that accidentally implements
+// one of these RPCs without overriding the embedding fails
+// loudly.
 
 func navigateError(code driverv1alpha1.DriverError_Code, message string) *driverv1alpha1.NavigateResponse {
 	return &driverv1alpha1.NavigateResponse{

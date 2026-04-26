@@ -1,0 +1,21 @@
+# curl-impersonate-fetch — exercise the curl-impersonate adapter
+# against the public example.com page using only the `navigation`
+# capability.
+#
+# Run via: spectre run examples/curl-impersonate-fetch/job.yaml
+# See README.md for status. PR11 implements only Initialize and
+# Navigate on the curl-impersonate adapter, so this job is
+# intentionally narrower than examples/hello-hackernews/job.yaml
+# (which requires Query + Extract). PR12 will add the
+# extraction-capable variant once Query and Extract land for this
+# driver.
+
+spectre: v1alpha1
+driver: curl-impersonate
+
+steps:
+  - navigate: https://example.com
+
+output:
+  format: jsonl
+  path: ./output.jsonl
