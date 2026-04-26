@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-26.
+> **Last updated:** 2026-04-26 (PR7 in flight).
 
 ## Phase 0 — Foundation (current)
 
@@ -33,8 +33,11 @@ compiles cleanly. CI is green. **Met.** Phase 1 work is unblocked.
 
 Goal: end-to-end execution of a trivial job through the protocol.
 
-- [ ] Engine parses the minimal DSL (one navigation + one extract).
-- [ ] Engine speaks gRPC over UDS to a single driver.
+- [x] Engine parses the minimal DSL (one navigation + one extract).
+      ADR-0012 §1, §2.
+- [x] Engine speaks gRPC over UDS to a single driver. tonic client
+      with a tower-based UDS connector; `:authority` set to
+      `localhost` to mirror ADR-0008. ADR-0012 §3, §4.
 - [x] Playwright reference adapter implements every v1alpha1 unary
       RPC. The protocol surface is complete on this driver;
       remaining Phase 1 work is engine-side.
@@ -52,7 +55,12 @@ Goal: end-to-end execution of a trivial job through the protocol.
         valid), payload-size boundary documented at ~4MB.
         ADR-0011.
 - [ ] `spectre run hello-hackernews/job.yaml` produces a JSONL file
-      with the expected rows.
+      with the expected rows. The substantive capability is delivered
+      by `cargo run --example hello-hackernews` from `core/engine/`
+      (PR7); the Go CLI wrapper that exposes it as `spectre run` is
+      PR8. Documented honestly: the engine pipeline is complete; the
+      user-facing binary name still differs from the roadmap promise
+      until PR8 lands.
 - [x] Conformance suite covers every v1alpha1 unary RPC against
       the Playwright adapter (`Initialize`, `Navigate × 5`,
       `Close × 3`, `Query × 5`, `Extract × 5`, `Screenshot × 4`).
