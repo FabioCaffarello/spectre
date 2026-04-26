@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	caps "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/capabilities"
@@ -237,14 +238,90 @@ func (s *Server) Close(_ context.Context, req *driverv1alpha1.CloseRequest) (*dr
 	return &driverv1alpha1.CloseResponse{}, nil
 }
 
-// Query, Extract, and Screenshot inherit codes.Unimplemented from
-// the embedded UnimplementedDriverServer; PR11 does not override
-// them. Future PRs add the implementations (Query, Extract in
-// PR12; Screenshot will never be implemented for this adapter,
-// ADR-0016 §5). The unit tests assert the codes.Unimplemented
-// response shape so a future change that accidentally implements
-// one of these RPCs without overriding the embedding fails
-// loudly.
+// Query resolves a selector against the session's cached
+// document and returns one ElementRef per match. PR12 supports
+// CSS and XPATH only; TEXT and ATTRIBUTE are rejected because
+// the curl-impersonate adapter does not declare query_text /
+// query_attribute (ADR-0017 §1: capability declaration is a
+// cross-driver semantic-equivalence contract, not a feasibility
+// decision). Zero matches is success with an empty list, not
+// CODE_NOT_FOUND (ADR-0010 §4).
+func (s *Server) Query(_ context.Context, req *driverv1alpha1.QueryRequest) (*driverv1alpha1.QueryResponse, error) {
+	if req.GetSessionId() == "" {
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"session_id is required"), nil
+	}
+	if !s.sessions.Has(req.GetSessionId()) {
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"unknown session_id "+quote(req.GetSessionId())+"; call Initialize first"), nil
+	}
+	if req.GetSelector() == "" {
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"selector is required"), nil
+	}
+
+	switch req.GetKind() {
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_UNSPECIFIED:
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"selector kind is required; SELECTOR_KIND_UNSPECIFIED is not accepted"), nil
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_TEXT:
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"this adapter does not declare query_text; see ADR-0017 §1"), nil
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_ATTRIBUTE:
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"this adapter does not declare query_attribute; see ADR-0017 §1"), nil
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_CSS,
+		driverv1alpha1.SelectorKind_SELECTOR_KIND_XPATH:
+		// fall through
+	default:
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"unsupported selector kind"), nil
+	}
+
+	doc := s.sessions.Document(req.GetSessionId())
+	if doc == nil {
+		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+			"no page is open for this session; call Navigate first"), nil
+	}
+
+	var matches *goquery.Selection
+	switch req.GetKind() {
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_CSS:
+		matches = doc.Find(req.GetSelector())
+	case driverv1alpha1.SelectorKind_SELECTOR_KIND_XPATH:
+		sel, err := parser.XPathQuery(doc, req.GetSelector())
+		if err != nil {
+			return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+				err.Error()), nil
+		}
+		matches = sel
+	}
+
+	if limit := req.GetLimit(); limit > 0 && uint32(matches.Length()) > limit {
+		matches = matches.Slice(0, int(limit))
+	}
+
+	ids := s.sessions.Allocate(req.GetSessionId(), matches)
+	out := make([]*driverv1alpha1.ElementRef, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, &driverv1alpha1.ElementRef{OpaqueId: id})
+	}
+	return &driverv1alpha1.QueryResponse{Elements: out}, nil
+}
+
+// Extract is implemented in a subsequent commit. Until it lands,
+// it inherits codes.Unimplemented from the embedded
+// UnimplementedDriverServer. Screenshot is permanently
+// Unimplemented for this adapter (ADR-0016 §5).
+
+func queryError(code driverv1alpha1.DriverError_Code, message string) *driverv1alpha1.QueryResponse {
+	return &driverv1alpha1.QueryResponse{
+		Error: &driverv1alpha1.DriverError{
+			Code:    code,
+			Message: message,
+		},
+	}
+}
 
 func navigateError(code driverv1alpha1.DriverError_Code, message string) *driverv1alpha1.NavigateResponse {
 	return &driverv1alpha1.NavigateResponse{
