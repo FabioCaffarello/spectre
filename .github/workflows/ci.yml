@@ -274,19 +274,85 @@ jobs:
         run: pnpm exec playwright install-deps chromium
       - run: uv run pytest
 
+  engine-integration:
+    name: Engine integration (rust + playwright)
+    needs: changes
+    # Run when either the engine or the Playwright adapter changes.
+    # Kept separate from the fast `rust` job: this one builds the
+    # Playwright adapter and installs Chromium, which the unit-test
+    # job has no business doing. See ADR-0012 §"Bad, because" on the
+    # gating choice.
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.typescript == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: adapters/playwright/pnpm-lock.yaml
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/engine
+      - name: Generate protocol bindings
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
+      - name: Build Playwright adapter
+        working-directory: adapters/playwright
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Resolve Playwright version
+        id: pw-version
+        working-directory: adapters/playwright
+        run: |
+          version=$(node -p "require('playwright/package.json').version")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        name: Install Chromium with system deps
+        working-directory: adapters/playwright
+        run: pnpm exec playwright install --with-deps chromium
+      - if: steps.pw-cache.outputs.cache-hit == 'true'
+        name: Install Chromium system deps (browser already cached)
+        working-directory: adapters/playwright
+        run: pnpm exec playwright install-deps chromium
+      - name: Run engine integration test
+        working-directory: core/engine
+        env:
+          PLAYWRIGHT_AVAILABLE: "1"
+        run: cargo test --test integration -- --ignored --nocapture
+
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python]
+    needs: [changes, proto, rust, go, typescript, python, engine-integration]
     runs-on: ubuntu-latest
     steps:
       - name: Report
         run: |
-          echo "proto:      ${{ needs.proto.result }}"
-          echo "rust:       ${{ needs.rust.result }}"
-          echo "go:         ${{ needs.go.result }}"
-          echo "typescript: ${{ needs.typescript.result }}"
-          echo "python:     ${{ needs.python.result }}"
+          echo "proto:               ${{ needs.proto.result }}"
+          echo "rust:                ${{ needs.rust.result }}"
+          echo "go:                  ${{ needs.go.result }}"
+          echo "typescript:          ${{ needs.typescript.result }}"
+          echo "python:              ${{ needs.python.result }}"
+          echo "engine-integration:  ${{ needs.engine-integration.result }}"
       - name: Fail if any required job failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1
