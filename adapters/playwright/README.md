@@ -2,11 +2,11 @@
 
 Spectre's reference Playwright driver adapter.
 
-> **Status:** v0.1.0-alpha.0 — implements `Initialize`,
-> `Navigate`, `Close`, `Query`, and `Extract` over gRPC on a Unix
-> domain socket. `Screenshot` is the only remaining unary RPC and
-> still responds with `Status.UNIMPLEMENTED`; it lands in a focused
-> follow-up. See the [roadmap](../../docs/roadmap.md).
+> **Status:** v0.1.0-alpha.0 — implements every v1alpha1 unary
+> RPC (`Initialize`, `Navigate`, `Query`, `Extract`, `Screenshot`,
+> `Close`) over gRPC on a Unix domain socket. Streaming RPCs
+> (`WatchEvents`) remain v1alpha2 territory. See the
+> [roadmap](../../docs/roadmap.md).
 
 ## Build
 
@@ -94,11 +94,11 @@ adapters/playwright/
   (transport configured in `driver.yaml`). Built on
   [`@connectrpc/connect-node`](https://www.npmjs.com/package/@connectrpc/connect-node);
   see ADR-0008 for the framework selection rationale.
-- Implementations of the unary RPCs in
+- Implementations of every unary RPC in
   `proto/spectre/driver/v1alpha1/driver.proto`. PR3 implemented
   `Initialize`; PR4 added `Navigate`; PR5 added `Close`, `Query`,
-  and `Extract`. `Screenshot` still returns
-  `Status.UNIMPLEMENTED` and lands in a focused follow-up.
+  and `Extract`; PR6 added `Screenshot`. The v1alpha1 unary
+  surface is complete.
 - Capability declarations in `driver.yaml`, added incrementally as
   each capability passes the conformance suite. The declared list
   must match `src/capabilities.ts` exactly — the conformance suite
@@ -160,6 +160,54 @@ adapters/playwright/
   `NavigateResponse` carries the status without setting
   `DriverError`. Only network-layer failures and timeouts produce
   a `DriverError`.
+
+### Screenshot semantics
+
+- **Three scopes, two formats.** The protocol's
+  `ScreenshotScope` maps to Playwright as
+  `VIEWPORT → page.screenshot({ fullPage: false })`,
+  `FULL_PAGE → page.screenshot({ fullPage: true })`, and
+  `ELEMENT → locator.screenshot()` after the ElementRef is
+  resolved against the per-session registry. `UNSPECIFIED` is
+  rejected with `CODE_INVALID_ARGUMENT`. `ScreenshotFormat` maps
+  `PNG → { type: "png" }` and `JPEG → { type: "jpeg", quality: 80 }`.
+  `_UNSPECIFIED` defaults to PNG (lossless, alpha-aware). See
+  [ADR-0011](../../docs/adr/0011-screenshot-rpc-and-payload-boundaries.md).
+- **Read-only contract.** `Screenshot` does not bump the
+  per-session generation counter and does not invalidate any
+  ElementRef. Clients can interleave `Query → Screenshot →
+Extract` without re-querying. This is the first read-only RPC
+  in v1alpha1; future read-only RPCs (e.g. potential
+  `GetCookies`, `GetUrl`) inherit the same invariant.
+- **Element scope reuses the registry.** When `scope == ELEMENT`,
+  the request must populate `element.opaque_id`. The handler
+  resolves the ref against the session's `ElementRegistry`
+  (ADR-0010) and returns `CODE_INVALID_ARGUMENT` with the same
+  stale-ref message `Extract` uses if the ref was allocated
+  before a Navigate. Playwright auto-scrolls the element into
+  view before capturing, so an off-screen element still produces
+  the element clipping rather than the viewport-at-the-time.
+- **JPEG quality is fixed at 80** in v1alpha1; the schema has no
+  quality field. Clients with precise file-size targets should
+  request PNG and post-process. JPEG has no alpha channel —
+  pages with transparent regions render those regions as white
+  in the JPEG output. PNG preserves alpha. Pick the format with
+  knowledge of the target page.
+- **Payload-size boundary at ~4MB.** Connect's HTTP/2 transport
+  caps message size at roughly 4MB by default. Full-page
+  screenshots of long pages can cross the boundary. The adapter
+  warns to stderr when the resulting payload exceeds 3MB
+  (leaving ~1MB of headroom under the hard limit) but returns
+  the bytes unchanged. If the message actually exceeds the
+  transport limit, the failure surfaces as a Connect/gRPC error
+  on the client side rather than as a structured `DriverError`.
+  v1alpha2 will likely add a streaming or chunked variant.
+- **Failure-response shape.** On failure, `image` is empty,
+  `content_type` is empty, and `error` carries the populated
+  `DriverError`. On success, `error` is the default-constructed
+  message (empty `code`, empty `message`). v1alpha1 has no
+  `CODE_OK`; clients distinguish success and failure by checking
+  whether `error.code` is the zero value of the enum.
 
 ## Generated code
 

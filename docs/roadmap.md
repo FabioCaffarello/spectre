@@ -35,8 +35,9 @@ Goal: end-to-end execution of a trivial job through the protocol.
 
 - [ ] Engine parses the minimal DSL (one navigation + one extract).
 - [ ] Engine speaks gRPC over UDS to a single driver.
-- [x] Playwright reference adapter implements `Initialize`, `Navigate`,
-      `Query`, `Extract`, `Close` for the smoke-test job.
+- [x] Playwright reference adapter implements every v1alpha1 unary
+      RPC. The protocol surface is complete on this driver;
+      remaining Phase 1 work is engine-side.
   - [x] `Initialize` — gRPC over UDS, with `Capabilities` declared
         at handshake. ADR-0008.
   - [x] `Navigate` — lazy Chromium launch, per-session
@@ -45,17 +46,18 @@ Goal: end-to-end execution of a trivial job through the protocol.
   - [x] `Close`, `Query`, `Extract` — strict ElementRef
         invalidation on Navigate, per-session UUID registry,
         runtime gating of `MODE_EVAL` on `js_execution`. ADR-0010.
-  - [ ] `Screenshot` — deferred to a focused follow-up; image
-        format / scope / encoding decisions sit on top of the
-        rest of the surface.
+  - [x] `Screenshot` — three scopes (viewport, full-page,
+        element), two formats (PNG, JPEG with quality 80),
+        read-only contract (no generation bump, refs remain
+        valid), payload-size boundary documented at ~4MB.
+        ADR-0011.
 - [ ] `spectre run hello-hackernews/job.yaml` produces a JSONL file
       with the expected rows.
-- [x] Conformance suite covers every implemented unary RPC against
+- [x] Conformance suite covers every v1alpha1 unary RPC against
       the Playwright adapter (`Initialize`, `Navigate × 5`,
-      `Close × 3`, `Query × 5`, `Extract × 5`) plus a negative
-      test that cements `Screenshot` as `UNIMPLEMENTED`. The
-      Driver Protocol byte-for-byte capability assertion holds
-      against the eleven declared capability names.
+      `Close × 3`, `Query × 5`, `Extract × 5`, `Screenshot × 4`).
+      The Driver Protocol byte-for-byte capability assertion
+      holds against the thirteen declared capability names.
 
 Exit criterion: a new contributor can `git clone && just bootstrap &&
 spectre run examples/hello-hackernews/job.yaml` and see results.

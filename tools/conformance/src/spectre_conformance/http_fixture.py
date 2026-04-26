@@ -28,6 +28,14 @@ Path            Behaviour
                 heading, different list items). Used to test that
                 an ElementRef issued against ``/elements`` is
                 invalidated after navigating to ``/elements-2``.
+``GET /long-page``  200 with a page tall enough to exceed the
+                default 1280×720 Playwright viewport (~3000 px of
+                content). Each row carries varied text so PNG
+                compression cannot collapse the page to near-zero
+                bytes; that lets the Screenshot conformance suite
+                assert that ``SCREENSHOT_SCOPE_FULL_PAGE`` returns
+                more bytes than ``SCREENSHOT_SCOPE_VIEWPORT``
+                against the same URL.
 ==============  ========================================================
 
 Lifecycle
@@ -90,6 +98,54 @@ ELEMENTS_TWO_HTML: bytes = (
 )
 
 
+# A page tall enough to exceed Playwright's default 720 px viewport.
+# Each row carries varied lorem-style text so PNG compression cannot
+# collapse the page to near-zero bytes; the Screenshot conformance
+# suite uses this property to assert that a full-page capture
+# returns strictly more bytes than the viewport capture of the same
+# URL. See ADR-0011 and `tools/conformance/tests/test_screenshot.py`.
+def _build_long_page_html() -> bytes:
+    rows: list[str] = []
+    # 60 rows × ~50 px = 3000 px, well past the 720 px default
+    # viewport. Each row pairs a stable index with a varied phrase so
+    # the rendered pixels differ row-to-row.
+    phrases = [
+        "lorem ipsum dolor sit amet",
+        "consectetur adipiscing elit",
+        "sed do eiusmod tempor incididunt",
+        "ut labore et dolore magna aliqua",
+        "ut enim ad minim veniam",
+        "quis nostrud exercitation ullamco",
+        "laboris nisi ut aliquip ex ea",
+        "commodo consequat duis aute irure",
+        "in reprehenderit in voluptate",
+        "velit esse cillum dolore eu fugiat",
+    ]
+    for index in range(60):
+        phrase = phrases[index % len(phrases)]
+        rows.append(
+            f'<div class="row" '
+            f'style="height:50px;line-height:50px;'
+            f"border-bottom:1px solid #999;"
+            f"background:#{index % 16:x}{(index * 7) % 16:x}"
+            f"{(index * 13) % 16:x};"
+            f"color:#000;font-family:sans-serif;"
+            f'padding:0 12px;">'
+            f"row {index:03d} — {phrase}"
+            f"</div>"
+        )
+    body = (
+        "<!doctype html>"
+        '<html lang="en">'
+        '<head><meta charset="utf-8"><title>long-page</title></head>'
+        '<body style="margin:0">' + "".join(rows) + "</body></html>"
+    )
+    return body.encode("utf-8")
+
+
+LONG_PAGE_HTML: bytes = _build_long_page_html()
+
+
 class _LocalHandler(BaseHTTPRequestHandler):
     # Silence the default stderr access log so pytest output stays clean.
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
@@ -133,6 +189,10 @@ class _LocalHandler(BaseHTTPRequestHandler):
 
         if path == "/elements-2":
             self._respond_html(ELEMENTS_TWO_HTML)
+            return
+
+        if path == "/long-page":
+            self._respond_html(LONG_PAGE_HTML)
             return
 
         self._respond(HTTPStatus.NOT_FOUND.value, b"not found")

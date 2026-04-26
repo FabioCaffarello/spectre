@@ -2,17 +2,17 @@
 //
 // Spectre Playwright driver — gRPC service implementation.
 //
-// PR4 implemented `Initialize` and `Navigate`; PR5 adds `Close`,
-// `Query`, and `Extract`. `Screenshot` is the only remaining
-// unimplemented RPC and returns `Code.Unimplemented` so a
-// misconfigured client gets a structured gRPC status rather than a
-// hang. See ADR-0008 (handshake), ADR-0009 (Navigate / session
-// lifecycle / error mapping), and ADR-0010 (element lifecycle and
-// capability gating).
+// PR4 implemented `Initialize` and `Navigate`; PR5 added `Close`,
+// `Query`, and `Extract`; PR6 closes the v1alpha1 unary surface by
+// implementing `Screenshot`. See ADR-0008 (handshake), ADR-0009
+// (Navigate / session lifecycle / error mapping), ADR-0010 (element
+// lifecycle and capability gating), and ADR-0011 (Screenshot scope
+// mapping, JPEG quality default, payload-size boundary, read-only
+// contract).
 
 import { create } from "@bufbuild/protobuf";
 import { DurationSchema } from "@bufbuild/protobuf/wkt";
-import { Code, ConnectError, type ConnectRouter } from "@connectrpc/connect";
+import { type ConnectRouter } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -41,6 +41,8 @@ import {
   type ScreenshotRequest,
   type ScreenshotResponse,
   ScreenshotResponseSchema,
+  ScreenshotFormat,
+  ScreenshotScope,
   WaitCondition,
 } from "./proto/spectre/driver/v1alpha1/driver_pb.js";
 import { DriverError_Code } from "./proto/spectre/driver/v1alpha1/errors_pb.js";
@@ -73,12 +75,20 @@ export interface DriverServiceImpl {
 
 const DEFAULT_NAVIGATE_TIMEOUT_MS = 30_000;
 
-const unimplemented = (rpc: string): never => {
-  throw new ConnectError(
-    `${rpc} is not implemented in spectre-playwright ${DRIVER_VERSION}`,
-    Code.Unimplemented,
-  );
-};
+// ADR-0011, decision 2: JPEG quality is fixed at 80 in v1alpha1.
+// The choice is the conventional "high" preset balancing fidelity
+// against payload size; clients who need a different quality
+// should request PNG (lossless) until v1alpha2 adds a quality
+// field on `ScreenshotRequest`.
+const JPEG_QUALITY_DEFAULT = 80;
+
+// ADR-0011, decision 3: soft-warn at 3MB so an operator sees the
+// boundary before a full-page screenshot of a long page crosses
+// the ~4MB Connect transport limit. The adapter does not fail the
+// RPC at the warning threshold — the bytes are returned unchanged
+// and the transport surfaces a `RESOURCE_EXHAUSTED`-style error if
+// the message actually exceeds the limit.
+const SCREENSHOT_PAYLOAD_WARN_BYTES = 3 * 1024 * 1024;
 
 const defaultBrowserFactory: BrowserFactory = () => chromium.launch();
 
@@ -139,6 +149,14 @@ const extractError = (
 
 const closeError = (code: DriverError_Code, message: string): CloseResponse =>
   create(CloseResponseSchema, {
+    error: { code, message },
+  });
+
+const screenshotError = (
+  code: DriverError_Code,
+  message: string,
+): ScreenshotResponse =>
+  create(ScreenshotResponseSchema, {
     error: { code, message },
   });
 
@@ -448,9 +466,112 @@ export const createDriverService = (
       }),
     });
   },
-  async screenshot(_req: ScreenshotRequest): Promise<ScreenshotResponse> {
-    unimplemented("Screenshot");
-    return create(ScreenshotResponseSchema);
+  async screenshot(req: ScreenshotRequest): Promise<ScreenshotResponse> {
+    if (!req.sessionId) {
+      return screenshotError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "session_id is required",
+      );
+    }
+    if (!sessions.has(req.sessionId)) {
+      return screenshotError(
+        DriverError_Code.INVALID_ARGUMENT,
+        `unknown session_id ${JSON.stringify(req.sessionId)}; call Initialize first`,
+      );
+    }
+    if (req.scope === ScreenshotScope.UNSPECIFIED) {
+      return screenshotError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "scope is required; SCREENSHOT_SCOPE_UNSPECIFIED is not accepted",
+      );
+    }
+    if (req.scope === ScreenshotScope.ELEMENT && !req.element?.opaqueId) {
+      return screenshotError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "element is required when scope is SCREENSHOT_SCOPE_ELEMENT",
+      );
+    }
+
+    const page = sessions.pageOf(req.sessionId);
+    if (!page) {
+      return screenshotError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "no page is open for this session; call Navigate first",
+      );
+    }
+
+    // ADR-0011, decision 2: `_UNSPECIFIED` format defaults to PNG
+    // (lossless, alpha-aware). JPEG carries a fixed quality of 80.
+    const isJpeg = req.format === ScreenshotFormat.JPEG;
+    const playwrightOptions: { type: "png" | "jpeg"; quality?: number } = isJpeg
+      ? { type: "jpeg", quality: JPEG_QUALITY_DEFAULT }
+      : { type: "png" };
+    const contentType = isJpeg ? "image/jpeg" : "image/png";
+
+    let buffer: Buffer;
+    try {
+      switch (req.scope) {
+        case ScreenshotScope.VIEWPORT:
+          buffer = await page.screenshot({
+            ...playwrightOptions,
+            fullPage: false,
+          });
+          break;
+        case ScreenshotScope.FULL_PAGE:
+          buffer = await page.screenshot({
+            ...playwrightOptions,
+            fullPage: true,
+          });
+          break;
+        case ScreenshotScope.ELEMENT: {
+          // `req.element.opaqueId` is non-empty here because the
+          // argument-validation block above rejected the empty case.
+          const opaqueId = req.element?.opaqueId ?? "";
+          const lookup = sessions.lookupRef(req.sessionId, opaqueId);
+          if (lookup.status === "stale") {
+            return screenshotError(
+              DriverError_Code.INVALID_ARGUMENT,
+              STALE_NAVIGATE_MESSAGE,
+            );
+          }
+          if (lookup.status === "unknown" || !lookup.locator) {
+            return screenshotError(
+              DriverError_Code.INVALID_ARGUMENT,
+              UNKNOWN_REF_MESSAGE,
+            );
+          }
+          buffer = await lookup.locator.screenshot(playwrightOptions);
+          break;
+        }
+        default:
+          return screenshotError(
+            DriverError_Code.INVALID_ARGUMENT,
+            `unsupported scope: ${req.scope}`,
+          );
+      }
+    } catch (err) {
+      const mapped = playwrightErrorToDriverError(err);
+      return screenshotError(mapped.code, mapped.message);
+    }
+
+    // Buffer extends Uint8Array in Node, but `protoc-gen-es` types
+    // the wire field as Uint8Array; the explicit copy keeps the
+    // payload portable and decouples downstream consumers from
+    // Node's Buffer pooling semantics.
+    const image = new Uint8Array(buffer);
+
+    if (image.byteLength > SCREENSHOT_PAYLOAD_WARN_BYTES) {
+      // ADR-0011, decision 3.
+      process.stderr.write(
+        `screenshot payload ${image.byteLength} bytes exceeds 3MB warning threshold; ` +
+          `v1alpha1 transport limit is ~4MB\n`,
+      );
+    }
+
+    return create(ScreenshotResponseSchema, {
+      image,
+      contentType,
+    });
   },
   async close(req: CloseRequest): Promise<CloseResponse> {
     if (!req.sessionId) {

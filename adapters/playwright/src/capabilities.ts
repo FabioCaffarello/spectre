@@ -4,11 +4,12 @@
 //
 // Each capability lands once its RPC and the conformance tests for
 // it ship together. PR3 declared none; PR4 added `navigation` and
-// `js_execution`; PR5 expands the list to eleven names covering the
-// query-* and extract-* surface that `Query` and `Extract` now
-// implement. The exported value MUST stay in lockstep with
-// `driver.yaml`'s `capabilities:` block — the conformance suite
-// asserts byte-for-byte equality at runtime, including order.
+// `js_execution`; PR5 added the eight `query_*` / `extract_*` names
+// covering `Query` and `Extract`; PR6 adds the three `screenshot_*`
+// names covering the three `Screenshot` scopes. The exported value
+// MUST stay in lockstep with `driver.yaml`'s `capabilities:` block —
+// the conformance suite asserts byte-for-byte equality at runtime,
+// including order.
 //
 // The capability mechanism splits into two roles (see ADR-0010,
 // decision 3):
@@ -54,6 +55,14 @@ export const QUERY_CSS = "query_css";
 export const QUERY_TEXT = "query_text";
 /** Resolve elements by XPath. */
 export const QUERY_XPATH = "query_xpath";
+/** Capture a screenshot clipped to a referenced ElementRef
+ * (`SCREENSHOT_SCOPE_ELEMENT`). */
+export const SCREENSHOT_ELEMENT = "screenshot_element";
+/** Capture the entire scrollable page
+ * (`SCREENSHOT_SCOPE_FULL_PAGE`). */
+export const SCREENSHOT_FULL_PAGE = "screenshot_full_page";
+/** Capture the visible viewport (`SCREENSHOT_SCOPE_VIEWPORT`). */
+export const SCREENSHOT_VIEWPORT = "screenshot_viewport";
 
 export const CAPABILITY_NAMES: readonly string[] = Object.freeze([
   EXTRACT_ATTRIBUTE,
@@ -66,6 +75,9 @@ export const CAPABILITY_NAMES: readonly string[] = Object.freeze([
   QUERY_CSS,
   QUERY_TEXT,
   QUERY_XPATH,
+  SCREENSHOT_ELEMENT,
+  SCREENSHOT_FULL_PAGE,
+  SCREENSHOT_VIEWPORT,
 ]);
 
 export const DRIVER_VERSION = "0.1.0-alpha.0";
