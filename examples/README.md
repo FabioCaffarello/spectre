@@ -2,9 +2,10 @@
 
 Sample jobs and walkthroughs for Spectre.
 
-> **Status:** the examples here are **aspirational**. The engine and
-> reference adapters are not yet runnable end-to-end (see the
-> [roadmap](../docs/roadmap.md)). The job specs are committed early
+> **Status:** `hello-hackernews` runs end-to-end via `spectre run`
+> (Phase 1 complete). The other examples below remain aspirational
+> until the relevant capabilities land — see the
+> [roadmap](../docs/roadmap.md). The job specs are committed early
 > so the user-facing contract is visible during design and so
 > contributors have a target shape to code against.
 

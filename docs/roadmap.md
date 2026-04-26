@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-26 (PR7 in flight).
+> **Last updated:** 2026-04-26 (PR8 merged; Phase 1 complete).
 
 ## Phase 0 — Foundation (current)
 
@@ -29,9 +29,13 @@ knows what they are doing." Nothing has to *run* yet.
 Exit criterion: every component compiles to nothing useful but
 compiles cleanly. CI is green. **Met.** Phase 1 work is unblocked.
 
-## Phase 1 — Hello, World (in progress)
+## Phase 1 — Hello, World (complete)
 
 Goal: end-to-end execution of a trivial job through the protocol.
+
+PR8 closed Phase 1. The `spectre` CLI is the engine binary
+(ADR-0013) and `spectre run examples/hello-hackernews/job.yaml`
+produces JSONL against the live Hacker News front page.
 
 - [x] Engine parses the minimal DSL (one navigation + one extract).
       ADR-0012 §1, §2.
@@ -54,13 +58,13 @@ Goal: end-to-end execution of a trivial job through the protocol.
         read-only contract (no generation bump, refs remain
         valid), payload-size boundary documented at ~4MB.
         ADR-0011.
-- [ ] `spectre run hello-hackernews/job.yaml` produces a JSONL file
-      with the expected rows. The substantive capability is delivered
-      by `cargo run --example hello-hackernews` from `core/engine/`
-      (PR7); the Go CLI wrapper that exposes it as `spectre run` is
-      PR8. Documented honestly: the engine pipeline is complete; the
-      user-facing binary name still differs from the roadmap promise
-      until PR8 lands.
+- [x] `spectre run examples/hello-hackernews/job.yaml` produces a
+      JSONL file with the expected rows. Delivered by PR8: the
+      `spectre` CLI is the engine binary at
+      `core/engine/src/bin/spectre.rs`, with three subcommands
+      (`run`, `validate`, `version`). ADR-0013 records why the CLI
+      moved from Go (per ADR-0002) to Rust after PR7 made the engine
+      binary real.
 - [x] Conformance suite covers every v1alpha1 unary RPC against
       the Playwright adapter (`Initialize`, `Navigate × 5`,
       `Close × 3`, `Query × 5`, `Extract × 5`, `Screenshot × 4`).
@@ -69,6 +73,7 @@ Goal: end-to-end execution of a trivial job through the protocol.
 
 Exit criterion: a new contributor can `git clone && just bootstrap &&
 spectre run examples/hello-hackernews/job.yaml` and see results.
+**Met.** Phase 2 work is unblocked.
 
 ## Phase 2 — Three drivers, one protocol
 

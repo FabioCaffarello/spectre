@@ -89,10 +89,7 @@ async fn dispatch(cmd: Command) -> Result<ExitCode> {
             output,
             adapters_path,
         } => cmd_run(&job, verbose, output.as_deref(), adapters_path.as_deref()).await,
-        Command::Validate {
-            job,
-            adapters_path,
-        } => cmd_validate(&job, adapters_path.as_deref()),
+        Command::Validate { job, adapters_path } => cmd_validate(&job, adapters_path.as_deref()),
         Command::Version => {
             cmd_version();
             Ok(ExitCode::SUCCESS)
@@ -149,7 +146,11 @@ fn print_plan(plan: &Plan, out: &mut impl std::io::Write) -> std::io::Result<()>
     let mut caps: Vec<&String> = plan.required_capabilities.iter().collect();
     caps.sort();
     writeln!(out, "Required capabilities: {caps:?}")?;
-    writeln!(out, "Output: format={:?} path={:?}", plan.output.format, plan.output.path)?;
+    writeln!(
+        out,
+        "Output: format={:?} path={:?}",
+        plan.output.format, plan.output.path
+    )?;
     writeln!(out, "Steps:")?;
     for (i, step) in plan.steps.iter().enumerate() {
         writeln!(out, "  [{i}] {step:?}")?;
@@ -162,8 +163,11 @@ fn init_tracing(verbose: bool) {
     // --verbose. tracing-subscriber writes to stderr so JSONL on stdout
     // stays clean for piping.
     let default_level = if verbose { "info" } else { "warn" };
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(format!("spectre_engine={default_level},spectre={default_level}")));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(format!(
+            "spectre_engine={default_level},spectre={default_level}"
+        ))
+    });
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(filter)
