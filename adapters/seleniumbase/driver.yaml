@@ -23,8 +23,25 @@ transports:
 # byte equality between this list and the runtime `Capabilities.names`
 # returned by `Initialize`; keep this file in lockstep with
 # `src/spectre_seleniumbase/capabilities.py`.
+#
+# `screenshot_full_page` is intentionally absent: Selenium WebDriver
+# has no reliable, browser-independent full-page capture API, and
+# the capability progression contract says declared = tested. The
+# Playwright adapter declares thirteen names; this adapter declares
+# twelve. ADR-0015 §5 records the rationale.
 capabilities:
+  - extract_attribute
+  - extract_eval
+  - extract_html
+  - extract_text
+  - js_execution
   - navigation
+  - query_attribute
+  - query_css
+  - query_text
+  - query_xpath
+  - screenshot_element
+  - screenshot_viewport
 
 runtime:
   python: ">=3.10"

@@ -1,0 +1,24 @@
+# seleniumbase-extract — query and extract against a public page using
+# the SeleniumBase adapter.
+#
+# Run via: spectre run examples/seleniumbase-extract/job.yaml
+# See README.md for status. PR10 lands the SeleniumBase adapter's
+# Query and Extract surface, so this job exercises the second
+# driver through the same DSL hello-hackernews uses against the
+# Playwright adapter — visible evidence that one CLI runs one
+# protocol against two runtimes in two languages.
+
+spectre: v1alpha1
+driver: seleniumbase
+
+steps:
+  - navigate: https://example.com
+  - extract:
+      selector: a
+      fields:
+        text: textContent
+        url: href
+
+output:
+  format: jsonl
+  path: ./links.jsonl

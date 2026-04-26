@@ -30,6 +30,11 @@ dependencies = [
     # transitively; declaring it here keeps the adapter's direct
     # dependency surface explicit and matches the conformance pin.
     "grpcio>=1.60",
+    # Pillow handles the PNG -> JPEG conversion in the Screenshot
+    # handler — Selenium returns PNG bytes natively, the v1alpha1
+    # protocol also accepts JPEG, and Pillow is the conventional
+    # path. ADR-0015 §4 records the dependency rationale.
+    "Pillow>=10.0",
 ]
 
 [tool.uv.sources]
@@ -97,6 +102,14 @@ ignore_missing_imports = true
 # is bounded to that one file.
 [[tool.mypy.overrides]]
 module = ["seleniumbase", "seleniumbase.*", "selenium", "selenium.*"]
+ignore_missing_imports = true
+
+# Pillow ships its own stubs but they are extensive enough that
+# treating the import as Any-typed at the boundary keeps the
+# screenshot handler's PNG-to-JPEG path easy to read. The
+# conversion is bounded to ``_png_to_jpeg`` in ``server.py``.
+[[tool.mypy.overrides]]
+module = ["PIL", "PIL.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

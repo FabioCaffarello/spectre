@@ -2,8 +2,9 @@
 
 Mirrors ``test_initialize.py`` (which targets the Playwright adapter)
 but asserts against SeleniumBase's narrower v1alpha1 capability list.
-ADR-0014 §1 records the deliberate "declared = tested" rule that
-keeps PR9's manifest at ``["navigation"]``.
+ADR-0014 §1 records the "declared = tested" rule; PR10 grew the
+list from one to twelve names. ``screenshot_full_page`` is
+*intentionally absent* — see ADR-0015 §5.
 """
 
 from __future__ import annotations
@@ -42,10 +43,31 @@ def test_seleniumbase_initialize_returns_a_session(
         f"driver.yaml `capabilities` must be a list, got {type(declared_raw).__name__}"
     )
     declared: list[str] = [str(name) for name in declared_raw]
-    # ADR-0014 §1: PR9 declares ["navigation"] only. Future PRs
-    # extend this list as their RPCs and conformance tests land.
-    assert declared == ["navigation"], (
-        f"PR9's seleniumbase driver.yaml must declare exactly ['navigation']; got {declared}"
+    # ADR-0014 §1 / ADR-0015 §5: PR10 declares twelve names in
+    # alphabetical order — the eleven Playwright content-and-
+    # navigation capabilities plus screenshot_viewport and
+    # screenshot_element. screenshot_full_page is intentionally
+    # absent; the omission is the architectural artifact the
+    # capability progression contract was designed to enable.
+    expected = [
+        "extract_attribute",
+        "extract_eval",
+        "extract_html",
+        "extract_text",
+        "js_execution",
+        "navigation",
+        "query_attribute",
+        "query_css",
+        "query_text",
+        "query_xpath",
+        "screenshot_element",
+        "screenshot_viewport",
+    ]
+    assert declared == expected, (
+        f"PR10 seleniumbase driver.yaml must declare exactly {expected}; got {declared}"
+    )
+    assert "screenshot_full_page" not in declared, (
+        "ADR-0015 §5: SeleniumBase must not declare screenshot_full_page"
     )
     assert list(response.capabilities.names) == declared, (
         "Capabilities returned by Initialize must match driver.yaml byte-for-byte. "

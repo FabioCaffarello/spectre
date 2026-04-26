@@ -320,6 +320,45 @@ output:
     }
 
     #[test]
+    fn validate_capabilities_rejects_seleniumbase_full_page_screenshot() {
+        // ADR-0015 §5: the SeleniumBase adapter declares two of the
+        // three Playwright screenshot capabilities, omitting
+        // ``screenshot_full_page``. A plan that requires the
+        // capability against a driver whose declared list mirrors
+        // the SeleniumBase manifest must be rejected by the engine
+        // planner before any browser launches.
+        //
+        // The DSL does not yet emit ``screenshot_full_page`` as a
+        // required capability (Screenshot is not exposed in the DSL
+        // surface), so we synthesise the requirement manually — the
+        // assertion is on the validator, not on plan emission.
+        let job = Job::from_yaml(HELLO_HACKERNEWS).unwrap();
+        let mut plan = plan(&job);
+        plan.required_capabilities
+            .insert("screenshot_full_page".to_owned());
+        let declared = vec![
+            "extract_attribute".to_owned(),
+            "extract_eval".to_owned(),
+            "extract_html".to_owned(),
+            "extract_text".to_owned(),
+            "js_execution".to_owned(),
+            "navigation".to_owned(),
+            "query_attribute".to_owned(),
+            "query_css".to_owned(),
+            "query_text".to_owned(),
+            "query_xpath".to_owned(),
+            "screenshot_element".to_owned(),
+            "screenshot_viewport".to_owned(),
+        ];
+        match validate_capabilities(&plan, &declared) {
+            Err(PlanError::CapabilityMissing { missing }) => {
+                assert_eq!(missing, vec!["screenshot_full_page".to_owned()]);
+            }
+            Ok(()) => panic!("expected CapabilityMissing for screenshot_full_page"),
+        }
+    }
+
+    #[test]
     fn validate_capabilities_reports_missing_names_alphabetically() {
         // Synthesise a Plan with an extra required capability so we
         // can exercise the missing path. The DSL never emits

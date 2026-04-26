@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-26 (PR9 in review; Phase 2 in progress).
+> **Last updated:** 2026-04-26 (PR10 in review; Phase 2 in progress).
 
 ## Phase 0 — Foundation (current)
 
@@ -87,13 +87,27 @@ reference runtimes.
         mapping table for Navigate-relevant rows. Cross-language
         conformance pattern (two explicit fixtures). ADR-0014.
         (PR9.)
-  - [ ] `Close`, `Query`, `Extract` — strict ElementRef
+  - [x] `Close`, `Query`, `Extract` — strict ElementRef
         invalidation per ADR-0010, plus the eight `query_*` /
-        `extract_*` capability declarations and the
-        `js_execution` gate. (PR10.)
-  - [ ] `Screenshot` — three scopes, two formats, the
-        read-only contract from ADR-0011 carried forward.
-        (PR11.)
+        `extract_*` capability declarations, the `js_execution`
+        gate, and the SeleniumBase-specific deviations
+        (WebElement vs Locator with two distinct stale messages,
+        SELECTOR_KIND_TEXT via XPath escaping, Field.Mode
+        mapping onto Selenium APIs). ADR-0015 §1–§4. (PR10.)
+  - [x] `Screenshot` — `screenshot_viewport` and
+        `screenshot_element` only; `screenshot_full_page` is
+        intentionally not declared because Selenium WebDriver
+        has no reliable, browser-independent full-page capture
+        API. The read-only contract from ADR-0011 carries
+        forward unchanged. ADR-0015 §5. (PR10.)[^sb-fullpage]
+
+[^sb-fullpage]: `screenshot_full_page` for SeleniumBase is a
+    v1alpha2 candidate, likely as a Chromium-specific
+    sub-capability (e.g. `screenshot_full_page_cdp`) that
+    operators opt into with awareness of the dependency. The
+    Playwright adapter declares the umbrella name today; the
+    SeleniumBase adapter does not, validating the capability
+    progression contract from ADR-0014 §1.
 - [ ] curl-impersonate reference adapter — `v1alpha1` capability set
       tailored to HTTP-only flows (no JS execution, no screenshots).
       Passes conformance.
