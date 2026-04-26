@@ -1,20 +1,19 @@
 """Negative-path conformance: unimplemented RPCs must report cleanly.
 
-PR4 implements ``Initialize`` and ``Navigate``. The four remaining
-unary RPCs (``Query``, ``Extract``, ``Screenshot``, ``Close``) must
-respond with the gRPC ``UNIMPLEMENTED`` status rather than hanging,
-crashing the adapter, or returning an empty success response. This
-test cements that contract so future PRs cannot silently regress it
-when the corresponding RPC lands. ``Query`` is the canary chosen for
-PR4; PR5 will rotate it to a different unimplemented RPC once
-``Query`` itself is implemented.
+PR4 implemented ``Initialize`` and ``Navigate``; PR5 added
+``Close``, ``Query``, and ``Extract``. ``Screenshot`` is the only
+remaining unary RPC in v1alpha1 that has not been implemented;
+this test cements that it returns ``UNIMPLEMENTED`` rather than
+hanging, crashing the adapter, or returning an empty success
+response. Future PR6 cannot silently regress the contract when
+``Screenshot`` lands — the test rotates again at that point.
 """
 
 from __future__ import annotations
 
 import grpc
 import pytest
-from spectre.driver.v1alpha1 import driver_pb2, driver_pb2_grpc, extraction_pb2
+from spectre.driver.v1alpha1 import driver_pb2, driver_pb2_grpc
 
 from spectre_conformance.harness import DriverHarness
 
@@ -22,25 +21,20 @@ PER_TEST_DEADLINE_S = 30.0
 
 
 @pytest.mark.timeout(PER_TEST_DEADLINE_S)
-def test_query_returns_unimplemented(
+def test_screenshot_returns_unimplemented(
     playwright_adapter: DriverHarness,
 ) -> None:
     stub = driver_pb2_grpc.DriverStub(playwright_adapter.dial())
 
-    request = extraction_pb2.QueryRequest(
+    request = driver_pb2.ScreenshotRequest(
         session_id="conformance",
-        selector="body",
-        kind=extraction_pb2.SELECTOR_KIND_CSS,
+        scope=driver_pb2.SCREENSHOT_SCOPE_VIEWPORT,
+        format=driver_pb2.SCREENSHOT_FORMAT_PNG,
     )
 
     with pytest.raises(grpc.RpcError) as excinfo:
-        stub.Query(request, timeout=5.0)
+        stub.Screenshot(request, timeout=5.0)
 
     rpc_error = excinfo.value
     assert isinstance(rpc_error, grpc.Call)
     assert rpc_error.code() == grpc.StatusCode.UNIMPLEMENTED
-
-
-# Keep a reference to driver_pb2 so the import stays meaningful for
-# tooling that scans the file for protocol coverage.
-_ = driver_pb2.DESCRIPTOR
