@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-26 (PR10 in review; Phase 2 in progress).
+> **Last updated:** 2026-04-26 (PR11 in review; Phase 2 in progress).
 
 ## Phase 0 — Foundation (current)
 
@@ -111,6 +111,21 @@ reference runtimes.
 - [ ] curl-impersonate reference adapter — `v1alpha1` capability set
       tailored to HTTP-only flows (no JS execution, no screenshots).
       Passes conformance.
+  - [x] `Initialize` + `Navigate` over gRPC on a UDS, plus a thin
+        `Close` so the engine's executor can finish navigate-only
+        plans (same precedent ADR-0014 set for SeleniumBase PR9).
+        Capabilities declared: `["navigation"]`. curl-error mapping
+        table for Navigate-relevant rows. Per-session cookie-jar
+        architecture readied for PR12. Subprocess-over-cgo and
+        WaitCondition-as-no-op decisions recorded. ADR-0016. (PR11.)
+  - [ ] `Close` (full contract), `Query`, `Extract` — declared
+        capabilities grow to roughly five or six entries
+        (`query_css`, `query_xpath`, `extract_text`,
+        `extract_html`, `extract_attribute`, possibly `query_text`
+        / `query_attribute`). HTML parsing library (goquery or
+        x/net/html) lands here. `js_execution`, `extract_eval`,
+        and the `screenshot_*` family will *never* be declared
+        by this adapter. (PR12.)
 - [ ] Streaming RPCs added behind a feature flag in `v1alpha2`:
       `WatchEvents` for network monitoring, `WatchDom` for mutation
       observation.
