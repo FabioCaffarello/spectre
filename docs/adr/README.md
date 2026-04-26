@@ -34,6 +34,7 @@ A decision moves through three states:
 | 0009  | [Navigate, session lifecycle, and the driver error mapping](0009-navigate-and-session-lifecycle.md) | accepted |
 | 0010  | [Element lifecycle, capability granularity, and selector mapping](0010-element-lifecycle-and-capability-gating.md) | accepted |
 | 0011  | [Screenshot RPC, scope mapping, and payload boundaries](0011-screenshot-rpc-and-payload-boundaries.md) | accepted |
+| 0012  | [Engine DSL surface, planner architecture, and execution pipeline](0012-engine-dsl-and-execution-pipeline.md) | accepted |
 
 ## When to write an ADR
 

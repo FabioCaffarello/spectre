@@ -95,6 +95,18 @@ engine-test:
 engine-build:
     cd core/engine && cargo build --release
 
+# Run the hello-hackernews example end-to-end. Builds the Playwright
+# adapter on first run and assumes Chromium is already installed (run
+# `just pw-install-browsers` first if not). Pass `--verbose` for the
+# compiled plan; pass `--job=<path>` to point at a different YAML.
+engine-run-hello *ARGS='': pw-build
+    cd core/engine && cargo run --example hello-hackernews -- {{ARGS}}
+
+# Run the engine integration test. Requires the Playwright adapter
+# build and Chromium; the test is `#[ignore]` by default. See ADR-0012.
+engine-integration-test: pw-build pw-install-browsers
+    cd core/engine && PLAYWRIGHT_AVAILABLE=1 cargo test --test integration -- --ignored --nocapture
+
 # ---------------------------------------------------------------------------
 # Go control plane (core/control-plane)
 # ---------------------------------------------------------------------------

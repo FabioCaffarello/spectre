@@ -1,7 +1,7 @@
 # hello-hackernews — extract titles and URLs from the HN front page.
 #
-# This job is aspirational. The engine and Playwright adapter are not
-# yet runnable end-to-end. See ../README.md for status.
+# Run via: cd core/engine && cargo run --example hello-hackernews
+# See ../README.md for status. The Go CLI wrapper lands in PR8.
 
 spectre: v1alpha1
 driver: playwright
