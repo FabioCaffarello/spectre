@@ -8,6 +8,25 @@ highest barrier to entry. By participating, you agree to follow our
 
 ---
 
+## Development environment
+
+Two paths to a working environment. Pick whichever fits your workflow.
+
+- **Devcontainer (recommended).** Open the repo in VS Code, then
+  *Dev Containers: Reopen in Container*. The first build is ~5–10
+  minutes; everything you need (Rust, Go, Node, Python, Chrome,
+  ChromeDriver, curl-impersonate, buf, just) is included. Works
+  identically in GitHub Codespaces. See
+  [docs/architecture/development-environment.md](docs/architecture/development-environment.md)
+  for details and the deferred Phase 2.5 work (per-adapter images,
+  Compose stack).
+- **Native install.** Install the toolchains listed under [Local
+  development setup](#local-development-setup) and run `just bootstrap
+  && just check`. Preferred if you already have the toolchains on your
+  machine.
+
+---
+
 ## Path 1 — Bug fixes and documentation improvements
 
 The lowest-barrier way to contribute.
