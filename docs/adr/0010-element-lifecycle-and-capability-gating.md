@@ -102,10 +102,19 @@ Chosen: **strict, per-session generation counter**. An
 Mechanism: each session carries a monotonic `generation` counter
 starting at zero. Each `ElementRef.opaque_id` is paired in the
 in-memory registry with the generation at which it was created.
-`Navigate` increments the counter for that session and clears
-the registry's entry for prior generations. `Extract` looks up
-the ref, verifies its stored generation matches the session's
-current generation, and rejects mismatches.
+`Navigate` increments the counter for that session. `Extract`
+looks up the ref, compares its stored generation to the session's
+current generation, and rejects mismatches with the stale-message
+diagnostic.
+
+Prior-generation entries are *not* removed on a generation bump.
+Leaving them in the map lets the registry distinguish two cases
+that share the same wire response code (`CODE_INVALID_ARGUMENT`)
+but want different operator-facing messages: "the id was issued
+but is from an earlier generation" (stale) versus "the id was
+never issued for this session" (unknown). Entries are dropped
+when the session itself is forgotten — on `Close`, or on adapter
+shutdown via `closeAll`.
 
 The locator itself is *not* the source of truth for staleness.
 Playwright's `Locator` re-resolves on each operation against

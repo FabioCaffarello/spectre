@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Browser, BrowserContext, Page } from "playwright";
+import type { Browser, BrowserContext, Locator, Page } from "playwright";
 import { describe, expect, it, vi } from "vitest";
 
 import { SessionManager, UnknownSessionError } from "./sessions.js";
+
+const fakeLocator = (tag: string): Locator => ({ __id: tag }) as unknown as Locator;
 
 interface FakeBrowser extends Browser {
   contexts(): BrowserContext[];
@@ -163,5 +165,78 @@ describe("SessionManager", () => {
     mgr.register("a");
     mgr.register("a");
     expect(mgr.has("a")).toBe(true);
+  });
+
+  it("closeSession returns false for an unknown session id", async () => {
+    const browser = makeFakeBrowser();
+    const mgr = new SessionManager(async () => browser);
+    expect(await mgr.closeSession("ghost")).toBe(false);
+    expect(browser.close).not.toHaveBeenCalled();
+  });
+
+  it("closeSession evicts the session and closes its context, leaving the browser running", async () => {
+    const browser = makeFakeBrowser();
+    const mgr = new SessionManager(async () => browser);
+
+    mgr.register("a");
+    mgr.register("b");
+    await mgr.getOrCreatePage("a");
+    await mgr.getOrCreatePage("b");
+
+    expect(await mgr.closeSession("a")).toBe(true);
+    expect(mgr.has("a")).toBe(false);
+    expect(mgr.has("b")).toBe(true);
+
+    const contexts = browser.contexts();
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0].close).toHaveBeenCalledTimes(1);
+    expect(contexts[1].close).not.toHaveBeenCalled();
+    expect(browser.close).not.toHaveBeenCalled();
+  });
+
+  it("closeSession is safe to call before the session has navigated", async () => {
+    const browser = makeFakeBrowser();
+    const factory = vi.fn(async () => browser);
+    const mgr = new SessionManager(factory);
+
+    mgr.register("a");
+    expect(await mgr.closeSession("a")).toBe(true);
+    expect(mgr.has("a")).toBe(false);
+    expect(factory).not.toHaveBeenCalled();
+  });
+
+  it("closeSession clears any element refs for the session", async () => {
+    const browser = makeFakeBrowser();
+    const mgr = new SessionManager(async () => browser);
+    mgr.register("a");
+    await mgr.getOrCreatePage("a");
+    const [id] = mgr.allocateRefs("a", [fakeLocator("x")]);
+    expect(mgr.lookupRef("a", id).status).toBe("ok");
+    await mgr.closeSession("a");
+    expect(mgr.lookupRef("a", id).status).toBe("unknown");
+  });
+
+  it("bumpGeneration invalidates prior refs for the session", async () => {
+    const mgr = new SessionManager(async () => makeFakeBrowser());
+    mgr.register("a");
+    const [id] = mgr.allocateRefs("a", [fakeLocator("x")]);
+    expect(mgr.lookupRef("a", id).status).toBe("ok");
+    mgr.bumpGeneration("a");
+    expect(mgr.lookupRef("a", id).status).toBe("stale");
+  });
+
+  it("currentGeneration starts at zero and advances with bumpGeneration", () => {
+    const mgr = new SessionManager(async () => makeFakeBrowser());
+    expect(mgr.currentGeneration("a")).toBe(0);
+    mgr.bumpGeneration("a");
+    expect(mgr.currentGeneration("a")).toBe(1);
+  });
+
+  it("pageOf returns null for a session that has not navigated yet", async () => {
+    const mgr = new SessionManager(async () => makeFakeBrowser());
+    mgr.register("a");
+    expect(mgr.pageOf("a")).toBeNull();
+    const page = await mgr.getOrCreatePage("a");
+    expect(mgr.pageOf("a")).toBe(page);
   });
 });
