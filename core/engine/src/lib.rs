@@ -2,14 +2,29 @@
 
 //! Spectre engine core.
 //!
-//! This crate is the home for the DSL parser, type checker, planner,
-//! and execution scheduler. It owns the contract with drivers via the
-//! Driver Protocol (`spectre.driver.v1alpha1`), generated at build
-//! time by `build.rs`.
+//! This crate hosts the DSL parser, the planner, the gRPC client, and
+//! the executor that together compile a `job.yaml` into a sequence of
+//! Driver Protocol RPCs against a launched adapter subprocess.
 //!
-//! The crate is `v0.1.0-alpha.0` and intentionally minimal —
-//! substantive functionality lands in Phase 1 of the project roadmap
-//! (see `docs/roadmap.md`).
+//! ```text
+//! YAML  ─►  Job  ─►  Plan  ─►  RPC sequence  ─►  JSONL rows
+//!          [dsl]   [plan]    [client + executor]   [output]
+//! ```
+//!
+//! The crate is `v0.1.0-alpha.0`. The protocol is `v1alpha1` — frozen
+//! and unstable; see ADR-0004 and ADR-0012.
+//!
+//! Public entry points:
+//!
+//! - [`Engine::run_job`] — parse, plan, launch, execute, return the
+//!   total number of rows written.
+//! - [`Job::from_yaml`] — parse and validate a YAML job in isolation
+//!   (no driver launch). Useful for editors and validators.
+//! - [`plan::plan`] — turn a validated [`Job`] into a [`Plan`]
+//!   without running it.
+//!
+//! See `docs/adr/0012-engine-dsl-and-execution-pipeline.md` for the
+//! decisions that shaped each layer.
 
 #![cfg_attr(not(test), forbid(unsafe_code))]
 #![warn(missing_docs)]
@@ -27,6 +42,21 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/protocol_version.rs"));
 }
 
+pub mod client;
+pub mod dsl;
+pub mod error;
+pub mod executor;
+pub mod launcher;
+pub mod output;
+pub mod plan;
+
+mod engine;
+
+pub use dsl::{Field, FieldMode, Job, JobError, OutputConfig, OutputFormat, Step};
+pub use engine::Engine;
+pub use error::EngineError;
+pub use executor::Executor;
+pub use plan::{Plan, PlanError, PlanStep};
 pub use proto::PROTOCOL_VERSION;
 
 /// The engine crate version, mirroring `Cargo.toml`.
@@ -43,8 +73,6 @@ mod tests {
 
     #[test]
     fn generated_types_are_reachable() {
-        // Smoke test: instantiate one generated type to confirm the
-        // tonic/prost output compiled and was included successfully.
         let caps = proto::Capabilities::default();
         assert!(caps.names.is_empty());
     }
