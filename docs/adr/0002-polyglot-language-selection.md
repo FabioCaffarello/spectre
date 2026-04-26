@@ -49,8 +49,20 @@ Chosen option: **Option B — Polyglot by responsibility**.
 | curl-impersonate adapter                   | Go (cgo wrapper)  | Wraps the C library; exposes a gRPC server; static deploy.                                                 |
 | Intelligence layer (auto-heal, vision)     | Python            | LLM and computer-vision ecosystem unmatched in other languages.                                            |
 | Compatibility core (TLS, HTTP/2 framing)   | Rust              | Bytes manipulation and FFI safety; no GC interference in hot paths.                                        |
-| CLI                                        | Go                | Static cross-platform binary; trivial install.                                                             |
+| CLI                                        | Go                | Static cross-platform binary; trivial install. **Superseded by ADR-0013 (CLI row only).**                  |
 | SDKs                                       | TS, Python, Go    | Match the languages users actually build in.                                                               |
+
+### Update (PR8, ADR-0013)
+
+The CLI was reassigned from Go to Rust after the engine binary
+became real in PR7. The `spectre` CLI is produced by the
+`core/engine/` crate as a binary target; there is no separate Go
+CLI. See [ADR-0013](0013-cli-as-engine-binary.md) for the
+rationale. The remainder of this document — control plane in Go,
+adapters as listed, SDKs in TS / Python / Go, intelligence layer
+in Python, and the Rust assignments for engine and compatibility
+core — remains in force. ADR-0002's overall status remains
+`accepted`; only the CLI row is superseded.
 
 ### Consequences
 
