@@ -26,6 +26,13 @@ class _FakeDriver:
         self.quit_count += 1
 
 
+class _FakeElement:
+    """Minimal stand-in for a Selenium ``WebElement``."""
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+
 def _factory() -> tuple[list[_FakeDriver], Callable[[], _FakeDriver]]:
     drivers: list[_FakeDriver] = []
 
@@ -146,3 +153,91 @@ def test_close_all_skips_sessions_with_no_driver() -> None:
     mgr.close_all()
     assert not mgr.has("s1")
     assert drivers == []  # factory never called
+
+
+# -- ElementRegistry integration ----------------------------------------
+
+
+def test_register_element_returns_resolvable_uuid() -> None:
+    _, make = _factory()
+    mgr = SessionManager(factory=make)
+    mgr.register("s1")
+
+    element = _FakeElement("x")
+    ref_id = mgr.register_element("s1", element)
+    lookup = mgr.lookup_element("s1", ref_id)
+    assert lookup.status == "ok"
+    assert lookup.element is element
+
+
+def test_register_elements_preserves_order() -> None:
+    _, make = _factory()
+    mgr = SessionManager(factory=make)
+    mgr.register("s1")
+
+    elements = [_FakeElement("a"), _FakeElement("b"), _FakeElement("c")]
+    ids = mgr.register_elements("s1", elements)
+    for ref_id, element in zip(ids, elements, strict=True):
+        lookup = mgr.lookup_element("s1", ref_id)
+        assert lookup.status == "ok"
+        assert lookup.element is element
+
+
+def test_bump_generation_marks_prior_refs_stale() -> None:
+    """Refs allocated in an earlier generation are stale after Navigate."""
+    _, make = _factory()
+    mgr = SessionManager(factory=make)
+    mgr.register("s1")
+
+    ref_id = mgr.register_element("s1", _FakeElement("pre-nav"))
+    mgr.bump_generation("s1")
+
+    lookup = mgr.lookup_element("s1", ref_id)
+    assert lookup.status == "stale"
+    assert lookup.element is None
+
+
+def test_lookup_element_unknown_id_distinguished_from_stale() -> None:
+    """An id that was never issued returns ``unknown``, not ``stale``.
+
+    The two cases share ``CODE_INVALID_ARGUMENT`` on the wire but
+    map to distinct messages — the post-Navigate ``stale`` message
+    versus the unknown-ref message. See ADR-0010 §1 and ADR-0015 §2.
+    """
+    _, make = _factory()
+    mgr = SessionManager(factory=make)
+    mgr.register("s1")
+
+    lookup = mgr.lookup_element("s1", "00000000-0000-0000-0000-000000000000")
+    assert lookup.status == "unknown"
+
+
+def test_close_session_clears_element_registry() -> None:
+    _, make = _factory()
+    mgr = SessionManager(factory=make)
+    mgr.register("s1")
+    ref_id = mgr.register_element("s1", _FakeElement("x"))
+
+    mgr.close_session("s1")
+
+    # Re-register to demonstrate the entry is gone, not just hidden by
+    # the missing session.
+    mgr.register("s1")
+    lookup = mgr.lookup_element("s1", ref_id)
+    assert lookup.status == "unknown"
+
+
+def test_close_all_clears_element_registry() -> None:
+    _, make = _factory()
+    mgr = SessionManager(factory=make)
+    mgr.register("s1")
+    mgr.register("s2")
+    s1_ref = mgr.register_element("s1", _FakeElement("a"))
+    s2_ref = mgr.register_element("s2", _FakeElement("b"))
+
+    mgr.close_all()
+
+    mgr.register("s1")
+    mgr.register("s2")
+    assert mgr.lookup_element("s1", s1_ref).status == "unknown"
+    assert mgr.lookup_element("s2", s2_ref).status == "unknown"
