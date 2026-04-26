@@ -66,3 +66,6 @@ adapters/playwright/src/proto/
 .cache/
 
 *.zip
+
+# Output produced by the hello-hackernews example binary.
+examples/hello-hackernews/stories.jsonl
