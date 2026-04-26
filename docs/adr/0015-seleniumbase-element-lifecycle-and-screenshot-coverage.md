@@ -254,8 +254,13 @@ def text_selector_to_xpath(text: str) -> str:
         return f"//*[contains(text(), '{text}')]"
     if '"' not in text:
         return f'//*[contains(text(), "{text}")]'
-    parts = [f"'{p}'" for p in text.split('"')]
-    expression = ", '\"', ".join(parts)
+    segments: list[str] = []
+    for part in text.split('"'):
+        if "'" not in part:
+            segments.append(f"'{part}'")
+        else:
+            segments.append(f'"{part}"')
+    expression = ", '\"', ".join(segments)
     return f"//*[contains(text(), concat({expression}))]"
 ```
 

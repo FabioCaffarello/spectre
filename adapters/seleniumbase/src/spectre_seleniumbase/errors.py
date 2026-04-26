@@ -4,7 +4,9 @@ The gRPC handlers catch Selenium / SeleniumBase errors and return
 a populated ``DriverError`` rather than letting the exception
 propagate as a transport-level failure. The table below is the
 single source of truth for that translation; ADR-0014 §3 records
-the rationale.
+the rationale for the Navigate-relevant rows and ADR-0015 §2 / §4
+record the additions PR10 needed for ``Query``, ``Extract``, and
+``Screenshot``.
 
 The shape mirrors the Playwright adapter's ``errors.ts``: a
 sequence of rules tried in order against the exception's class
@@ -14,6 +16,12 @@ as a transport exception. The v1alpha1 ``DriverError.Code`` enum
 is frozen (ADR-0004); the same enum gaps documented in ADR-0009
 apply here (no dedicated ``UNAVAILABLE`` for missing binaries,
 no ``NETWORK`` split, no ``UNKNOWN``).
+
+Two stale-message constants are exported so the ``Extract`` and
+element-scoped ``Screenshot`` handlers can keep the messages
+identical across call sites and so the conformance tests can
+match on them. ADR-0015 §2 explains why two messages share one
+wire code.
 """
 
 from __future__ import annotations
@@ -22,8 +30,14 @@ import re
 from dataclasses import dataclass
 
 from selenium.common.exceptions import (
+    ElementNotInteractableException,
+    InvalidSelectorException,
     InvalidSessionIdException,
+    JavascriptException,
+    MoveTargetOutOfBoundsException,
+    NoSuchElementException,
     SessionNotCreatedException,
+    StaleElementReferenceException,
     TimeoutException,
     WebDriverException,
 )
@@ -34,6 +48,15 @@ BROWSER_MISSING_PATTERN = re.compile(
     r"chrome not reachable|cannot find chrome|chromedriver|"
     r"unable to find binary|no such binary|chrome binary",
     re.IGNORECASE,
+)
+
+# Two distinct stale-ref messages, both carried over the wire as
+# ``CODE_INVALID_ARGUMENT``. Documented in ADR-0015 §2.
+STALE_NAVIGATE_MESSAGE = "element reference is stale; query was performed before a navigation"
+STALE_PAGE_STATE_CHANGE_MESSAGE = "element became stale during page state change"
+UNKNOWN_REF_MESSAGE = (
+    "element reference not found in this session; "
+    "ensure Query was called against the same session_id"
 )
 
 
@@ -87,6 +110,54 @@ def selenium_error_to_driver_error(exc: BaseException) -> MappedError:
 
     if NETWORK_ERROR_PATTERN.search(message):
         return MappedError(code=code_enum.CODE_TARGET_UNREACHABLE, message=message)
+
+    # PR10 additions (ADR-0015 §2 and §4).
+    #
+    # StaleElementReferenceException is the SPA-mutation case: the
+    # WebElement handle's underlying DOM node was detached without a
+    # protocol-level Navigate. Maps to CODE_INVALID_ARGUMENT with the
+    # distinct page-state-change message; the post-Navigate stale
+    # message lives on the `Extract` handler's pre-flight registry
+    # check, not on this exception.
+    if isinstance(exc, StaleElementReferenceException):
+        return MappedError(
+            code=code_enum.CODE_INVALID_ARGUMENT,
+            message=STALE_PAGE_STATE_CHANGE_MESSAGE,
+        )
+
+    # NoSuchElementException can fire on `find_element` (singular) or
+    # on a `WebElement` method whose underlying lookup failed mid-
+    # generation. The wire shape mirrors Playwright's "element not
+    # found in current DOM" — same INVALID_ARGUMENT code, message
+    # preserved from Selenium so operator logs stay informative.
+    if isinstance(exc, NoSuchElementException):
+        return MappedError(code=code_enum.CODE_INVALID_ARGUMENT, message=message)
+
+    # InvalidSelectorException → INVALID_ARGUMENT. A malformed XPath
+    # or CSS expression is a client error, not a driver fault.
+    if isinstance(exc, InvalidSelectorException):
+        return MappedError(code=code_enum.CODE_INVALID_ARGUMENT, message=message)
+
+    # ElementNotInteractableException is rare on the v1alpha1 surface
+    # (no click/type RPCs) but can fire on a Screenshot whose target
+    # element is hidden in a way Selenium refuses to scroll. Map to
+    # INVALID_ARGUMENT so the client knows the element was the issue.
+    if isinstance(exc, ElementNotInteractableException):
+        return MappedError(code=code_enum.CODE_INVALID_ARGUMENT, message=message)
+
+    # MoveTargetOutOfBoundsException can surface on element-scoped
+    # screenshots when Selenium auto-scrolls to bring the target into
+    # view and the element is off the document. INVALID_ARGUMENT
+    # matches the "this element ref is not capturable" framing.
+    if isinstance(exc, MoveTargetOutOfBoundsException):
+        return MappedError(code=code_enum.CODE_INVALID_ARGUMENT, message=message)
+
+    # JavascriptException is what `execute_script` raises when the
+    # script body throws. Maps to INTERNAL because the failure is
+    # inside the page's JS, not in the protocol layer; the v1alpha1
+    # enum has no dedicated client-script-error code.
+    if isinstance(exc, JavascriptException):
+        return MappedError(code=code_enum.CODE_INTERNAL, message=message)
 
     if isinstance(exc, InvalidSessionIdException):
         return MappedError(code=code_enum.CODE_INTERNAL, message=message)
