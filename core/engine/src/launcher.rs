@@ -319,6 +319,7 @@ pub fn load_uds_command(manifest_path: &Path) -> Result<Vec<String>, LauncherErr
 /// Panics if the manifest's command is empty after passing
 /// [`load_uds_command`] — the function checks for empty commands
 /// and the `expect` here is a sanity check for that invariant.
+#[allow(clippy::too_many_lines)]
 pub async fn launch(
     driver: &str,
     adapters_path: &Path,
