@@ -23,6 +23,7 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
       typescript: ${{ steps.filter.outputs.typescript }}
       python: ${{ steps.filter.outputs.python }}
+      engine_image: ${{ steps.filter.outputs.engine_image }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -53,6 +54,16 @@ jobs:
               # change in adapters/curl-impersonate/** must re-run
               # the Python conformance job too.
               - 'adapters/curl-impersonate/**'
+              - '.github/workflows/ci.yml'
+            engine_image:
+              # PR13: rebuild the engine Docker image whenever the
+              # engine, the protocol schema, the Dockerfile, the
+              # build-context exclusions, or the workflow changes.
+              # See ADR-0018 §5 on why this job is build+run only,
+              # not push.
+              - 'core/engine/**'
+              - 'proto/**'
+              - '.dockerignore'
               - '.github/workflows/ci.yml'
 
   proto:
@@ -407,10 +418,36 @@ jobs:
           PLAYWRIGHT_AVAILABLE: "1"
         run: cargo test --test integration -- --ignored --nocapture
 
+  engine-image:
+    name: Engine image (build + smoke test)
+    needs: changes
+    if: needs.changes.outputs.engine_image == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      # Build the engine image with the same Dockerfile contributors
+      # use locally. No registry push — see ADR-0018 §5. The smoke test
+      # runs the binary in the resulting image; image publishing is a
+      # release-engineering concern that fires on tagged releases, not
+      # every PR.
+      - name: Build engine image
+        run: |
+          docker buildx build \
+            --platform=linux/amd64 \
+            -t spectre-engine:ci \
+            -f core/engine/Dockerfile \
+            --load \
+            .
+      - name: Smoke test (spectre version)
+        run: docker run --rm spectre-engine:ci version
+      - name: Report image size
+        run: docker images spectre-engine:ci --format '{{.Size}}'
+
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, engine-integration]
+    needs: [changes, proto, rust, go, typescript, python, engine-integration, engine-image]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -421,6 +458,7 @@ jobs:
           echo "typescript:          ${{ needs.typescript.result }}"
           echo "python:              ${{ needs.python.result }}"
           echo "engine-integration:  ${{ needs.engine-integration.result }}"
+          echo "engine-image:        ${{ needs.engine-image.result }}"
       - name: Fail if any required job failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1
