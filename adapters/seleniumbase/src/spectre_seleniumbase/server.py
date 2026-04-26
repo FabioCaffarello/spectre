@@ -99,10 +99,9 @@ def _default_driver_factory() -> Any:
     return Driver(
         browser="chrome",
         headless=True,
-        # Disable SeleniumBase's auto-discovery test mode; the adapter
-        # is a server, not a test runner.
-        test=False,
-        # Suppress the "uc=False" CDP-mode warning at server startup.
+        # uc=False keeps the driver in standard Selenium mode rather
+        # than SeleniumBase's UC (undetected) variant. UC mode is a
+        # v1alpha2 capability candidate (see ADR-0014 §2 out of scope).
         uc=False,
     )
 
