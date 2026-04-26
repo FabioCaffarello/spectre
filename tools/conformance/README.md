@@ -2,12 +2,13 @@
 
 The Spectre Driver Protocol conformance test suite.
 
-> **Status:** v0.1.0a0 — exercises the live `Initialize` handshake
-> and the `Navigate` RPC against the Playwright adapter over gRPC on
-> a Unix domain socket, and asserts unimplemented RPCs return
-> `UNIMPLEMENTED`. Capability assertions, transport equivalence, and
-> per-capability tests for the remaining RPCs follow in Phase 1 of
-> the [roadmap](../../docs/roadmap.md).
+> **Status:** v0.1.0a0 — exercises every implemented unary RPC
+> against the Playwright adapter over gRPC on a Unix domain
+> socket: `Initialize`, `Navigate`, `Close`, `Query`, and
+> `Extract`. `Screenshot` is the only remaining unimplemented
+> unary RPC; the negative test cements its `UNIMPLEMENTED` status
+> until it ships. Transport equivalence and per-capability tests
+> follow in Phase 1 of the [roadmap](../../docs/roadmap.md).
 
 ## Build
 
@@ -47,14 +48,18 @@ job builds the adapter unconditionally before running pytest.
 tools/conformance/
 ├── src/spectre_conformance/
 │   ├── __init__.py
-│   ├── capabilities.py    # canonical capability-name constants
-│   ├── demo_navigate.py   # manual demo: dial a running adapter, navigate once
-│   ├── harness.py         # DriverHarness — subprocess + grpc.Channel
-│   └── http_fixture.py    # local HTTP server for deterministic Navigate tests
+│   ├── capabilities.py     # canonical capability-name constants
+│   ├── demo_navigate.py    # manual demo: dial a running adapter, navigate once
+│   ├── demo_full_cycle.py  # manual demo: Initialize → Navigate → Query → Extract → Close
+│   ├── harness.py          # DriverHarness — subprocess + grpc.Channel
+│   └── http_fixture.py     # local HTTP server for deterministic Navigate tests
 ├── tests/
 │   ├── conftest.py        # pytest fixtures (playwright_adapter, local_http_server, …)
+│   ├── test_close.py
+│   ├── test_extract.py
 │   ├── test_initialize.py
 │   ├── test_navigate.py
+│   ├── test_query.py
 │   └── test_unimplemented.py
 ├── pyproject.toml
 └── README.md
@@ -98,6 +103,27 @@ A future `--driver=PATH/TO/driver.yaml` pytest CLI option will
 allow running the same suite against any conforming driver. The
 harness API is the seed; the CLI wraps it.
 
+## Manual full-cycle demo
+
+`demo_full_cycle.py` drives the complete RPC sequence
+(`Initialize → Navigate → Query → Extract → Close`) against an
+already-running adapter and prints each response. It is the
+canonical human smoke test for PR5; the conformance suite covers
+the same surface automatically.
+
+```bash
+just pw-build
+just pw-install-browsers
+just pw-run -- --socket=/tmp/spectre-demo.sock
+
+# in a second terminal:
+uv --project tools/conformance run python -m \
+    spectre_conformance.demo_full_cycle \
+    --socket=/tmp/spectre-demo.sock \
+    --url=https://example.com \
+    --selector="h1"
+```
+
 ## Local HTTP fixture
 
 `Navigate` tests point at an in-process HTTP server rather than the
@@ -112,6 +138,8 @@ public internet. The `local_http_server` session-scoped fixture (see
 | `GET /redirect`      | 302 to `/ok`.                                         |
 | `GET /status/<code>` | The given status code with body `<code>`. 100–599.    |
 | `GET /slow`          | Sleeps 5 s, then 200. Used for timeout testing.       |
+| `GET /elements`      | Stable HTML used by Query/Extract tests.              |
+| `GET /elements-2`    | Different HTML used to test post-Navigate ref staleness. |
 
 Adding a route: edit `_LocalHandler.do_GET` in
 `http_fixture.py`. The fixture is stdlib-only (no extra

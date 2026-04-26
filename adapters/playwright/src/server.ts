@@ -2,11 +2,13 @@
 //
 // Spectre Playwright driver — gRPC service implementation.
 //
-// PR4 implements `Initialize` and `Navigate`. The remaining four
-// RPCs (`Query`, `Extract`, `Screenshot`, `Close`) return
-// `Code.Unimplemented` so a misconfigured client gets a structured
-// gRPC status rather than a hang. See ADR-0008 (handshake) and
-// ADR-0009 (Navigate, session lifecycle, error mapping).
+// PR4 implemented `Initialize` and `Navigate`; PR5 adds `Close`,
+// `Query`, and `Extract`. `Screenshot` is the only remaining
+// unimplemented RPC and returns `Code.Unimplemented` so a
+// misconfigured client gets a structured gRPC status rather than a
+// hang. See ADR-0008 (handshake), ADR-0009 (Navigate / session
+// lifecycle / error mapping), and ADR-0010 (element lifecycle and
+// capability gating).
 
 import { create } from "@bufbuild/protobuf";
 import { DurationSchema } from "@bufbuild/protobuf/wkt";
@@ -16,9 +18,13 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import * as http2 from "node:http2";
-import { chromium } from "playwright";
+import { chromium, type Locator, type Page } from "playwright";
 
-import { CAPABILITY_NAMES, DRIVER_VERSION } from "./capabilities.js";
+import {
+  CAPABILITY_NAMES,
+  DRIVER_VERSION,
+  missingCapabilityForMode,
+} from "./capabilities.js";
 import { playwrightErrorToDriverError } from "./errors.js";
 import { CapabilitiesSchema } from "./proto/spectre/driver/v1alpha1/capabilities_pb.js";
 import {
@@ -42,9 +48,13 @@ import {
   type ExtractRequest,
   type ExtractResponse,
   ExtractResponseSchema,
+  ExtractedValuesSchema,
+  ExtractedValues_EntrySchema,
+  Field_Mode,
   type QueryRequest,
   type QueryResponse,
   QueryResponseSchema,
+  SelectorKind,
 } from "./proto/spectre/driver/v1alpha1/extraction_pb.js";
 import {
   type BrowserFactory,
@@ -113,6 +123,96 @@ const errorResponse = (
   create(NavigateResponseSchema, {
     error: { code, message },
   });
+
+const queryError = (code: DriverError_Code, message: string): QueryResponse =>
+  create(QueryResponseSchema, {
+    error: { code, message },
+  });
+
+const extractError = (
+  code: DriverError_Code,
+  message: string,
+): ExtractResponse =>
+  create(ExtractResponseSchema, {
+    error: { code, message },
+  });
+
+const closeError = (code: DriverError_Code, message: string): CloseResponse =>
+  create(CloseResponseSchema, {
+    error: { code, message },
+  });
+
+const STALE_NAVIGATE_MESSAGE =
+  "element reference is stale; query was performed before a navigation";
+const UNKNOWN_REF_MESSAGE =
+  "element reference not found in this session; ensure Query was called against the same session_id";
+
+class ProtocolError extends Error {
+  readonly code: DriverError_Code;
+  constructor(code: DriverError_Code, message: string) {
+    super(message);
+    this.code = code;
+    this.name = "ProtocolError";
+  }
+}
+
+const selectorKindToLocator = (
+  page: Page,
+  kind: SelectorKind,
+  selector: string,
+): Locator | null => {
+  switch (kind) {
+    case SelectorKind.CSS:
+      return page.locator(selector);
+    case SelectorKind.XPATH:
+      return page.locator(`xpath=${selector}`);
+    case SelectorKind.TEXT:
+      return page.getByText(selector, { exact: false });
+    case SelectorKind.ATTRIBUTE:
+      return page.locator(`[${selector}]`);
+    case SelectorKind.UNSPECIFIED:
+    default:
+      return null;
+  }
+};
+
+const readField = async (
+  locator: Locator,
+  fieldName: string,
+  mode: Field_Mode,
+  arg: string,
+): Promise<unknown> => {
+  switch (mode) {
+    case Field_Mode.TEXT_CONTENT:
+      return (await locator.textContent()) ?? "";
+    case Field_Mode.INNER_TEXT:
+      return await locator.innerText();
+    case Field_Mode.INNER_HTML:
+      return await locator.innerHTML();
+    case Field_Mode.OUTER_HTML:
+      return await locator.evaluate(
+        (el) => (el as unknown as { outerHTML: string }).outerHTML,
+      );
+    case Field_Mode.ATTR:
+      return (await locator.getAttribute(arg)) ?? null;
+    case Field_Mode.EVAL:
+      // Function is serialised by Playwright and executed in the
+      // page context, with `el` bound to the matched element and
+      // `arg` carrying the JS expression string. The `new Function`
+      // call therefore runs in the browser, not in Node.
+      return await locator.evaluate(
+        // eslint-disable-next-line no-new-func
+        (el, expr) => new Function("el", `return (${expr});`)(el),
+        arg,
+      );
+    case Field_Mode.UNSPECIFIED:
+    default:
+      throw new ProtocolError(
+        DriverError_Code.INVALID_ARGUMENT,
+        `field ${JSON.stringify(fieldName)} has an unspecified mode`,
+      );
+  }
+};
 
 const isValidNavigationUrl = (url: string): boolean => {
   try {
@@ -185,6 +285,11 @@ export const createDriverService = (
         waitUntil,
         timeout: timeoutMs,
       });
+      // Strict ElementRef invalidation: any successful navigation
+      // bumps the session's generation counter. Refs allocated in
+      // a prior generation become stale and Extract will reject
+      // them with CODE_INVALID_ARGUMENT. See ADR-0010.
+      sessions.bumpGeneration(req.sessionId);
       const elapsedMs = Number(process.hrtime.bigint() - start) / 1_000_000;
       return create(NavigateResponseSchema, {
         finalUrl: response?.url() ?? page.url(),
@@ -201,20 +306,166 @@ export const createDriverService = (
       });
     }
   },
-  async query(_req: QueryRequest): Promise<QueryResponse> {
-    unimplemented("Query");
-    return create(QueryResponseSchema);
+  async query(req: QueryRequest): Promise<QueryResponse> {
+    if (!req.sessionId) {
+      return queryError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "session_id is required",
+      );
+    }
+    if (!sessions.has(req.sessionId)) {
+      return queryError(
+        DriverError_Code.INVALID_ARGUMENT,
+        `unknown session_id ${JSON.stringify(req.sessionId)}; call Initialize first`,
+      );
+    }
+    if (req.kind === SelectorKind.UNSPECIFIED) {
+      return queryError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "selector kind is required; SELECTOR_KIND_UNSPECIFIED is not accepted",
+      );
+    }
+    if (!req.selector) {
+      return queryError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "selector is required",
+      );
+    }
+
+    const page = sessions.pageOf(req.sessionId);
+    if (!page) {
+      return queryError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "no page is open for this session; call Navigate first",
+      );
+    }
+
+    const locator = selectorKindToLocator(page, req.kind, req.selector);
+    if (!locator) {
+      return queryError(
+        DriverError_Code.INVALID_ARGUMENT,
+        `unsupported selector kind: ${req.kind}`,
+      );
+    }
+
+    try {
+      // Locator.all() materialises every match at call time. For
+      // pages with many matches and small `limit` this is wasteful;
+      // accept the cost until real workloads surface real numbers.
+      const matches = await locator.all();
+      const limited = req.limit > 0 ? matches.slice(0, req.limit) : matches;
+      const ids = sessions.allocateRefs(req.sessionId, limited);
+      return create(QueryResponseSchema, {
+        elements: ids.map((opaqueId) => ({ opaqueId })),
+      });
+    } catch (err) {
+      const mapped = playwrightErrorToDriverError(err);
+      return queryError(mapped.code, mapped.message);
+    }
   },
-  async extract(_req: ExtractRequest): Promise<ExtractResponse> {
-    unimplemented("Extract");
-    return create(ExtractResponseSchema);
+  async extract(req: ExtractRequest): Promise<ExtractResponse> {
+    if (!req.sessionId) {
+      return extractError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "session_id is required",
+      );
+    }
+    if (!sessions.has(req.sessionId)) {
+      return extractError(
+        DriverError_Code.INVALID_ARGUMENT,
+        `unknown session_id ${JSON.stringify(req.sessionId)}; call Initialize first`,
+      );
+    }
+    const opaqueId = req.element?.opaqueId ?? "";
+    if (!opaqueId) {
+      return extractError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "element.opaque_id is required",
+      );
+    }
+    if (req.fields.length === 0) {
+      return extractError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "at least one field is required",
+      );
+    }
+
+    // Capability gating: the runtime check fires before any DOM
+    // work so an under-declared driver fails the request whole,
+    // not partway. See ADR-0010, decision 3.
+    for (const field of req.fields) {
+      const missing = missingCapabilityForMode(field.mode, CAPABILITY_NAMES);
+      if (missing) {
+        return extractError(
+          DriverError_Code.CAPABILITY_MISSING,
+          `MODE_EVAL requires the ${missing} capability`,
+        );
+      }
+    }
+
+    const lookup = sessions.lookupRef(req.sessionId, opaqueId);
+    if (lookup.status === "stale") {
+      return extractError(
+        DriverError_Code.INVALID_ARGUMENT,
+        STALE_NAVIGATE_MESSAGE,
+      );
+    }
+    if (lookup.status === "unknown" || !lookup.locator) {
+      return extractError(
+        DriverError_Code.INVALID_ARGUMENT,
+        UNKNOWN_REF_MESSAGE,
+      );
+    }
+    const locator = lookup.locator;
+
+    const entries: { name: string; jsonValue: string }[] = [];
+    for (const field of req.fields) {
+      try {
+        const value = await readField(
+          locator,
+          field.name,
+          field.mode,
+          field.arg,
+        );
+        entries.push({
+          name: field.name,
+          jsonValue: JSON.stringify(value),
+        });
+      } catch (err) {
+        if (err instanceof ProtocolError) {
+          return extractError(err.code, err.message);
+        }
+        const mapped = playwrightErrorToDriverError(err);
+        return extractError(mapped.code, mapped.message);
+      }
+    }
+
+    return create(ExtractResponseSchema, {
+      values: create(ExtractedValuesSchema, {
+        fields: entries.map((entry) =>
+          create(ExtractedValues_EntrySchema, entry),
+        ),
+      }),
+    });
   },
   async screenshot(_req: ScreenshotRequest): Promise<ScreenshotResponse> {
     unimplemented("Screenshot");
     return create(ScreenshotResponseSchema);
   },
-  async close(_req: CloseRequest): Promise<CloseResponse> {
-    unimplemented("Close");
+  async close(req: CloseRequest): Promise<CloseResponse> {
+    if (!req.sessionId) {
+      return closeError(
+        DriverError_Code.INVALID_ARGUMENT,
+        "session_id is required",
+      );
+    }
+    const closed = await sessions.closeSession(req.sessionId);
+    if (!closed) {
+      return closeError(
+        DriverError_Code.INVALID_ARGUMENT,
+        `unknown session_id ${JSON.stringify(req.sessionId)}`,
+      );
+    }
     return create(CloseResponseSchema);
   },
 });

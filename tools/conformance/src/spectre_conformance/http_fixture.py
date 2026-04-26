@@ -19,6 +19,15 @@ Path            Behaviour
                 is not a valid HTTP status integer (100-599).
 ``GET /slow``   Sleeps 5 s, then 200 with body ``slow``. Used by the
                 timeout test with a short client-side timeout.
+``GET /elements``   200 with a small HTML page that has a stable
+                DOM: ``<h1>``, three ``<li>`` items, an ``<a>`` link
+                with a known href, and an element carrying
+                ``data-test="primary"``. Used by Query and Extract
+                conformance tests.
+``GET /elements-2`` 200 with a different HTML page (different
+                heading, different list items). Used to test that
+                an ElementRef issued against ``/elements`` is
+                invalidated after navigating to ``/elements-2``.
 ==============  ========================================================
 
 Lifecycle
@@ -46,6 +55,39 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import TracebackType
 
 SLOW_ROUTE_DELAY_S: float = 5.0
+
+
+# Stable HTML pages used by the Query and Extract conformance tests.
+# The DOM is intentionally minimal and deterministic so selector and
+# extract assertions can reference exact structure. The class names
+# and attribute values are referenced by tests; do not rename them.
+ELEMENTS_HTML: bytes = (
+    b"<!doctype html>"
+    b'<html lang="en">'
+    b'<head><meta charset="utf-8"><title>elements</title></head>'
+    b"<body>"
+    b'<h1 id="title">Elements Page</h1>'
+    b'<ul id="items">'
+    b'<li class="item">first</li>'
+    b'<li class="item">second</li>'
+    b'<li class="item">third</li>'
+    b"</ul>"
+    b'<a id="link" href="https://example.com/target">visit</a>'
+    b'<div id="badge" data-test="primary">Primary</div>'
+    b"</body>"
+    b"</html>"
+)
+
+ELEMENTS_TWO_HTML: bytes = (
+    b"<!doctype html>"
+    b'<html lang="en">'
+    b'<head><meta charset="utf-8"><title>elements-2</title></head>'
+    b"<body>"
+    b'<h1 id="title">Second Page</h1>'
+    b'<p class="paragraph">A different page entirely.</p>'
+    b"</body>"
+    b"</html>"
+)
 
 
 class _LocalHandler(BaseHTTPRequestHandler):
@@ -85,6 +127,14 @@ class _LocalHandler(BaseHTTPRequestHandler):
             self._respond(HTTPStatus.OK.value, b"slow")
             return
 
+        if path == "/elements":
+            self._respond_html(ELEMENTS_HTML)
+            return
+
+        if path == "/elements-2":
+            self._respond_html(ELEMENTS_TWO_HTML)
+            return
+
         self._respond(HTTPStatus.NOT_FOUND.value, b"not found")
 
     def _respond(self, status: int, body: bytes) -> None:
@@ -94,6 +144,13 @@ class _LocalHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if body:
             self.wfile.write(body)
+
+    def _respond_html(self, body: bytes) -> None:
+        self.send_response(HTTPStatus.OK.value)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
 class LocalHttpServer:

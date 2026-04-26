@@ -32,6 +32,7 @@ A decision moves through three states:
 | 0007  | [Protocol code generation](0007-protocol-code-generation.md)                  | accepted |
 | 0008  | [Driver handshake and conformance harness](0008-driver-handshake-and-conformance-harness.md) | accepted |
 | 0009  | [Navigate, session lifecycle, and the driver error mapping](0009-navigate-and-session-lifecycle.md) | accepted |
+| 0010  | [Element lifecycle, capability granularity, and selector mapping](0010-element-lifecycle-and-capability-gating.md) | accepted |
 
 ## When to write an ADR
 

@@ -137,15 +137,58 @@ describe("createDriverService", () => {
     expect(response.error?.message).toMatch(/http\(s\)/);
   });
 
-  it.each(["query", "extract", "screenshot", "close"] as const)(
-    "%s returns Code.Unimplemented",
-    async (rpc) => {
-      const service = newService();
-      const handler = service[rpc] as (req: unknown) => Promise<unknown>;
-      await expect(handler({} as never)).rejects.toMatchObject({
-        code: Code.Unimplemented,
-      });
-      await expect(handler({} as never)).rejects.toBeInstanceOf(ConnectError);
-    },
-  );
+  it("screenshot still returns Code.Unimplemented", async () => {
+    const service = newService();
+    await expect(service.screenshot({} as never)).rejects.toMatchObject({
+      code: Code.Unimplemented,
+    });
+    await expect(service.screenshot({} as never)).rejects.toBeInstanceOf(
+      ConnectError,
+    );
+  });
+
+  it("close returns CODE_INVALID_ARGUMENT for an unknown session id", async () => {
+    const service = newService();
+    const response = await service.close({
+      $typeName: "spectre.driver.v1alpha1.CloseRequest",
+      sessionId: "ghost",
+    } as never);
+    expect(response.error?.code).toBe(DriverError_Code.INVALID_ARGUMENT);
+    expect(response.error?.message).toMatch(/unknown session_id/);
+  });
+
+  it("query returns CODE_INVALID_ARGUMENT for SELECTOR_KIND_UNSPECIFIED", async () => {
+    const sessions = new SessionManager(browserFactory);
+    const service = createDriverService(sessions);
+    const init = await service.initialize(
+      create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
+    );
+    const response = await service.query({
+      $typeName: "spectre.driver.v1alpha1.QueryRequest",
+      sessionId: init.sessionId,
+      selector: "body",
+      kind: 0,
+      limit: 0,
+    } as never);
+    expect(response.error?.code).toBe(DriverError_Code.INVALID_ARGUMENT);
+    expect(response.error?.message).toMatch(/SELECTOR_KIND_UNSPECIFIED/);
+  });
+
+  it("extract returns CODE_INVALID_ARGUMENT for an empty opaque_id", async () => {
+    const sessions = new SessionManager(browserFactory);
+    const service = createDriverService(sessions);
+    const init = await service.initialize(
+      create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
+    );
+    const response = await service.extract({
+      $typeName: "spectre.driver.v1alpha1.ExtractRequest",
+      sessionId: init.sessionId,
+      element: {
+        $typeName: "spectre.driver.v1alpha1.ElementRef",
+        opaqueId: "",
+      },
+      fields: [],
+    } as never);
+    expect(response.error?.code).toBe(DriverError_Code.INVALID_ARGUMENT);
+  });
 });
