@@ -7,9 +7,10 @@ string literals; a typo at the call site becomes an import-time
 ``AttributeError`` instead of a silent runtime mismatch.
 
 The list mirrors the comment block in ``capabilities.proto``. PR3
-declares no capabilities at runtime — these constants exist so the
-conformance suite has somewhere to import from once PR4 onward
-implements real RPCs.
+declared no capabilities at runtime; PR4 added ``navigation`` and
+``js_execution``; PR5 expands to the eleven names covering the
+``query_*`` and ``extract_*`` surface backed by ``Query`` and
+``Extract``. Future RPCs add to ``ALL`` as they ship.
 """
 
 from __future__ import annotations
@@ -18,6 +19,15 @@ from typing import Final
 
 NAVIGATION: Final[str] = "navigation"
 JS_EXECUTION: Final[str] = "js_execution"
+QUERY_CSS: Final[str] = "query_css"
+QUERY_XPATH: Final[str] = "query_xpath"
+QUERY_TEXT: Final[str] = "query_text"
+QUERY_ATTRIBUTE: Final[str] = "query_attribute"
+EXTRACT_TEXT: Final[str] = "extract_text"
+EXTRACT_HTML: Final[str] = "extract_html"
+EXTRACT_ATTRIBUTE: Final[str] = "extract_attribute"
+EXTRACT_EVAL: Final[str] = "extract_eval"
+
 NETWORK_INTERCEPT: Final[str] = "network_intercept"
 SCREENSHOT_FULL_PAGE: Final[str] = "screenshot_full_page"
 COOKIES_PERSIST: Final[str] = "cookies_persist"
@@ -30,6 +40,14 @@ ALL: Final[frozenset[str]] = frozenset(
     {
         NAVIGATION,
         JS_EXECUTION,
+        QUERY_CSS,
+        QUERY_XPATH,
+        QUERY_TEXT,
+        QUERY_ATTRIBUTE,
+        EXTRACT_TEXT,
+        EXTRACT_HTML,
+        EXTRACT_ATTRIBUTE,
+        EXTRACT_EVAL,
         NETWORK_INTERCEPT,
         SCREENSHOT_FULL_PAGE,
         COOKIES_PERSIST,

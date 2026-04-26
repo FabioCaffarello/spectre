@@ -11,8 +11,16 @@ transports:
 # between this list and the runtime `Capabilities.names` returned by
 # `Initialize`; keep this file in lockstep with `src/capabilities.ts`.
 capabilities:
-  - navigation
+  - extract_attribute
+  - extract_eval
+  - extract_html
+  - extract_text
   - js_execution
+  - navigation
+  - query_attribute
+  - query_css
+  - query_text
+  - query_xpath
 
 runtime:
   node: ">=20"
