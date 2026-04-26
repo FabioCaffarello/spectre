@@ -7,6 +7,14 @@ import { ElementRegistry } from "./elements.js";
 
 const fakeLocator = (tag: string): Locator => ({ __id: tag }) as unknown as Locator;
 
+const firstId = (ids: readonly string[]): string => {
+  const id = ids[0];
+  if (id === undefined) {
+    throw new Error("expected allocateRefs to return at least one id");
+  }
+  return id;
+};
+
 describe("ElementRegistry", () => {
   it("allocates a distinct UUID per locator", () => {
     const reg = new ElementRegistry();
@@ -21,7 +29,7 @@ describe("ElementRegistry", () => {
   it("returns the stored locator on a successful lookup", () => {
     const reg = new ElementRegistry();
     const locator = fakeLocator("a");
-    const [id] = reg.allocateRefs("s1", [locator]);
+    const id = firstId(reg.allocateRefs("s1", [locator]));
     const lookup = reg.lookupRef("s1", id);
     expect(lookup.status).toBe("ok");
     expect(lookup.locator).toBe(locator);
@@ -44,7 +52,7 @@ describe("ElementRegistry", () => {
 
   it("returns 'stale' for an id whose generation has been bumped", () => {
     const reg = new ElementRegistry();
-    const [id] = reg.allocateRefs("s1", [fakeLocator("a")]);
+    const id = firstId(reg.allocateRefs("s1", [fakeLocator("a")]));
     reg.bumpGeneration("s1");
     const lookup = reg.lookupRef("s1", id);
     expect(lookup.status).toBe("stale");
@@ -55,14 +63,14 @@ describe("ElementRegistry", () => {
     const reg = new ElementRegistry();
     reg.allocateRefs("s1", [fakeLocator("a")]);
     reg.bumpGeneration("s1");
-    const [freshId] = reg.allocateRefs("s1", [fakeLocator("b")]);
+    const freshId = firstId(reg.allocateRefs("s1", [fakeLocator("b")]));
     expect(reg.lookupRef("s1", freshId).status).toBe("ok");
   });
 
   it("bumpGeneration is independent across sessions", () => {
     const reg = new ElementRegistry();
-    const [idA] = reg.allocateRefs("a", [fakeLocator("x")]);
-    const [idB] = reg.allocateRefs("b", [fakeLocator("y")]);
+    const idA = firstId(reg.allocateRefs("a", [fakeLocator("x")]));
+    const idB = firstId(reg.allocateRefs("b", [fakeLocator("y")]));
     reg.bumpGeneration("a");
     expect(reg.lookupRef("a", idA).status).toBe("stale");
     expect(reg.lookupRef("b", idB).status).toBe("ok");
@@ -70,7 +78,7 @@ describe("ElementRegistry", () => {
 
   it("forgetSession drops every ref for the session", () => {
     const reg = new ElementRegistry();
-    const [id] = reg.allocateRefs("s1", [fakeLocator("a")]);
+    const id = firstId(reg.allocateRefs("s1", [fakeLocator("a")]));
     reg.forgetSession("s1");
     expect(reg.lookupRef("s1", id).status).toBe("unknown");
   });

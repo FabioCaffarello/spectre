@@ -6,8 +6,10 @@ import {
   CAPABILITY_NAMES,
   EXTRACT_EVAL,
   JS_EXECUTION,
+  MODE_EVAL,
   assertCapabilityCoherence,
   hasCapability,
+  missingCapabilityForMode,
 } from "./capabilities.js";
 
 describe("CAPABILITY_NAMES", () => {
@@ -68,5 +70,31 @@ describe("hasCapability", () => {
 
   it("reports false when the name is absent", () => {
     expect(hasCapability(CAPABILITY_NAMES, "no_such_cap")).toBe(false);
+  });
+});
+
+describe("missingCapabilityForMode", () => {
+  // The MODE_* constants in extraction_pb.ts mirror the proto:
+  // UNSPECIFIED=0, TEXT_CONTENT=1, INNER_TEXT=2, INNER_HTML=3,
+  // OUTER_HTML=4, ATTR=5, EVAL=6.
+  it("returns js_execution when MODE_EVAL is requested but js_execution is missing", () => {
+    expect(missingCapabilityForMode(MODE_EVAL, ["navigation"])).toBe(
+      JS_EXECUTION,
+    );
+  });
+
+  it("returns null when MODE_EVAL is requested and js_execution is declared", () => {
+    expect(missingCapabilityForMode(MODE_EVAL, CAPABILITY_NAMES)).toBeNull();
+  });
+
+  it("returns null for non-EVAL modes regardless of js_execution", () => {
+    // MODE_TEXT_CONTENT = 1.
+    expect(missingCapabilityForMode(1, [])).toBeNull();
+    // MODE_ATTR = 5.
+    expect(missingCapabilityForMode(5, ["navigation"])).toBeNull();
+  });
+
+  it("MODE_EVAL is the integer the proto enum encodes", () => {
+    expect(MODE_EVAL).toBe(6);
   });
 });

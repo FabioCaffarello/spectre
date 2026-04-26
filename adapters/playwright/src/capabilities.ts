@@ -76,6 +76,27 @@ export const hasCapability = (
   name: string,
 ): boolean => declared.includes(name);
 
+/** The single runtime gate v1alpha1 enforces: a `Field` whose
+ * `mode` is `MODE_EVAL` (the integer constant is `6` per
+ * extraction.proto's `Field.Mode`) requires `js_execution` in the
+ * declared capability list. Returns the missing capability name if
+ * the gate would reject the request, or null if it would pass.
+ *
+ * Pure function, so the gate is unit-testable without standing up
+ * a real adapter or fake SessionManager. The Extract handler
+ * imports it directly. See ADR-0010, decision 3. */
+export const MODE_EVAL = 6;
+
+export const missingCapabilityForMode = (
+  mode: number,
+  declared: readonly string[],
+): string | null => {
+  if (mode === MODE_EVAL && !hasCapability(declared, JS_EXECUTION)) {
+    return JS_EXECUTION;
+  }
+  return null;
+};
+
 /** Throws if the declared list violates a coherence invariant.
  * Currently:
  *   - `extract_eval` declared without `js_execution` is a

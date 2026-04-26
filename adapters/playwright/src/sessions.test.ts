@@ -189,8 +189,12 @@ describe("SessionManager", () => {
 
     const contexts = browser.contexts();
     expect(contexts).toHaveLength(2);
-    expect(contexts[0].close).toHaveBeenCalledTimes(1);
-    expect(contexts[1].close).not.toHaveBeenCalled();
+    const [first, second] = contexts;
+    if (!first || !second) {
+      throw new Error("expected two contexts");
+    }
+    expect(first.close).toHaveBeenCalledTimes(1);
+    expect(second.close).not.toHaveBeenCalled();
     expect(browser.close).not.toHaveBeenCalled();
   });
 
@@ -210,7 +214,9 @@ describe("SessionManager", () => {
     const mgr = new SessionManager(async () => browser);
     mgr.register("a");
     await mgr.getOrCreatePage("a");
-    const [id] = mgr.allocateRefs("a", [fakeLocator("x")]);
+    const ids = mgr.allocateRefs("a", [fakeLocator("x")]);
+    const id = ids[0];
+    if (!id) throw new Error("expected an allocated id");
     expect(mgr.lookupRef("a", id).status).toBe("ok");
     await mgr.closeSession("a");
     expect(mgr.lookupRef("a", id).status).toBe("unknown");
@@ -219,7 +225,9 @@ describe("SessionManager", () => {
   it("bumpGeneration invalidates prior refs for the session", async () => {
     const mgr = new SessionManager(async () => makeFakeBrowser());
     mgr.register("a");
-    const [id] = mgr.allocateRefs("a", [fakeLocator("x")]);
+    const ids = mgr.allocateRefs("a", [fakeLocator("x")]);
+    const id = ids[0];
+    if (!id) throw new Error("expected an allocated id");
     expect(mgr.lookupRef("a", id).status).toBe("ok");
     mgr.bumpGeneration("a");
     expect(mgr.lookupRef("a", id).status).toBe("stale");
