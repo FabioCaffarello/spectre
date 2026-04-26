@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -24,6 +25,11 @@ SELENIUMBASE_MANIFEST = SELENIUMBASE_DIR / "driver.yaml"
 # isolated, mirroring how the Playwright fixture uses the adapter's
 # own Node toolchain via `dist/index.js`.
 SELENIUMBASE_VENV_PY = SELENIUMBASE_DIR / ".venv" / "bin" / "python"
+
+CURL_IMPERSONATE_DIR = REPO_ROOT / "adapters" / "curl-impersonate"
+CURL_IMPERSONATE_MANIFEST = CURL_IMPERSONATE_DIR / "driver.yaml"
+CURL_IMPERSONATE_BIN = CURL_IMPERSONATE_DIR / "bin" / "adapter"
+CURL_IMPERSONATE_VARIANT = "curl_chrome116"
 
 
 @pytest.fixture(scope="session")
@@ -104,3 +110,46 @@ def seleniumbase_manifest() -> dict[str, object]:
     """Return the parsed SeleniumBase ``driver.yaml`` manifest."""
 
     return yaml.safe_load(SELENIUMBASE_MANIFEST.read_text())  # type: ignore[no-any-return]
+
+
+@pytest.fixture
+def curl_impersonate_adapter() -> Iterator[DriverHarness]:
+    """Yield a started DriverHarness pointed at the curl-impersonate adapter.
+
+    Skips when:
+
+    - the adapter binary has not been built (run ``just curl-imp-build``);
+    - the curl-impersonate variant the adapter expects is not on
+      PATH (install it from
+      <https://github.com/lwthiker/curl-impersonate/releases>).
+
+    CI's ``just conf-test`` depends on ``just ci-bootstrap`` which
+    builds the adapter and ensures the curl-impersonate binary is
+    available before the tests run.
+
+    PR11 implements ``Initialize`` and ``Navigate``; the other
+    RPCs return ``codes.Unimplemented`` until PR12. ADR-0016
+    records the third-runtime decisions.
+    """
+
+    if not CURL_IMPERSONATE_BIN.exists():
+        pytest.skip(
+            f"curl-impersonate adapter binary not built at {CURL_IMPERSONATE_BIN}; "
+            "run `just curl-imp-build` first"
+        )
+    if shutil.which(CURL_IMPERSONATE_VARIANT) is None:
+        pytest.skip(
+            f"{CURL_IMPERSONATE_VARIANT} not on PATH; install from "
+            "https://github.com/lwthiker/curl-impersonate/releases"
+        )
+
+    harness = DriverHarness.from_driver_yaml(CURL_IMPERSONATE_MANIFEST)
+    with harness:
+        yield harness
+
+
+@pytest.fixture
+def curl_impersonate_manifest() -> dict[str, object]:
+    """Return the parsed curl-impersonate ``driver.yaml`` manifest."""
+
+    return yaml.safe_load(CURL_IMPERSONATE_MANIFEST.read_text())  # type: ignore[no-any-return]
