@@ -240,15 +240,14 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
         request: driver_pb2.CloseRequest,
         context: grpc.ServicerContext,
     ) -> driver_pb2.CloseResponse:
-        # Close is implemented in PR9 even though Query/Extract/Screenshot
-        # stay UNIMPLEMENTED. Reason: the spectre engine's executor always
-        # calls Close at the end of a plan, so a navigate-only job (the
-        # PR9 example at examples/seleniumbase-navigate/) cannot complete
-        # without it. Close has no protocol-level capability gate (it is
-        # a baseline session-lifecycle RPC like Initialize), so wiring
-        # it does not violate the "declared = tested" rule of ADR-0014 §1.
-        # The richer Close conformance tests (closing an unknown id,
-        # closing twice) land in PR10 alongside Query/Extract.
+        # PR9 wired a thin Close so the engine's executor could finish
+        # navigate-only plans (examples/seleniumbase-navigate). PR10
+        # promotes it to the full contract: strict session_id
+        # validation, idempotent rejection of unknown / already-closed
+        # ids, ElementRegistry teardown for the session, and
+        # driver.quit() so no Chrome process leaks past the call. The
+        # session-manager call covers all four — see ADR-0010 §1 and
+        # ADR-0015 §1 for the lifecycle contract.
         del context
         if not request.session_id:
             return driver_pb2.CloseResponse(
@@ -259,6 +258,10 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
             )
         closed = self._sessions.close_session(request.session_id)
         if not closed:
+            # Idempotent close: a second Close on the same id (or a
+            # Close against a never-Initialized id) returns
+            # CODE_INVALID_ARGUMENT. The first Close emptied the
+            # registry, so the second sees the unknown id path.
             return driver_pb2.CloseResponse(
                 error=errors_pb2.DriverError(
                     code=errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
