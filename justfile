@@ -95,17 +95,41 @@ engine-test:
 engine-build:
     cd core/engine && cargo build --release
 
-# Run the hello-hackernews example end-to-end. Builds the Playwright
-# adapter on first run and assumes Chromium is already installed (run
-# `just pw-install-browsers` first if not). Pass `--verbose` for the
-# compiled plan; pass `--job=<path>` to point at a different YAML.
-engine-run-hello *ARGS='': pw-build
-    cd core/engine && cargo run --example hello-hackernews -- {{ARGS}}
-
 # Run the engine integration test. Requires the Playwright adapter
 # build and Chromium; the test is `#[ignore]` by default. See ADR-0012.
 engine-integration-test: pw-build pw-install-browsers
     cd core/engine && PLAYWRIGHT_AVAILABLE=1 cargo test --test integration -- --ignored --nocapture
+
+# ---------------------------------------------------------------------------
+# spectre CLI (core/engine/src/bin/spectre.rs)
+# ---------------------------------------------------------------------------
+# The CLI is the engine binary; see ADR-0013. These recipes drive the
+# release build and the three subcommands.
+
+# Build the release `spectre` binary at core/engine/target/release/spectre.
+spectre-build:
+    cd core/engine && cargo build --release --bin spectre
+
+# Print the engine and protocol versions. Cheap; used as a CI smoke test.
+spectre-version: spectre-build
+    core/engine/target/release/spectre version
+
+# Validate a job YAML file: parse, plan, and check declared
+# capabilities without launching the driver. Prints the compiled plan.
+spectre-validate JOB: spectre-build
+    core/engine/target/release/spectre validate {{JOB}}
+
+# Run a job end-to-end. Requires the Playwright adapter to be built
+# and Chromium installed (run `just pw-install-browsers` first). Pass
+# extra args after the job path, e.g. `just spectre-run job.yaml --verbose`.
+spectre-run JOB *ARGS='': spectre-build pw-build
+    core/engine/target/release/spectre run {{JOB}} {{ARGS}}
+
+# Back-compat alias for the PR7 recipe: runs the hello-hackernews job
+# via the spectre binary. Equivalent to
+# `just spectre-run examples/hello-hackernews/job.yaml`.
+engine-run-hello *ARGS='': spectre-build pw-build
+    core/engine/target/release/spectre run examples/hello-hackernews/job.yaml {{ARGS}}
 
 # ---------------------------------------------------------------------------
 # Go control plane (core/control-plane)
