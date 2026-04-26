@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-26 (PR8 merged; Phase 1 complete).
+> **Last updated:** 2026-04-26 (PR9 in review; Phase 2 in progress).
 
 ## Phase 0 — Foundation (current)
 
@@ -82,6 +82,18 @@ reference runtimes.
 
 - [ ] SeleniumBase reference adapter — `v1alpha1` minimum capability
       set. Passes conformance.
+  - [x] `Initialize` + `Navigate` over gRPC on a UDS.
+        Capabilities declared: `["navigation"]`. Selenium-error
+        mapping table for Navigate-relevant rows. Cross-language
+        conformance pattern (two explicit fixtures). ADR-0014.
+        (PR9.)
+  - [ ] `Close`, `Query`, `Extract` — strict ElementRef
+        invalidation per ADR-0010, plus the eight `query_*` /
+        `extract_*` capability declarations and the
+        `js_execution` gate. (PR10.)
+  - [ ] `Screenshot` — three scopes, two formats, the
+        read-only contract from ADR-0011 carried forward.
+        (PR11.)
 - [ ] curl-impersonate reference adapter — `v1alpha1` capability set
       tailored to HTTP-only flows (no JS execution, no screenshots).
       Passes conformance.
@@ -95,6 +107,29 @@ reference runtimes.
 Exit criterion: the same `job.yaml` runs unchanged across all three
 adapters where their capabilities allow. Conformance gates merges to
 `proto/`.
+
+## Phase 2.5 — Container infrastructure
+
+Goal: package the components for contributor onboarding and for
+future control-plane consumption. ADR-0014 §5 records the deferral
+rationale: containers add an inter-process boundary with no protocol
+benefit until Phase 3's control plane consumes them, so the work is
+sequenced *after* Phase 2 proves the cross-language thesis rather
+than alongside it.
+
+- [ ] Devcontainer config so contributors can build the engine,
+      adapters, and conformance suite without a local
+      Rust/Node/Python toolchain.
+- [ ] Per-adapter Dockerfiles producing single-binary (or
+      single-virtualenv) images that bundle the runtime browser
+      where required.
+- [ ] Compose stack for local multi-service development against the
+      engine plus a chosen adapter.
+- [ ] CI variants that build and exercise the images.
+
+Exit criterion: a contributor can `docker compose up` a working
+engine + Playwright (or SeleniumBase) stack, and CI publishes
+adapter images keyed on tagged releases.
 
 ## Phase 3 — Distributed execution
 
