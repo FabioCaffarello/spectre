@@ -13,7 +13,7 @@ import {
 } from "./capabilities.js";
 
 describe("CAPABILITY_NAMES", () => {
-  it("declares the eleven PR5 capabilities", () => {
+  it("declares the thirteen PR6 capabilities", () => {
     expect(CAPABILITY_NAMES).toEqual([
       "extract_attribute",
       "extract_eval",
@@ -25,6 +25,9 @@ describe("CAPABILITY_NAMES", () => {
       "query_css",
       "query_text",
       "query_xpath",
+      "screenshot_element",
+      "screenshot_full_page",
+      "screenshot_viewport",
     ]);
   });
 

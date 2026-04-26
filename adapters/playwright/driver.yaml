@@ -21,6 +21,9 @@ capabilities:
   - query_css
   - query_text
   - query_xpath
+  - screenshot_element
+  - screenshot_full_page
+  - screenshot_viewport
 
 runtime:
   node: ">=20"
