@@ -46,10 +46,12 @@ use serde::Deserialize;
 use thiserror::Error;
 use url::Url;
 
-/// Hardcoded list of drivers the engine knows about in v1alpha1. PR9+
-/// will introduce a registry; see ADR-0012 §"Bad, because" for the
-/// hardcoded-list rationale.
-pub const KNOWN_DRIVERS: &[&str] = &["playwright"];
+/// Hardcoded list of drivers the engine knows about in v1alpha1. PR9
+/// added `seleniumbase` once the Python adapter implemented
+/// `Initialize` and `Navigate` against the conformance suite; see
+/// ADR-0014. A driver registry replaces this list later in Phase 2 —
+/// see ADR-0012 §"Bad, because" for the hardcoded-list rationale.
+pub const KNOWN_DRIVERS: &[&str] = &["playwright", "seleniumbase"];
 
 /// The protocol version string the DSL must declare under `spectre:`.
 pub const DSL_VERSION: &str = "v1alpha1";
@@ -536,6 +538,32 @@ output:
             Err(JobError::UnknownDriver { found, .. }) => assert_eq!(found, "not-a-driver"),
             other => panic!("expected UnknownDriver, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn accepts_seleniumbase_driver() {
+        // ADR-0014: PR9 grew KNOWN_DRIVERS to include `seleniumbase`.
+        // A job declaring it must parse successfully.
+        let yaml = r#"
+spectre: v1alpha1
+driver: seleniumbase
+steps:
+  - navigate: https://example.com
+output:
+  format: jsonl
+  path: ./out.jsonl
+"#;
+        let job = Job::from_yaml(yaml).expect("seleniumbase must be a known driver");
+        assert_eq!(job.driver, "seleniumbase");
+    }
+
+    #[test]
+    fn known_drivers_contains_both_phase2_adapters() {
+        // Guard against accidental shrinkage of the list. The order
+        // is alphabetical because the byte-for-byte conformance
+        // assertion compares lists, and a stable order survives
+        // editor reordering.
+        assert_eq!(KNOWN_DRIVERS, &["playwright", "seleniumbase"]);
     }
 
     #[test]

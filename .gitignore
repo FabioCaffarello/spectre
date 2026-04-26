@@ -74,5 +74,6 @@ adapters/playwright/src/proto/
 
 *.zip
 
-# Output produced by the hello-hackernews example binary.
+# Output produced by example jobs.
 examples/hello-hackernews/stories.jsonl
+examples/seleniumbase-navigate/output.jsonl

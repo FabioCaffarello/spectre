@@ -22,6 +22,14 @@ dependencies = [
     # `proto/gen/python` (gitignored, produced by
     # `just proto-generate`). See ADR-0007.
     "spectre-driver-protocol",
+    # SeleniumBase wraps Selenium WebDriver with ergonomic helpers
+    # and integrated ChromeDriver management. The adapter uses the
+    # `seleniumbase.Driver` factory in `sessions.py`.
+    "seleniumbase>=4.32",
+    # gRPC server runtime. spectre-driver-protocol pulls this in
+    # transitively; declaring it here keeps the adapter's direct
+    # dependency surface explicit and matches the conformance pin.
+    "grpcio>=1.60",
 ]
 
 [tool.uv.sources]
@@ -39,6 +47,7 @@ dev = [
     "mypy>=1.13",
     "pytest>=8.3",
     "ruff>=0.8",
+    "types-protobuf>=4.24",
 ]
 
 [build-system]
@@ -75,6 +84,20 @@ files = ["src", "tests"]
 module = ["spectre.driver.v1alpha1.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
+
+# `grpcio` ships without bundled type stubs. Treat its public API as
+# Any-typed; the adapter wraps it so leakage is bounded.
+[[tool.mypy.overrides]]
+module = ["grpc", "grpc.*"]
+ignore_missing_imports = true
+
+# SeleniumBase and Selenium WebDriver do not ship type stubs in a
+# form mypy can consume cleanly. Treat them as Any-typed at the
+# boundary; the session manager wraps every Driver call so leakage
+# is bounded to that one file.
+[[tool.mypy.overrides]]
+module = ["seleniumbase", "seleniumbase.*", "selenium", "selenium.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -16,6 +16,15 @@ PLAYWRIGHT_DIR = REPO_ROOT / "adapters" / "playwright"
 PLAYWRIGHT_MANIFEST = PLAYWRIGHT_DIR / "driver.yaml"
 PLAYWRIGHT_DIST = PLAYWRIGHT_DIR / "dist" / "index.js"
 
+SELENIUMBASE_DIR = REPO_ROOT / "adapters" / "seleniumbase"
+SELENIUMBASE_MANIFEST = SELENIUMBASE_DIR / "driver.yaml"
+# The SeleniumBase adapter runs from its own uv-managed virtualenv —
+# the conformance suite's venv has spectre-driver-protocol but not
+# seleniumbase. Pointing at the adapter's `python` keeps environments
+# isolated, mirroring how the Playwright fixture uses the adapter's
+# own Node toolchain via `dist/index.js`.
+SELENIUMBASE_VENV_PY = SELENIUMBASE_DIR / ".venv" / "bin" / "python"
+
 
 @pytest.fixture(scope="session")
 def local_http_server() -> Iterator[LocalHttpServer]:
@@ -54,3 +63,44 @@ def playwright_manifest() -> dict[str, object]:
     """Return the parsed Playwright ``driver.yaml`` manifest."""
 
     return yaml.safe_load(PLAYWRIGHT_MANIFEST.read_text())  # type: ignore[no-any-return]
+
+
+@pytest.fixture
+def seleniumbase_adapter() -> Iterator[DriverHarness]:
+    """Yield a started DriverHarness pointed at the SeleniumBase adapter.
+
+    Skips when the adapter's uv-managed virtualenv is missing — that
+    is the local signal to run ``just sb-bootstrap`` (or, equivalently,
+    ``cd adapters/seleniumbase && uv sync --all-extras --dev``). CI's
+    ``just conf-test`` depends on ``just sb-bootstrap`` so the venv is
+    always present when the tests run there.
+
+    Unlike the Playwright fixture, this one does *not* call
+    ``DriverHarness.from_driver_yaml`` — the manifest's command is
+    ``["python", "-m", ...]`` and PATH-resolved ``python`` would
+    typically point at the conformance venv (which has no
+    seleniumbase install). The fixture instead substitutes the
+    adapter's own venv python so each adapter stays in its own
+    isolated environment, mirroring how the Playwright adapter uses
+    its own ``node`` runtime.
+    """
+
+    if not SELENIUMBASE_VENV_PY.exists():
+        pytest.skip(
+            f"seleniumbase adapter venv not present at {SELENIUMBASE_VENV_PY}; "
+            "run `just sb-bootstrap` first"
+        )
+
+    harness = DriverHarness(
+        command=[str(SELENIUMBASE_VENV_PY), "-m", "spectre_seleniumbase.adapter"],
+        cwd=SELENIUMBASE_DIR,
+    )
+    with harness:
+        yield harness
+
+
+@pytest.fixture
+def seleniumbase_manifest() -> dict[str, object]:
+    """Return the parsed SeleniumBase ``driver.yaml`` manifest."""
+
+    return yaml.safe_load(SELENIUMBASE_MANIFEST.read_text())  # type: ignore[no-any-return]

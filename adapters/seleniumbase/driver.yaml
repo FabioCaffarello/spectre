@@ -4,12 +4,27 @@ protocol_version: spectre.driver.v1alpha1
 
 transports:
   - kind: grpc-uds
-    command: ["python", "-m", "spectre_seleniumbase.adapter"]
+    # Relative path to the uv-managed virtualenv. Mirrors the
+    # Playwright manifest's `["node", "dist/index.js"]` pattern:
+    # the launcher runs the command with cwd set to the adapter
+    # directory, so this resolves to
+    # `adapters/seleniumbase/.venv/bin/python`. Run
+    # `just sb-bootstrap` (or `uv sync --all-extras --dev`) once
+    # before the adapter is launched. Using the venv's python
+    # rather than PATH-resolved `python` keeps the adapter's
+    # dependencies (seleniumbase, grpcio) isolated from whatever
+    # interpreter happens to be on PATH; it also avoids the
+    # macOS gotcha where `python` is absent and only `python3`
+    # exists.
+    command: [".venv/bin/python", "-m", "spectre_seleniumbase.adapter"]
 
-# Capabilities are intentionally empty in the skeleton. As the adapter
-# implements each Driver Protocol RPC and verifies it against the
-# conformance suite, the corresponding capability name is added here.
-capabilities: []
+# Each capability lands once its RPC and the conformance tests for it
+# ship together (ADR-0014 §1). The conformance suite asserts byte-for-
+# byte equality between this list and the runtime `Capabilities.names`
+# returned by `Initialize`; keep this file in lockstep with
+# `src/spectre_seleniumbase/capabilities.py`.
+capabilities:
+  - navigation
 
 runtime:
   python: ">=3.10"
