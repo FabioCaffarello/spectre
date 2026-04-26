@@ -8,9 +8,10 @@ string literals; a typo at the call site becomes an import-time
 
 The list mirrors the comment block in ``capabilities.proto``. PR3
 declared no capabilities at runtime; PR4 added ``navigation`` and
-``js_execution``; PR5 expands to the eleven names covering the
-``query_*`` and ``extract_*`` surface backed by ``Query`` and
-``Extract``. Future RPCs add to ``ALL`` as they ship.
+``js_execution``; PR5 added the eight ``query_*``/``extract_*``
+names covering ``Query`` and ``Extract``; PR6 adds the three
+``screenshot_*`` names covering the three ``Screenshot`` scopes.
+Future RPCs add to ``ALL`` as they ship.
 """
 
 from __future__ import annotations
@@ -28,8 +29,11 @@ EXTRACT_HTML: Final[str] = "extract_html"
 EXTRACT_ATTRIBUTE: Final[str] = "extract_attribute"
 EXTRACT_EVAL: Final[str] = "extract_eval"
 
-NETWORK_INTERCEPT: Final[str] = "network_intercept"
+SCREENSHOT_ELEMENT: Final[str] = "screenshot_element"
 SCREENSHOT_FULL_PAGE: Final[str] = "screenshot_full_page"
+SCREENSHOT_VIEWPORT: Final[str] = "screenshot_viewport"
+
+NETWORK_INTERCEPT: Final[str] = "network_intercept"
 COOKIES_PERSIST: Final[str] = "cookies_persist"
 HEADER_OVERRIDES: Final[str] = "header_overrides"
 PROXY_PER_SESSION: Final[str] = "proxy_per_session"
@@ -48,8 +52,10 @@ ALL: Final[frozenset[str]] = frozenset(
         EXTRACT_HTML,
         EXTRACT_ATTRIBUTE,
         EXTRACT_EVAL,
-        NETWORK_INTERCEPT,
+        SCREENSHOT_ELEMENT,
         SCREENSHOT_FULL_PAGE,
+        SCREENSHOT_VIEWPORT,
+        NETWORK_INTERCEPT,
         COOKIES_PERSIST,
         HEADER_OVERRIDES,
         PROXY_PER_SESSION,
