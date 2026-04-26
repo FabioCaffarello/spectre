@@ -96,6 +96,14 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-features
       - run: cargo build --release
+      # Smoke tests for the spectre binary (ADR-0013). Both subcommands
+      # are subprocess-free, so they run on the unit-test CI job without
+      # needing the Playwright/Chromium toolchain that the engine
+      # integration job carries.
+      - name: spectre version
+        run: ./target/release/spectre version
+      - name: spectre validate
+        run: ./target/release/spectre validate ../../examples/hello-hackernews/job.yaml
 
   go:
     name: Go (${{ matrix.module }})
