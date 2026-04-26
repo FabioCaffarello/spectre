@@ -14,6 +14,11 @@ repos:
         args: [--allow-multiple-documents]
       - id: check-toml
       - id: check-json
+        # devcontainer.json is JSONC (JSON with comments), the format
+        # documented at containers.dev. The standard JSON parser cannot
+        # read it; VS Code, JetBrains, and Codespaces all parse it
+        # natively. ADR-0018.
+        exclude: ^\.devcontainer/.*\.json$
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=512]
