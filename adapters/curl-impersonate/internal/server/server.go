@@ -168,16 +168,18 @@ func (s *Server) Navigate(ctx context.Context, req *driverv1alpha1.NavigateReque
 	}, nil
 }
 
-// Close is implemented as a thin session-lifecycle RPC in PR11 —
-// not because the conformance suite covers it (it does not; the
-// rich Close contract lands in PR12), but because the engine's
-// executor always issues Close at the end of a plan (ADR-0012),
-// and `examples/curl-impersonate-fetch/job.yaml` cannot complete
-// via `spectre run` without one. ADR-0014 set the precedent for
-// SeleniumBase PR9; PR11 follows it. Close carries no capability
-// declaration in v1alpha1 — it is a baseline session-lifecycle
-// RPC like Initialize — so wiring it does not violate the
-// "declared = tested" rule from ADR-0014 §1.
+// Close is the full session-teardown RPC. PR11 shipped a thin
+// implementation so the engine's executor could finish navigate-
+// only plans; PR12 promotes it to the full contract:
+//
+//   - Strict session_id validation (empty → CODE_INVALID_ARGUMENT).
+//   - Idempotent rejection of unknown / already-closed ids
+//     (second Close on the same id → CODE_INVALID_ARGUMENT).
+//   - Cookie-jar file deletion (sessions.Manager.Close).
+//   - ElementRegistry teardown for the session (sessions.Manager
+//     forgets the registry entry before deleting the jar).
+//
+// ADR-0010 §1 / ADR-0017 §3 record the lifecycle contract.
 func (s *Server) Close(_ context.Context, req *driverv1alpha1.CloseRequest) (*driverv1alpha1.CloseResponse, error) {
 	if req.GetSessionId() == "" {
 		return &driverv1alpha1.CloseResponse{
