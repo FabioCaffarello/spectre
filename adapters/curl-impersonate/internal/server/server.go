@@ -26,6 +26,7 @@ import (
 	caps "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/capabilities"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/curlx"
 	curlerrors "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/errors"
+	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/parser"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/sessions"
 	driverv1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1"
 )
@@ -161,6 +162,42 @@ func (s *Server) Navigate(ctx context.Context, req *driverv1alpha1.NavigateReque
 	if finalURL == "" {
 		finalURL = req.GetUrl()
 	}
+
+	// Parse the body and cache it on the session. SetDocument bumps
+	// the generation counter atomically so any prior ElementRefs
+	// allocated against the previous Navigate are invalidated. The
+	// underlying x/net/html parser is permissive and absorbs
+	// malformed HTML the same way browsers do — important for
+	// cross-driver equivalence (ADR-0017 §2). A parse failure is
+	// surfaced as CODE_INTERNAL because the body is effectively
+	// unconsumable for downstream Query/Extract; in practice the
+	// permissive parser does not fail on real HTTP responses.
+	doc, parseErr := parser.Parse(resp.Body)
+	if parseErr != nil {
+		return &driverv1alpha1.NavigateResponse{
+			FinalUrl:   finalURL,
+			StatusCode: resp.StatusCode,
+			Elapsed:    durationpb.New(elapsed),
+			Error: &driverv1alpha1.DriverError{
+				Code:    driverv1alpha1.DriverError_CODE_INTERNAL,
+				Message: "parse response body: " + parseErr.Error(),
+			},
+		}, nil
+	}
+	if err := s.sessions.SetDocument(req.GetSessionId(), doc); err != nil {
+		// SetDocument can only fail with ErrUnknownSession, which
+		// the strict-id check above already excluded. A failure
+		// here means the session was concurrently closed; report
+		// it honestly rather than mask.
+		return &driverv1alpha1.NavigateResponse{
+			Elapsed: durationpb.New(elapsed),
+			Error: &driverv1alpha1.DriverError{
+				Code:    driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+				Message: "session was closed during Navigate: " + err.Error(),
+			},
+		}, nil
+	}
+
 	return &driverv1alpha1.NavigateResponse{
 		FinalUrl:   finalURL,
 		StatusCode: resp.StatusCode,
