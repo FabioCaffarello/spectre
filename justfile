@@ -234,6 +234,33 @@ sb-lint:
 sb-test:
     cd adapters/seleniumbase && uv run pytest
 
+# Run the SeleniumBase adapter against a Unix domain socket.
+# Pass --socket=<path> after `--`, or set SPECTRE_DRIVER_SOCKET. The
+# server prints `ready unix:<path>` on stdout once it accepts
+# connections; SIGTERM/Ctrl-C stops the server, tears down any
+# launched Chrome sessions, unlinks the socket, and exits 0.
+# Defaults to /tmp/spectre-sb.sock for ad-hoc local testing. See
+# ADR-0008.
+sb-run *ARGS='--socket=/tmp/spectre-sb.sock': sb-bootstrap
+    cd adapters/seleniumbase && \
+    .venv/bin/python -m spectre_seleniumbase.adapter {{ARGS}}
+
+# Install ChromeDriver for SeleniumBase. Idempotent: SeleniumBase's
+# `install chromedriver` recipe matches the local Chrome version
+# and skips when an up-to-date driver is already in PATH. The
+# conformance tests that exercise `Navigate` need this. See
+# ADR-0014.
+sb-install-chromedriver: sb-bootstrap
+    cd adapters/seleniumbase && \
+    .venv/bin/python -m seleniumbase install chromedriver
+
+# Run only the SeleniumBase conformance tests (Initialize + Navigate
+# in PR9; PR10/PR11 will grow this matcher). Useful for iterating
+# on the Python adapter without re-running the Playwright suite.
+sb-conf-test: sb-bootstrap sb-install-chromedriver conf-bootstrap
+    cd tools/conformance && \
+    uv run pytest tests/test_seleniumbase_initialize.py tests/test_seleniumbase_navigate.py
+
 # ---------------------------------------------------------------------------
 # Python conformance suite (tools/conformance)
 # ---------------------------------------------------------------------------
@@ -249,11 +276,14 @@ conf-lint:
     cd tools/conformance && uv run ruff format --check .
     cd tools/conformance && uv run mypy .
 
-# Conformance test depends on the Playwright build artifact and on
-# Chromium being installed: tests launch `dist/index.js` as a
-# subprocess, and `Navigate` requires the browser binary. See
-# ADR-0008, ADR-0009.
-conf-test: pw-build pw-install-browsers
+# Conformance test depends on:
+# - the Playwright build artifact (`dist/index.js`) and Chromium —
+#   tests launch the Node adapter as a subprocess and Navigate
+#   needs the browser binary (ADR-0008, ADR-0009);
+# - the SeleniumBase adapter's uv-managed venv and ChromeDriver —
+#   PR9 added a Python adapter that the suite exercises in
+#   parallel with Playwright (ADR-0014).
+conf-test: pw-build pw-install-browsers sb-bootstrap sb-install-chromedriver
     cd tools/conformance && uv run pytest
 
 # ---------------------------------------------------------------------------

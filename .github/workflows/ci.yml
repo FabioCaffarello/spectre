@@ -280,6 +280,24 @@ jobs:
         name: Install Chromium system deps (browser already cached)
         working-directory: ${{ github.workspace }}/adapters/playwright
         run: pnpm exec playwright install-deps chromium
+      # The conformance suite also exercises the SeleniumBase adapter
+      # (ADR-0014). Bootstrap its uv-managed virtualenv (which has
+      # seleniumbase + grpcio + spectre-driver-protocol), install
+      # Google Chrome, and call SeleniumBase's chromedriver installer
+      # so `Driver()` resolves both binaries on the first Navigate.
+      - if: matrix.package == 'tools/conformance'
+        name: Bootstrap SeleniumBase adapter
+        working-directory: ${{ github.workspace }}/adapters/seleniumbase
+        run: uv sync --all-extras --dev
+      - if: matrix.package == 'tools/conformance'
+        name: Install Google Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      - if: matrix.package == 'tools/conformance'
+        name: Install ChromeDriver via SeleniumBase
+        working-directory: ${{ github.workspace }}/adapters/seleniumbase
+        run: .venv/bin/python -m seleniumbase install chromedriver
       - run: uv run pytest
 
   engine-integration:
