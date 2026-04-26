@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-26 (PR12 in review; Phase 2 closing).
+> **Last updated:** 2026-04-26 (Phase 2 closed; PR13 opens Phase 2.5).
 
 ## Phase 0 — Foundation (current)
 
@@ -158,24 +158,34 @@ Capability divergence:
 
 ADR-0017 records PR12's decisions and the final capability table.
 
-## Phase 2.5 — Container infrastructure
+## Phase 2.5 — Container infrastructure (in progress)
 
 Goal: package the components for contributor onboarding and for
 future control-plane consumption. ADR-0014 §5 records the deferral
 rationale: containers add an inter-process boundary with no protocol
 benefit until Phase 3's control plane consumes them, so the work is
 sequenced *after* Phase 2 proves the cross-language thesis rather
-than alongside it.
+than alongside it. PR13 opens the phase with the smallest defensible
+slice; ADR-0018 records the per-axis decisions.
 
-- [ ] Devcontainer config so contributors can build the engine,
+- [x] Devcontainer config so contributors can build the engine,
       adapters, and conformance suite without a local
-      Rust/Node/Python toolchain.
+      Rust/Node/Python toolchain. Single Ubuntu 22.04 image with
+      Rust + Go + Node + Python + Chrome + curl-impersonate;
+      "Reopen in Container" produces a working environment in
+      ~5–10 minutes. ADR-0018 §1, §2. (PR13.)
+- [x] Engine Dockerfile + image. Multi-stage build (cargo-chef +
+      musl static + distroless/static:nonroot); resulting image is
+      ~15 MB. Built and smoke-tested on every PR via the new CI
+      `engine-image` job; no registry publishing yet. ADR-0018 §3,
+      §5. (PR13.)
 - [ ] Per-adapter Dockerfiles producing single-binary (or
       single-virtualenv) images that bundle the runtime browser
-      where required.
+      where required. (PR14.)
 - [ ] Compose stack for local multi-service development against the
-      engine plus a chosen adapter.
-- [ ] CI variants that build and exercise the images.
+      engine plus a chosen adapter. (PR15.)
+- [ ] CI variants that build and exercise the per-adapter images.
+      (PR14+.)
 
 Exit criterion: a contributor can `docker compose up` a working
 engine + Playwright (or SeleniumBase) stack, and CI publishes

@@ -73,6 +73,11 @@ just spectre-build
 just spectre-run examples/hello-hackernews/job.yaml
 ```
 
+> Contributors who prefer not to install Rust + Go + Node + Python
+> locally: see
+> [docs/architecture/development-environment.md](docs/architecture/development-environment.md)
+> for the recommended Devcontainer setup.
+
 `just spectre-build` produces `core/engine/target/release/spectre`.
 `spectre validate <job.yaml>` parses, plans, and checks declared
 capabilities without launching the driver — handy when iterating on

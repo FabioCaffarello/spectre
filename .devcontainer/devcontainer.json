@@ -1,0 +1,44 @@
+// Spectre Devcontainer.
+//
+// VS Code "Reopen in Container" produces a Linux environment with
+// Rust, Go, Node, Python, Chrome, ChromeDriver, and curl-impersonate
+// already installed. First-time build is ~5-10 minutes; subsequent
+// reopens are instant. ADR-0018 records the decisions; the user-facing
+// guide is docs/architecture/development-environment.md.
+//
+// GitHub Codespaces consumes the same config — opening the repo in a
+// Codespace produces an equivalent environment.
+{
+  "name": "Spectre",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "vscode",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  // No services to forward at PR13. The engine and adapters are
+  // subprocess + UDS only; PR15's Compose stack will introduce
+  // forwarded ports.
+  "forwardPorts": [],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "golang.go",
+        "ms-python.python",
+        "ms-python.mypy-type-checker",
+        "charliermarsh.ruff",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "redhat.vscode-yaml",
+        "yzhang.markdown-all-in-one",
+        "bufbuild.vscode-buf"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "rust-analyzer.cargo.targetDir": true
+      }
+    }
+  }
+}

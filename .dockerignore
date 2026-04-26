@@ -1,0 +1,71 @@
+# Build context exclusions for `docker build` from the repository
+# root. PR13 ships only the engine Dockerfile (core/engine/Dockerfile);
+# per-adapter Dockerfiles arrive in PR14 and may grow this file.
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Editors / agent state
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Rust build artifacts
+**/target/
+
+# Go build output (named bin/ directories at component roots only —
+# **/bin/ would also exclude core/engine/src/bin/ which holds the
+# spectre CLI source).
+core/control-plane/bin/
+adapters/curl-impersonate/bin/
+*.exe
+*.test
+
+# Node / pnpm
+**/node_modules/
+**/dist/
+**/.pnpm-store/
+
+# Python virtualenvs and caches
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+
+# Generated protocol bindings (Rust regenerates from proto/ inside the
+# image; the host-side gen/ tree must not pollute the build context).
+proto/gen/
+adapters/playwright/src/proto/
+
+# Documentation, examples, and docs-only changes do not affect the
+# engine binary. Excluding them keeps the build context small.
+docs/
+examples/
+**/README.md
+CHANGELOG.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+GOVERNANCE.md
+SECURITY.md
+NOTICE
+VERSION
+
+# Devcontainer assets (not needed in the engine image build).
+.devcontainer/
+
+# CI config
+.github/
+
+# Docker artifacts themselves
+**/Dockerfile
+**/.dockerignore

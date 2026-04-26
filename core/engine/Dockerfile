@@ -1,0 +1,102 @@
+# syntax=docker/dockerfile:1.7
+#
+# Multi-stage build for the Spectre engine binary.
+#
+# - chef stage: extract dependency metadata into recipe.json so the
+#   builder can compile dependencies in a layer that is cached across
+#   source-only edits (cargo-chef pattern).
+# - builder stage: cook deps, then compile the engine for the
+#   x86_64-unknown-linux-musl target so the result is a fully static
+#   binary the distroless runtime can run with no shared libraries.
+# - runtime stage: gcr.io/distroless/static:nonroot. No shell, no
+#   package manager, no userland. The engine spawns adapter
+#   subprocesses but never needs root itself.
+#
+# Build context is the repository root (so build.rs can resolve
+# proto/ at the same relative path it uses for native cargo builds).
+# See ADR-0018 for the decisions, ADR-0013 §5 for the static-binary
+# distribution choice, and ADR-0007 for the protoc dependency.
+#
+# Usage: docker build -t spectre-engine:dev -f core/engine/Dockerfile .
+
+ARG RUST_VERSION=1.85
+ARG MUSL_TARGET=x86_64-unknown-linux-musl
+
+# ---------------------------------------------------------------------------
+# Stage 1 — cargo-chef recipe (dependency metadata only)
+# ---------------------------------------------------------------------------
+FROM rust:${RUST_VERSION}-bookworm AS chef
+WORKDIR /app
+RUN cargo install cargo-chef --locked --version 0.1.71
+# proto/ is copied so `cargo metadata` (invoked by chef prepare) can
+# resolve the engine's build.rs reference; only recipe.json travels
+# to the builder stage.
+COPY proto/ ./proto/
+COPY core/engine/ ./core/engine/
+WORKDIR /app/core/engine
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ---------------------------------------------------------------------------
+# Stage 2 — build the engine binary (musl static)
+# ---------------------------------------------------------------------------
+FROM rust:${RUST_VERSION}-bookworm AS builder
+ARG MUSL_TARGET
+ARG PROTOC_VERSION=27.2
+WORKDIR /app
+# musl-tools provides the musl-gcc linker the cargo build invokes for
+# the static target. unzip is needed to unpack the protoc release.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      musl-tools \
+      unzip \
+ && rm -rf /var/lib/apt/lists/*
+# protoc from the official protocolbuffers/protobuf release. The Debian
+# package's protoc does not ship the well-known .proto files in a
+# location its default include resolution finds, so prost-build (via
+# the engine's build.rs) cannot resolve `google/protobuf/duration.proto`.
+# The release archive places `bin/protoc` and `include/google/protobuf/*`
+# under the same prefix, which protoc auto-discovers. ADR-0007.
+RUN PROTOC_ARCH=$(case "$(uname -m)" in \
+        x86_64) echo "x86_64" ;; \
+        aarch64) echo "aarch_64" ;; \
+        *) echo "unsupported"; exit 1 ;; \
+    esac) \
+ && curl -fsSL -o /tmp/protoc.zip \
+      "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip" \
+ && unzip -q /tmp/protoc.zip -d /usr/local \
+ && rm /tmp/protoc.zip \
+ && chmod +x /usr/local/bin/protoc \
+ && protoc --version
+RUN rustup target add ${MUSL_TARGET}
+RUN cargo install cargo-chef --locked --version 0.1.71
+
+# Cache dependency compilation. The recipe is the only input here, so
+# this layer is reused across source-only changes.
+COPY --from=chef /app/core/engine/recipe.json ./core/engine/recipe.json
+WORKDIR /app/core/engine
+RUN cargo chef cook --release \
+      --target ${MUSL_TARGET} \
+      --recipe-path recipe.json
+
+# Real source. Dependency artifacts from `cook` above stay cached in
+# target/. build.rs runs from this stage and reads ../../proto.
+WORKDIR /app
+COPY proto/ ./proto/
+COPY core/engine/ ./core/engine/
+WORKDIR /app/core/engine
+RUN cargo build --release \
+      --target ${MUSL_TARGET} \
+      --bin spectre \
+ && strip target/${MUSL_TARGET}/release/spectre
+
+# ---------------------------------------------------------------------------
+# Stage 3 — distroless runtime
+# ---------------------------------------------------------------------------
+FROM gcr.io/distroless/static:nonroot AS runtime
+ARG MUSL_TARGET
+COPY --from=builder \
+     /app/core/engine/target/${MUSL_TARGET}/release/spectre \
+     /usr/local/bin/spectre
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/spectre"]
+CMD ["--help"]
