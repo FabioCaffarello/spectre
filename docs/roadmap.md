@@ -39,12 +39,18 @@ Goal: end-to-end execution of a trivial job through the protocol.
       `Query`, `Extract`, `Close` for the smoke-test job.
   - [x] `Initialize` — gRPC over UDS, with `Capabilities` declared
         at handshake. ADR-0008.
-  - [ ] `Navigate`, `Query`, `Extract`, `Close` — incremental.
+  - [x] `Navigate` — lazy Chromium launch, per-session
+        `BrowserContext`, error-mapping table from
+        `Playwright → DriverError.Code`. ADR-0009.
+  - [ ] `Query`, `Extract`, `Close` — incremental.
 - [ ] `spectre run hello-hackernews/job.yaml` produces a JSONL file
       with the expected rows.
 - [x] Conformance suite runs against the Playwright adapter for the
-      `Initialize` handshake and asserts unimplemented RPCs respond
-      with `UNIMPLEMENTED`. Capability and per-RPC tests follow.
+      `Initialize` handshake, exercises `Navigate` against an
+      in-process HTTP fixture (happy path, redirect, error-status,
+      timeout), and asserts unimplemented RPCs respond with
+      `UNIMPLEMENTED`. Capability and per-RPC tests for the
+      remaining RPCs follow.
 
 Exit criterion: a new contributor can `git clone && just bootstrap &&
 spectre run examples/hello-hackernews/job.yaml` and see results.

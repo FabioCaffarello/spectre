@@ -167,6 +167,19 @@ pw-build:
 pw-run *ARGS='--socket=/tmp/spectre-pw.sock': pw-build
     cd adapters/playwright && node dist/index.js {{ARGS}}
 
+# Install the Chromium browser Playwright drives. Idempotent: skips
+# when the binary at the expected version is already present. On
+# Linux the system-deps flag pulls the apt packages Chromium needs;
+# on macOS it is omitted because `--with-deps` is Linux-only. See
+# ADR-0009.
+pw-install-browsers: pw-bootstrap
+    cd adapters/playwright && \
+    if [ "$(uname)" = "Linux" ]; then \
+      pnpm exec playwright install --with-deps chromium; \
+    else \
+      pnpm exec playwright install chromium; \
+    fi
+
 # ---------------------------------------------------------------------------
 # Python SeleniumBase adapter (adapters/seleniumbase)
 # ---------------------------------------------------------------------------
@@ -200,10 +213,11 @@ conf-lint:
     cd tools/conformance && uv run ruff format --check .
     cd tools/conformance && uv run mypy .
 
-# Conformance test depends on the Playwright build artifact: tests
-# launch `dist/index.js` as a subprocess, so a fresh build keeps
-# them honest. See ADR-0008.
-conf-test: pw-build
+# Conformance test depends on the Playwright build artifact and on
+# Chromium being installed: tests launch `dist/index.js` as a
+# subprocess, and `Navigate` requires the browser binary. See
+# ADR-0008, ADR-0009.
+conf-test: pw-build pw-install-browsers
     cd tools/conformance && uv run pytest
 
 # ---------------------------------------------------------------------------

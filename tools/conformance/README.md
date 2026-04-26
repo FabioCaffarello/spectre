@@ -3,10 +3,11 @@
 The Spectre Driver Protocol conformance test suite.
 
 > **Status:** v0.1.0a0 — exercises the live `Initialize` handshake
-> against the Playwright adapter over gRPC on a Unix domain socket,
-> and asserts unimplemented RPCs return `UNIMPLEMENTED`. Capability
-> assertions, transport equivalence, and per-capability tests follow
-> in Phase 1 of the [roadmap](../../docs/roadmap.md).
+> and the `Navigate` RPC against the Playwright adapter over gRPC on
+> a Unix domain socket, and asserts unimplemented RPCs return
+> `UNIMPLEMENTED`. Capability assertions, transport equivalence, and
+> per-capability tests for the remaining RPCs follow in Phase 1 of
+> the [roadmap](../../docs/roadmap.md).
 
 ## Build
 
@@ -47,10 +48,13 @@ tools/conformance/
 ├── src/spectre_conformance/
 │   ├── __init__.py
 │   ├── capabilities.py    # canonical capability-name constants
-│   └── harness.py         # DriverHarness — subprocess + grpc.Channel
+│   ├── demo_navigate.py   # manual demo: dial a running adapter, navigate once
+│   ├── harness.py         # DriverHarness — subprocess + grpc.Channel
+│   └── http_fixture.py    # local HTTP server for deterministic Navigate tests
 ├── tests/
-│   ├── conftest.py        # pytest fixtures (playwright_adapter, …)
+│   ├── conftest.py        # pytest fixtures (playwright_adapter, local_http_server, …)
 │   ├── test_initialize.py
+│   ├── test_navigate.py
 │   └── test_unimplemented.py
 ├── pyproject.toml
 └── README.md
@@ -93,6 +97,27 @@ assertion fails.
 A future `--driver=PATH/TO/driver.yaml` pytest CLI option will
 allow running the same suite against any conforming driver. The
 harness API is the seed; the CLI wraps it.
+
+## Local HTTP fixture
+
+`Navigate` tests point at an in-process HTTP server rather than the
+public internet. The `local_http_server` session-scoped fixture (see
+`tests/conftest.py`) yields a started instance of
+`spectre_conformance.http_fixture.LocalHttpServer`, which binds to
+`127.0.0.1` on a random port and serves four routes:
+
+| Route                | Behaviour                                             |
+|----------------------|-------------------------------------------------------|
+| `GET /ok`            | 200 with body `ok`.                                   |
+| `GET /redirect`      | 302 to `/ok`.                                         |
+| `GET /status/<code>` | The given status code with body `<code>`. 100–599.    |
+| `GET /slow`          | Sleeps 5 s, then 200. Used for timeout testing.       |
+
+Adding a route: edit `_LocalHandler.do_GET` in
+`http_fixture.py`. The fixture is stdlib-only (no extra
+dependencies). The choice is deliberate — public-internet calls in
+conformance tests are flaky by definition. See
+[ADR-0009](../../docs/adr/0009-navigate-and-session-lifecycle.md).
 
 ## Generated code
 

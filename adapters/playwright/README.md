@@ -2,9 +2,9 @@
 
 Spectre's reference Playwright driver adapter.
 
-> **Status:** v0.1.0-alpha.0 — implements `Initialize` over gRPC on
-> a Unix domain socket. The other five RPCs (`Navigate`, `Query`,
-> `Extract`, `Screenshot`, `Close`) respond with
+> **Status:** v0.1.0-alpha.0 — implements `Initialize` and
+> `Navigate` over gRPC on a Unix domain socket. The remaining four
+> RPCs (`Query`, `Extract`, `Screenshot`, `Close`) respond with
 > `Status.UNIMPLEMENTED`. They land incrementally in Phase 1 of the
 > [roadmap](../../docs/roadmap.md).
 
@@ -13,12 +13,19 @@ Spectre's reference Playwright driver adapter.
 From the repository root:
 
 ```bash
-just pw-bootstrap     # pnpm install --frozen-lockfile
-just pw-typecheck     # tsc --noEmit
-just pw-test          # vitest run
-just pw-build         # tsc -> dist/
-just pw-lint          # prettier --check .
+just pw-bootstrap          # pnpm install --frozen-lockfile
+just pw-install-browsers   # pnpm exec playwright install chromium (idempotent)
+just pw-typecheck          # tsc --noEmit
+just pw-test               # vitest run
+just pw-build              # tsc -> dist/
+just pw-lint               # prettier --check .
 ```
+
+`pw-install-browsers` is required before any RPC that drives a
+browser (currently `Navigate`). The recipe is idempotent and skips
+when the binary at the resolved Playwright version is already
+present. On Linux it adds `--with-deps`; on macOS that flag is
+omitted (Linux-only).
 
 Or directly:
 
@@ -88,13 +95,38 @@ adapters/playwright/
   [`@connectrpc/connect-node`](https://www.npmjs.com/package/@connectrpc/connect-node);
   see ADR-0008 for the framework selection rationale.
 - Implementations of the unary RPCs in
-  `proto/spectre/driver/v1alpha1/driver.proto`. PR3 implements
-  `Initialize`; remaining RPCs return `Status.UNIMPLEMENTED` and
-  land in subsequent PRs.
+  `proto/spectre/driver/v1alpha1/driver.proto`. PR3 implemented
+  `Initialize`; PR4 added `Navigate`. Remaining RPCs return
+  `Status.UNIMPLEMENTED` and land in subsequent PRs.
 - Capability declarations in `driver.yaml`, added incrementally as
   each capability passes the conformance suite. The declared list
   must match `src/capabilities.ts` exactly — the conformance suite
   asserts this at runtime.
+
+### Navigate semantics
+
+- **Lazy browser launch.** Chromium is launched on the first
+  `Navigate` for a given session, not at `Initialize` time. An
+  adapter on a host without Chromium installed will `Initialize`
+  successfully and surface the missing-browser failure on
+  `Navigate`. See [ADR-0009](../../docs/adr/0009-navigate-and-session-lifecycle.md).
+- **Session reuse.** Each `session_id` is backed by a dedicated
+  `BrowserContext` and a single `Page` reused across navigations.
+  Residual state (cookies, localStorage) persists across
+  `Navigate` calls in the same session by Playwright design.
+- **Strict `session_id`.** A `Navigate` with an unknown id returns
+  `CODE_INVALID_ARGUMENT`. `Initialize` must precede every other
+  RPC.
+- **`WaitCondition` defaults.** An omitted condition maps to
+  `load`. The full mapping is `LOAD → "load"`,
+  `DOM_CONTENT_LOADED → "domcontentloaded"`,
+  `NETWORK_IDLE → "networkidle"`.
+- **Timeout default.** `30_000` ms when `timeout` is omitted.
+- **HTTP status is data, not error.** A 4xx or 5xx response is a
+  successful navigation that landed on an error page; the
+  `NavigateResponse` carries the status without setting
+  `DriverError`. Only network-layer failures and timeouts produce
+  a `DriverError`.
 
 ## Generated code
 

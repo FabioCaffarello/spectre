@@ -9,11 +9,26 @@ import pytest
 import yaml
 
 from spectre_conformance.harness import DriverHarness
+from spectre_conformance.http_fixture import LocalHttpServer
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PLAYWRIGHT_DIR = REPO_ROOT / "adapters" / "playwright"
 PLAYWRIGHT_MANIFEST = PLAYWRIGHT_DIR / "driver.yaml"
 PLAYWRIGHT_DIST = PLAYWRIGHT_DIR / "dist" / "index.js"
+
+
+@pytest.fixture(scope="session")
+def local_http_server() -> Iterator[LocalHttpServer]:
+    """Yield a started local HTTP server with the four conformance routes.
+
+    Session-scoped so all tests in a pytest invocation share a single
+    server. See ``spectre_conformance.http_fixture`` for the routes
+    and ADR-0009 for the rationale (no public-internet calls in
+    conformance tests).
+    """
+
+    with LocalHttpServer() as server:
+        yield server
 
 
 @pytest.fixture
