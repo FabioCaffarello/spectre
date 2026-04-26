@@ -6,10 +6,13 @@ transports:
   - kind: grpc-uds
     command: ["node", "dist/index.js"]
 
-# Capabilities are intentionally empty in the skeleton. As the adapter
-# implements each Driver Protocol RPC and verifies it against the
-# conformance suite, the corresponding capability name is added here.
-capabilities: []
+# Each capability lands once its RPC and the conformance tests for it
+# ship together. The conformance suite asserts byte-for-byte equality
+# between this list and the runtime `Capabilities.names` returned by
+# `Initialize`; keep this file in lockstep with `src/capabilities.ts`.
+capabilities:
+  - navigation
+  - js_execution
 
 runtime:
   node: ">=20"

@@ -29,6 +29,9 @@ A decision moves through three states:
 | 0004  | [Protocol versioning strategy](0004-protocol-versioning-strategy.md)          | accepted |
 | 0005  | [Licensing (Apache 2.0)](0005-licensing.md)                                   | accepted |
 | 0006  | [Build orchestration (Just)](0006-build-orchestration.md)                     | accepted |
+| 0007  | [Protocol code generation](0007-protocol-code-generation.md)                  | accepted |
+| 0008  | [Driver handshake and conformance harness](0008-driver-handshake-and-conformance-harness.md) | accepted |
+| 0009  | [Navigate, session lifecycle, and the driver error mapping](0009-navigate-and-session-lifecycle.md) | accepted |
 
 ## When to write an ADR
 

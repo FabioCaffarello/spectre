@@ -246,6 +246,32 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm build
+      # Conformance tests that exercise `Navigate` need a real
+      # Chromium binary. The cache key is derived from the resolved
+      # Playwright version in the lockfile so a dependency bump
+      # invalidates the cache automatically. See ADR-0009.
+      - if: matrix.package == 'tools/conformance'
+        name: Resolve Playwright version
+        id: pw-version
+        working-directory: ${{ github.workspace }}/adapters/playwright
+        run: |
+          version=$(node -p "require('playwright/package.json').version")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - if: matrix.package == 'tools/conformance'
+        name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+      - if: matrix.package == 'tools/conformance' && steps.pw-cache.outputs.cache-hit != 'true'
+        name: Install Chromium with system deps
+        working-directory: ${{ github.workspace }}/adapters/playwright
+        run: pnpm exec playwright install --with-deps chromium
+      - if: matrix.package == 'tools/conformance' && steps.pw-cache.outputs.cache-hit == 'true'
+        name: Install Chromium system deps (browser already cached)
+        working-directory: ${{ github.workspace }}/adapters/playwright
+        run: pnpm exec playwright install-deps chromium
       - run: uv run pytest
 
   ci-summary:
