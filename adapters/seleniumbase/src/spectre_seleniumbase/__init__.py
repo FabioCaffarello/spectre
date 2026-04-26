@@ -9,4 +9,7 @@ from spectre.driver.v1alpha1 import driver_pb2 as _driver_pb2
 PROTOCOL_VERSION: str = str(_driver_pb2.DESCRIPTOR.package)
 __version__: str = "0.1.0a0"
 
-__all__ = ["PROTOCOL_VERSION", "__version__"]
+__all__ = [
+    "PROTOCOL_VERSION",
+    "__version__",
+]
