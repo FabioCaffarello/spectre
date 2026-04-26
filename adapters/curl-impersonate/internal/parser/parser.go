@@ -60,7 +60,7 @@ func XPathQuery(doc *goquery.Document, expr string) (*goquery.Selection, error) 
 	if root == nil {
 		// An empty document still wraps a synthetic root, so this
 		// branch is defensive rather than expected.
-		return doc.Selection.Slice(0, 0), nil
+		return doc.Slice(0, 0), nil
 	}
 	nodes, err := htmlquery.QueryAll(root, expr)
 	if err != nil {
@@ -71,7 +71,7 @@ func XPathQuery(doc *goquery.Document, expr string) (*goquery.Selection, error) 
 	// the same underlying *html.Document association) and adding
 	// the htmlquery-returned nodes. AddNodes returns a new
 	// Selection without mutating the DOM.
-	return doc.Selection.Slice(0, 0).AddNodes(nodes...), nil
+	return doc.Slice(0, 0).AddNodes(nodes...), nil
 }
 
 // OuterHtml returns the outer HTML of the first node in the
