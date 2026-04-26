@@ -6,23 +6,54 @@ import pytest
 
 from spectre_seleniumbase.capabilities import (
     CAPABILITY_NAMES,
+    EXTRACT_ATTRIBUTE,
     EXTRACT_EVAL,
+    EXTRACT_HTML,
+    EXTRACT_TEXT,
     JS_EXECUTION,
     MODE_EVAL,
     NAVIGATION,
+    QUERY_ATTRIBUTE,
+    QUERY_CSS,
+    QUERY_TEXT,
+    QUERY_XPATH,
+    SCREENSHOT_ELEMENT,
+    SCREENSHOT_FULL_PAGE,
+    SCREENSHOT_VIEWPORT,
     assert_capability_coherence,
     missing_capability_for_mode,
 )
 
 
-def test_pr9_declares_only_navigation() -> None:
-    """ADR-0014 §1: PR9's capability list is ``["navigation"]``.
+def test_pr10_declares_twelve_alphabetical_capabilities() -> None:
+    """ADR-0015 §5: SeleniumBase declares twelve capability names —
+    the eleven content-and-navigation names plus the two screenshot
+    names it can deliver honestly. ``screenshot_full_page`` is
+    deliberately absent."""
 
-    Future PRs will append entries; this assertion guards against an
-    accidental mass-declaration before the corresponding RPCs and
-    conformance tests land.
-    """
-    assert CAPABILITY_NAMES == (NAVIGATION,)
+    assert CAPABILITY_NAMES == (
+        EXTRACT_ATTRIBUTE,
+        EXTRACT_EVAL,
+        EXTRACT_HTML,
+        EXTRACT_TEXT,
+        JS_EXECUTION,
+        NAVIGATION,
+        QUERY_ATTRIBUTE,
+        QUERY_CSS,
+        QUERY_TEXT,
+        QUERY_XPATH,
+        SCREENSHOT_ELEMENT,
+        SCREENSHOT_VIEWPORT,
+    )
+    assert len(CAPABILITY_NAMES) == 12
+
+
+def test_screenshot_full_page_is_omitted_from_declared_list() -> None:
+    """The single most architecturally significant assertion in this
+    suite — ADR-0015 §5. SeleniumBase declares a strict subset of the
+    Playwright adapter's screenshot capabilities."""
+
+    assert SCREENSHOT_FULL_PAGE not in CAPABILITY_NAMES
 
 
 def test_capability_names_is_alphabetical() -> None:
@@ -31,13 +62,12 @@ def test_capability_names_is_alphabetical() -> None:
     assert names == sorted(names)
 
 
-def test_coherence_accepts_navigation_only() -> None:
-    # Single canonical case: PR9's tuple satisfies the invariant.
-    assert_capability_coherence((NAVIGATION,))
+def test_coherence_accepts_pr10_list() -> None:
+    """The PR10 declared tuple must satisfy the coherence invariant."""
+    assert_capability_coherence(CAPABILITY_NAMES)
 
 
 def test_coherence_accepts_eval_with_js_execution() -> None:
-    # Forward-looking: the tuple PR10 will declare must pass.
     assert_capability_coherence(
         (EXTRACT_EVAL, JS_EXECUTION, NAVIGATION),
     )
@@ -61,6 +91,14 @@ def test_mode_eval_gate_misses_when_js_execution_not_declared() -> None:
 
 def test_mode_eval_gate_passes_when_js_execution_declared() -> None:
     assert missing_capability_for_mode(MODE_EVAL, (JS_EXECUTION,)) is None
+
+
+def test_mode_eval_gate_passes_against_pr10_declared_list() -> None:
+    """The runtime gate confirms that the live SeleniumBase list lets
+    MODE_EVAL through; the negative case is covered by
+    ``test_mode_eval_gate_misses_when_js_execution_not_declared``."""
+
+    assert missing_capability_for_mode(MODE_EVAL, CAPABILITY_NAMES) is None
 
 
 def test_non_eval_modes_never_gate() -> None:

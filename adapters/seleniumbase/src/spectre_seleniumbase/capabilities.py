@@ -1,23 +1,30 @@
 """Capabilities declared by the SeleniumBase adapter at handshake time.
 
 Each capability lands once its RPC and the conformance tests for it
-ship together — see ADR-0014 §1. PR9 declares ``navigation`` only.
-PR10 will add ``js_execution`` plus the four ``query_*`` and four
-``extract_*`` names; PR11 will add the three ``screenshot_*`` names.
+ship together — see ADR-0014 §1. PR9 declared ``navigation`` only.
+PR10 adds ``js_execution`` plus the four ``query_*`` names, the
+four ``extract_*`` names, and **two** of the three ``screenshot_*``
+names. ``screenshot_full_page`` is intentionally absent — Selenium
+WebDriver has no reliable, browser-independent full-page capture
+API and the capability progression contract says declared = tested.
+ADR-0015 §5 records the rationale; this is the first time a driver
+declares a strict subset of another driver's capabilities.
+
 The exported value MUST stay in lockstep with ``driver.yaml``'s
 ``capabilities:`` block — the conformance suite asserts byte-for-byte
 equality at runtime, including order.
 
-The capability mechanism splits into two roles (see ADR-0010):
+The capability mechanism splits into two roles (see ADR-0010 §3):
 
 - Descriptive declarations describe what the adapter can do so a
   future engine can plan whether a job will succeed against this
   driver. They do not gate behaviour at runtime.
 - Gating capabilities bind a specific runtime path to a declared
   capability. v1alpha1 has one gating capability: ``js_execution``,
-  which gates ``MODE_EVAL`` extracts. PR9 declares neither
-  ``js_execution`` nor ``extract_eval``, so the gate is a no-op
-  today; the function exists so PR10 can rely on it.
+  which gates ``MODE_EVAL`` extracts. PR10's Extract handler calls
+  ``missing_capability_for_mode`` at the start of each request; an
+  under-declared driver fails the whole request with
+  ``CODE_CAPABILITY_MISSING`` rather than partial-success.
 
 Order: alphabetical by capability name. The conformance suite
 asserts list-equality (not set-equality) between this constant
@@ -28,30 +35,45 @@ from __future__ import annotations
 
 # --- Capability constants -------------------------------------------------
 
-# PR10 will introduce these:
 EXTRACT_ATTRIBUTE = "extract_attribute"
 EXTRACT_EVAL = "extract_eval"
 EXTRACT_HTML = "extract_html"
 EXTRACT_TEXT = "extract_text"
 JS_EXECUTION = "js_execution"
+NAVIGATION = "navigation"
 QUERY_ATTRIBUTE = "query_attribute"
 QUERY_CSS = "query_css"
 QUERY_TEXT = "query_text"
 QUERY_XPATH = "query_xpath"
-
-# PR9 declares this one only:
-NAVIGATION = "navigation"
-
-# PR11 will introduce these:
 SCREENSHOT_ELEMENT = "screenshot_element"
+# ``screenshot_full_page`` exists as a constant for cross-reference
+# in the Screenshot handler (which rejects FULL_PAGE requests with a
+# message naming this string), but is **not** added to
+# ``CAPABILITY_NAMES``. ADR-0015 §5 records the omission.
 SCREENSHOT_FULL_PAGE = "screenshot_full_page"
 SCREENSHOT_VIEWPORT = "screenshot_viewport"
 
-CAPABILITY_NAMES: tuple[str, ...] = (NAVIGATION,)
+CAPABILITY_NAMES: tuple[str, ...] = (
+    EXTRACT_ATTRIBUTE,
+    EXTRACT_EVAL,
+    EXTRACT_HTML,
+    EXTRACT_TEXT,
+    JS_EXECUTION,
+    NAVIGATION,
+    QUERY_ATTRIBUTE,
+    QUERY_CSS,
+    QUERY_TEXT,
+    QUERY_XPATH,
+    SCREENSHOT_ELEMENT,
+    SCREENSHOT_VIEWPORT,
+)
 """The declared capability list. ``driver.yaml`` mirrors this exactly.
 
-PR9 declares ``navigation`` only (ADR-0014 §1); future PRs append
-the names whose RPCs and conformance tests land in the same PR.
+Twelve entries in alphabetical order, matching the Playwright
+adapter's eleven content-and-navigation capabilities plus
+``js_execution`` and the two screenshot capabilities the
+SeleniumBase implementation can deliver honestly. The thirteenth
+Playwright name (``screenshot_full_page``) is omitted; ADR-0015 §5.
 """
 
 DRIVER_VERSION = "0.1.0a0"
