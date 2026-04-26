@@ -21,10 +21,22 @@ PR9 begins that demonstration with SeleniumBase, a Python adapter
 built on Selenium WebDriver. The scope mirrors PR3 + PR4
 (`Initialize` + `Navigate`) so the reasoning that landed for
 Playwright in those PRs gets re-examined against a different
-runtime. PR10 will extend coverage to `Close` + `Query` +
-`Extract`; PR11 will add `Screenshot`. This staged rollout matches
-the Playwright trajectory and avoids piling twenty new conformance
-tests into a single PR.
+runtime. PR10 will extend coverage to `Query` + `Extract` (and the
+richer `Close` conformance tests); PR11 will add `Screenshot`. This
+staged rollout matches the Playwright trajectory and avoids piling
+twenty new conformance tests into a single PR.
+
+`Close` itself is implemented in PR9 alongside `Initialize` and
+`Navigate`. The reason is mechanical rather than scope-creep: the
+engine's executor always issues `Close` at the end of a plan
+(ADR-0012), so the PR9 navigate-only example cannot complete via
+`spectre run` without it. `Close` carries no capability declaration
+in v1alpha1 — it is a baseline session-lifecycle RPC like
+`Initialize` — so wiring it does not violate the "declared =
+tested" rule below. The conformance suite still defers `Close`
+tests to PR10 because the interesting cases (closing an unknown
+id, closing twice) belong with the broader element-lifecycle
+suite that lands then.
 
 The schema decisions are settled (ADR-0001, ADR-0003, ADR-0004),
 the codegen is settled (ADR-0007), the handshake is settled

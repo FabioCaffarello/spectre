@@ -240,8 +240,31 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
         request: driver_pb2.CloseRequest,
         context: grpc.ServicerContext,
     ) -> driver_pb2.CloseResponse:
-        del request
-        context.abort(grpc.StatusCode.UNIMPLEMENTED, UNIMPLEMENTED_DETAIL)
+        # Close is implemented in PR9 even though Query/Extract/Screenshot
+        # stay UNIMPLEMENTED. Reason: the spectre engine's executor always
+        # calls Close at the end of a plan, so a navigate-only job (the
+        # PR9 example at examples/seleniumbase-navigate/) cannot complete
+        # without it. Close has no protocol-level capability gate (it is
+        # a baseline session-lifecycle RPC like Initialize), so wiring
+        # it does not violate the "declared = tested" rule of ADR-0014 §1.
+        # The richer Close conformance tests (closing an unknown id,
+        # closing twice) land in PR10 alongside Query/Extract.
+        del context
+        if not request.session_id:
+            return driver_pb2.CloseResponse(
+                error=errors_pb2.DriverError(
+                    code=errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
+                    message="session_id is required",
+                ),
+            )
+        closed = self._sessions.close_session(request.session_id)
+        if not closed:
+            return driver_pb2.CloseResponse(
+                error=errors_pb2.DriverError(
+                    code=errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
+                    message=f"unknown session_id {request.session_id!r}",
+                ),
+            )
         return driver_pb2.CloseResponse()
 
 
