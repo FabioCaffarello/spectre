@@ -2,11 +2,11 @@
 
 Spectre's reference Playwright driver adapter.
 
-> **Status:** v0.1.0-alpha.0 — implements `Initialize` and
-> `Navigate` over gRPC on a Unix domain socket. The remaining four
-> RPCs (`Query`, `Extract`, `Screenshot`, `Close`) respond with
-> `Status.UNIMPLEMENTED`. They land incrementally in Phase 1 of the
-> [roadmap](../../docs/roadmap.md).
+> **Status:** v0.1.0-alpha.0 — implements `Initialize`,
+> `Navigate`, `Close`, `Query`, and `Extract` over gRPC on a Unix
+> domain socket. `Screenshot` is the only remaining unary RPC and
+> still responds with `Status.UNIMPLEMENTED`; it lands in a focused
+> follow-up. See the [roadmap](../../docs/roadmap.md).
 
 ## Build
 
@@ -96,12 +96,45 @@ adapters/playwright/
   see ADR-0008 for the framework selection rationale.
 - Implementations of the unary RPCs in
   `proto/spectre/driver/v1alpha1/driver.proto`. PR3 implemented
-  `Initialize`; PR4 added `Navigate`. Remaining RPCs return
-  `Status.UNIMPLEMENTED` and land in subsequent PRs.
+  `Initialize`; PR4 added `Navigate`; PR5 added `Close`, `Query`,
+  and `Extract`. `Screenshot` still returns
+  `Status.UNIMPLEMENTED` and lands in a focused follow-up.
 - Capability declarations in `driver.yaml`, added incrementally as
   each capability passes the conformance suite. The declared list
   must match `src/capabilities.ts` exactly — the conformance suite
   asserts this at runtime.
+
+### Element lifecycle
+
+- **Strict invalidation.** Every successful `Navigate` bumps the
+  session's generation counter, invalidating every `ElementRef`
+  the session received from a previous `Query`. An `Extract`
+  against a stale ref returns `CODE_INVALID_ARGUMENT` with the
+  message `"element reference is stale; query was performed
+  before a navigation"`. Re-issue `Query` after each `Navigate`.
+  See [ADR-0010](../../docs/adr/0010-element-lifecycle-and-capability-gating.md).
+- **`Close` tears down one session.** The per-session
+  `BrowserContext` and `Page` are closed; the shared `Browser`
+  keeps running so other sessions are unaffected. Closing an
+  unknown id returns `CODE_INVALID_ARGUMENT`.
+- **Capability coherence.** The startup invariant
+  `assertCapabilityCoherence` rejects a declared list with
+  `extract_eval` but not `js_execution`. The Playwright adapter's
+  list satisfies the rule by construction; the assertion exists
+  so a future maintainer who removes a capability sees the
+  contradiction at module load.
+- **`MODE_EVAL` and untrusted JS.** `MODE_EVAL` runs arbitrary
+  JS in the page context. Operators who run this adapter accept
+  that exposure. The capability gate is the protocol-level
+  safeguard; a future hardened-execution capability could
+  narrow it.
+- **JSON-encoded extracted values.** `ExtractedValues.Entry.json_value`
+  carries a JSON-encoded string. `MODE_TEXT_CONTENT` returning
+  `hello` arrives on the wire as `"\"hello\""` (literally the
+  five characters `"`, `h`, `e`, `l`, `l`, `o`, `"` after
+  decoding). Clients call `json.loads` (or equivalent) to
+  unwrap. v1alpha2 may add a typed `oneof` to skip the wrap for
+  common cases.
 
 ### Navigate semantics
 

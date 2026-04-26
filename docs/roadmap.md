@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-25.
+> **Last updated:** 2026-04-26.
 
 ## Phase 0 — Foundation (current)
 
@@ -35,22 +35,27 @@ Goal: end-to-end execution of a trivial job through the protocol.
 
 - [ ] Engine parses the minimal DSL (one navigation + one extract).
 - [ ] Engine speaks gRPC over UDS to a single driver.
-- [ ] Playwright reference adapter implements `Initialize`, `Navigate`,
+- [x] Playwright reference adapter implements `Initialize`, `Navigate`,
       `Query`, `Extract`, `Close` for the smoke-test job.
   - [x] `Initialize` — gRPC over UDS, with `Capabilities` declared
         at handshake. ADR-0008.
   - [x] `Navigate` — lazy Chromium launch, per-session
         `BrowserContext`, error-mapping table from
         `Playwright → DriverError.Code`. ADR-0009.
-  - [ ] `Query`, `Extract`, `Close` — incremental.
+  - [x] `Close`, `Query`, `Extract` — strict ElementRef
+        invalidation on Navigate, per-session UUID registry,
+        runtime gating of `MODE_EVAL` on `js_execution`. ADR-0010.
+  - [ ] `Screenshot` — deferred to a focused follow-up; image
+        format / scope / encoding decisions sit on top of the
+        rest of the surface.
 - [ ] `spectre run hello-hackernews/job.yaml` produces a JSONL file
       with the expected rows.
-- [x] Conformance suite runs against the Playwright adapter for the
-      `Initialize` handshake, exercises `Navigate` against an
-      in-process HTTP fixture (happy path, redirect, error-status,
-      timeout), and asserts unimplemented RPCs respond with
-      `UNIMPLEMENTED`. Capability and per-RPC tests for the
-      remaining RPCs follow.
+- [x] Conformance suite covers every implemented unary RPC against
+      the Playwright adapter (`Initialize`, `Navigate × 5`,
+      `Close × 3`, `Query × 5`, `Extract × 5`) plus a negative
+      test that cements `Screenshot` as `UNIMPLEMENTED`. The
+      Driver Protocol byte-for-byte capability assertion holds
+      against the eleven declared capability names.
 
 Exit criterion: a new contributor can `git clone && just bootstrap &&
 spectre run examples/hello-hackernews/job.yaml` and see results.
