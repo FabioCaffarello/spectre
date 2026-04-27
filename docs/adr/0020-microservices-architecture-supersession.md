@@ -47,3 +47,52 @@ the refactor, and the supersession status of the prior ADRs that
 cement the patterns being retired. The project has no production
 deployment to migrate; the refactor proceeds without backward-
 compatibility shims.
+
+## Decision Drivers
+
+Four architectural drivers shape the refactor. Each is a
+constraint the maintainer locked before any refactor PR opens, so
+they bound the design space rather than becoming candidates for
+revision during execution.
+
+- **Microservices over subprocess-in-pod.** Spectre's positioning
+  as a microservices framework requires microservices
+  architecture. The subprocess-in-pod execution model (ADR-0019
+  §3) was a pragmatic choice that minimised PR14's surface area,
+  but it is not coherent with the project's stated identity. The
+  refactor turns the engine, the control plane, and each
+  reference adapter into independent services with their own
+  Dockerfiles, container images, and process lifecycles.
+- **TCP/gRPC over UDS.** Networked services require networked
+  transport. The Unix-domain-socket transport selected in
+  ADR-0008 served the project well as the lowest-friction option
+  for local single-host development, but it is structurally
+  incompatible with the service-per-component topology the
+  refactor commits to. All adapter-engine and control-plane-
+  engine traffic moves to gRPC over TCP, with explicit service
+  discovery in place of subprocess spawning.
+- **Stateful services included.** Job state, output streaming,
+  and adapter session caching are externalised. PostgreSQL holds
+  control-plane job state. Kafka carries output rows from engine
+  to downstream sinks. Redis caches adapter session metadata
+  across Pod restarts. Without these, the system remains an
+  isolated demonstrator that cannot recover from any service's
+  restart without losing in-flight work; with them, the system
+  becomes a real distributed application.
+- **Compose-only development.** Local development mirrors the
+  production topology. `docker compose up` brings up the full
+  six-service stack and is the supported path. There is no
+  native fallback that runs the engine standalone, no
+  adapter-as-subprocess developer mode, no Devcontainer-without-
+  Docker variant. The Devcontainer ships with Docker-in-Docker
+  enabled. The contribution barrier rises slightly; the
+  architectural coherence of "what runs in development equals
+  what runs in production" is the offsetting benefit.
+
+These four drivers concretise into commitments later ADRs will
+implement. ADR-0021 settles service discovery; ADR-0022 settles
+TCP transport details; ADR-0023 settles stateful service
+architecture; ADR-0024 settles output sinks; ADR-0025 settles
+the Compose layout; ADR-0026 settles the Helm chart structure.
+This ADR commits to the architectural direction; subsequent ADRs
+fill in the specifics.
