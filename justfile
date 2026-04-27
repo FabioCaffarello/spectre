@@ -153,9 +153,15 @@ cp-fmt:
 # Use vanilla golangci-lint rather than the kubebuilder Makefile's
 # custom-gcl path: we have no plugins to add, and the custom build
 # step is fragile on paths containing spaces.
+#
+# GOTOOLCHAIN is pinned to match go.mod so go's auto-toolchain
+# resolution does not bump to a newer Go than golangci-lint v2.8.0
+# (built with Go 1.25) can parse. Contributors with Go 1.26+ on
+# their host hit this; CI's setup-go installs the pinned version
+# directly.
 cp-lint:
-    cd core/control-plane && go vet ./...
-    cd core/control-plane && golangci-lint run
+    cd core/control-plane && GOTOOLCHAIN=go1.25.3 go vet ./...
+    cd core/control-plane && GOTOOLCHAIN=go1.25.3 golangci-lint run
 
 # Defer to the kubebuilder Makefile so envtest binaries are downloaded
 # and KUBEBUILDER_ASSETS is set automatically.
