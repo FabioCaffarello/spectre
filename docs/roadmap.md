@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-27 (Phase 3 in progress; PR17 bundles the SeleniumBase adapter alongside Playwright in the operator image — both kind smokes green).
+> **Last updated:** 2026-04-27 (Phase 3 in progress; PR18 closes v1alpha1 adapter bundling — the operator image now ships engine + Playwright + SeleniumBase + curl-impersonate, all three kind smokes green).
 
 ## Phase 0 — Foundation (current)
 
@@ -243,10 +243,25 @@ and the v1alpha2 escape hatches.
       sequentially (hello-hackernews → seleniumbase-extract);
       both reach Completed. curl-impersonate replicates the
       same pattern in PR18. (PR17.)
-- [ ] Operator image bundles the curl-impersonate adapter. Adds
-      a `curl-impersonate-builder` stage; the runtime needs the
-      impersonate variant binary (`curl_chrome116`) on PATH.
-      (PR18.)
+- [x] Operator image bundles the curl-impersonate adapter. PR18
+      added a `curl-impersonate-builder` stage (Go,
+      `CGO_ENABLED=0`) that regenerates the protocol bindings and
+      produces a single static `bin/adapter`. The runtime stage
+      downloads the upstream release tarball at the version + SHA-256
+      pinned in
+      [`adapters/curl-impersonate/.curl-impersonate-version`](../adapters/curl-impersonate/.curl-impersonate-version)
+      and extracts the variant binaries (`curl_chrome116` and
+      friends) onto `/usr/local/bin/`. ADR-0016 §1's
+      subprocess-over-cgo contract held byte-for-byte: the adapter
+      `os/exec`s `curl_chrome116` per Navigate, no link against
+      `libcurl-impersonate.so`. No Pod-spec change (no browser to
+      sandbox). The §3 invariant (subprocess-in-pod) and the §5
+      invariant (reconciler / `JobRunner` / runner tests / envtest
+      unchanged) both held; zero Go changes for the third PR running.
+      The kind smoke now runs all three samples sequentially
+      (hello-hackernews → seleniumbase-extract →
+      curl-impersonate-extract); all three reach Completed. PR18
+      closes v1alpha1 adapter bundling. (PR18.)
 - [ ] `ScrapeFleet` CRD (fan-out wrapper that creates N
       `ScrapeJob` instances with parameter substitution) and
       `ScrapeSchedule` CRD (cron-like recurring `ScrapeJob`

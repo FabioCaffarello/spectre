@@ -163,20 +163,25 @@ just op-smoke-kind     # full in-cluster end-to-end smoke (linux/amd64
 
 The operator image bundles the spectre engine binary at
 `/usr/local/bin/spectre` (PR15 §4.3), the Playwright adapter at
-`/opt/spectre/adapters/playwright/` (PR16), and the SeleniumBase
-adapter at `/opt/spectre/adapters/seleniumbase/` (PR17). The
-runtime base is the official Microsoft Playwright image pinned by
-digest in
+`/opt/spectre/adapters/playwright/` (PR16), the SeleniumBase
+adapter at `/opt/spectre/adapters/seleniumbase/` (PR17), and the
+curl-impersonate adapter at
+`/opt/spectre/adapters/curl-impersonate/` (PR18). The runtime
+base is the official Microsoft Playwright image pinned by digest
+in
 [`adapters/playwright/.playwright-base-image`](adapters/playwright/.playwright-base-image);
 the first build needs network access to `mcr.microsoft.com`. The
-`playwright-builder` stage and the `seleniumbase-builder` stage
-both fetch the `buf` CLI from GitHub releases to regenerate the
-TypeScript and Python protocol bindings inside the build context;
-the SeleniumBase stage additionally fetches `uv` from `astral.sh`,
-and the runtime stage fetches `google-chrome-stable` from
-`dl.google.com` and Python wheels for SeleniumBase from `pypi.org`.
-curl-impersonate (PR18) replicates this pattern in its own builder
-stage.
+`playwright-builder`, `seleniumbase-builder`, and
+`curl-impersonate-builder` stages each fetch the `buf` CLI from
+GitHub releases to regenerate their language's protocol bindings
+inside the build context; the SeleniumBase stage additionally
+fetches `uv` from `astral.sh`. The runtime stage fetches
+`google-chrome-stable` from `dl.google.com`, Python wheels for
+SeleniumBase from `pypi.org`, and the curl-impersonate release
+tarball from `github.com/lwthiker/curl-impersonate/releases` —
+the latter pinned by version + SHA-256 in
+[`adapters/curl-impersonate/.curl-impersonate-version`](adapters/curl-impersonate/.curl-impersonate-version)
+so a bump touches one file.
 
 For local-cluster smoke testing (kind / minikube / Docker Desktop):
 

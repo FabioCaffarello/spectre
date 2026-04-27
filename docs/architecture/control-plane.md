@@ -21,12 +21,12 @@ execution lands in PR15.
 | Operator image bundles engine      | shipped           | PR15  |
 | Operator image bundles Playwright  | shipped           | PR16  |
 | Operator image bundles SeleniumBase | shipped           | PR17  |
-| Operator image bundles curl-impersonate | not started   | PR18  |
+| Operator image bundles curl-impersonate | shipped       | PR18  |
 | `ScrapeFleet` CRD                  | not started       | PR19+ |
 | `ScrapeSchedule` CRD               | not started       | PR19+ |
 | Helm chart                         | not started       | PR19+ |
-| Webhook validators                 | not started       | PR18+ |
-| Observability (metrics/traces)     | not started       | PR18+ |
+| Webhook validators                 | not started       | PR19+ |
+| Observability (metrics/traces)     | not started       | PR19+ |
 
 PR14 shipped the reconciler with a sleep-based stub; PR15 wired
 `SubprocessRunner`, which shells out to the spectre engine binary
@@ -56,8 +56,22 @@ Python protocol bindings and stages them at
 `/opt/spectre/proto/gen/python/` (so the adapter's
 `[tool.uv.sources]` editable resolves at runtime), and the runtime
 stage extends the Microsoft base with apt-installed Python 3.12,
-`google-chrome-stable`, and a matching ChromeDriver. Both adapters
-land under `/opt/spectre/adapters/`:
+`google-chrome-stable`, and a matching ChromeDriver.
+
+PR18 closes v1alpha1 adapter bundling with the curl-impersonate
+adapter. A new `curl-impersonate-builder` stage (Go,
+`CGO_ENABLED=0`) regenerates the protocol bindings via `buf
+generate` + `tools/codegen/post-generate.sh` and produces a single
+static `bin/adapter`. The runtime stage downloads the upstream
+`curl-impersonate-v${VERSION}.x86_64-linux-gnu.tar.gz` release
+tarball, verifies the SHA-256, and extracts the variant binaries
+onto `/usr/local/bin/`; the version + SHA-256 are pinned in
+[`adapters/curl-impersonate/.curl-impersonate-version`](../../adapters/curl-impersonate/.curl-impersonate-version)
+so a bump touches one file. ADR-0016 §1's subprocess-over-cgo
+contract held byte-for-byte: the adapter shells out to
+`curl_chrome116` per Navigate via `os/exec`, no link against
+`libcurl-impersonate.so`. All three adapters now land under
+`/opt/spectre/adapters/`:
 
 ```
 /opt/spectre/
@@ -67,30 +81,34 @@ land under `/opt/spectre/adapters/`:
 │   │   ├── node_modules/     # production deps (playwright, @bufbuild/protobuf, …)
 │   │   ├── driver.yaml       # transports[0].command = ["node", "dist/index.js"]
 │   │   └── package.json
-│   └── seleniumbase/
-│       ├── .venv/            # uv-built virtualenv; shebangs pin /opt/spectre/...
-│       ├── src/              # spectre_seleniumbase package
-│       ├── driver.yaml       # transports[0].command = [".venv/bin/python", "-m", ...]
-│       ├── pyproject.toml
-│       └── uv.lock
+│   ├── seleniumbase/
+│   │   ├── .venv/            # uv-built virtualenv; shebangs pin /opt/spectre/...
+│   │   ├── src/              # spectre_seleniumbase package
+│   │   ├── driver.yaml       # transports[0].command = [".venv/bin/python", "-m", ...]
+│   │   ├── pyproject.toml
+│   │   └── uv.lock
+│   └── curl-impersonate/
+│       ├── bin/adapter       # static Go binary; no venv, no node_modules
+│       └── driver.yaml       # transports[0].command = ["./bin/adapter"]
 └── proto/gen/python/
     └── spectre/driver/v1alpha1/   # editable source for spectre-driver-protocol
 ```
 
-Chrome and Chromium coexist cleanly: Playwright launches Chromium
-via `PLAYWRIGHT_BROWSERS_PATH`; SeleniumBase launches
-`/usr/bin/google-chrome` via ChromeDriver. At any moment at most
-one runs (`MaxConcurrentReconciles=1` plus the DSL `driver:` field
-selects exactly one of `playwright` or `seleniumbase`).
+Chrome, Chromium, and `curl_chrome116` coexist cleanly: Playwright
+launches Chromium via `PLAYWRIGHT_BROWSERS_PATH`; SeleniumBase
+launches `/usr/bin/google-chrome` via ChromeDriver;
+curl-impersonate's adapter `os/exec`s `curl_chrome116` per
+Navigate. At any moment at most one runs
+(`MaxConcurrentReconciles=1` plus the DSL `driver:` field selects
+exactly one of `playwright`, `seleniumbase`, or
+`curl-impersonate`).
 
-The on-disk image weighs ~1.9 GB (Microsoft base ~1.0 GB plus
-~80 MiB of Chrome runtime libs and ~250 MiB of the SeleniumBase
-venv; pulls are ~1.0 GB compressed once the Microsoft base layer
-is cached). The manager's `--adapters-path` flag defaults to
+The on-disk image weighs ~1.95 GB (Microsoft base ~1.0 GB plus
+~80 MiB of Chrome runtime libs, ~250 MiB of the SeleniumBase
+venv, and ~50 MiB of curl-impersonate variant binaries + the Go
+adapter). The manager's `--adapters-path` flag defaults to
 `/opt/spectre/adapters`; local development with `just op-run`
 overrides this to the workspace `adapters/` directory.
-curl-impersonate (PR18) replicates this builder-stage pattern in
-its own stage.
 
 ## The ScrapeJob CRD
 
@@ -156,7 +174,7 @@ runs the reconciler suite (5 transition tests + 1 runner test), and
 prints coverage. First run takes ~2 minutes (binary downloads);
 cached runs complete in under 30 seconds.
 
-### In-cluster smoke (PR16 + PR17: bundled image, kind)
+### In-cluster smoke (PR18: bundled image, kind)
 
 ```bash
 # 1. Build the engine and operator images. just op-build-image
@@ -164,21 +182,22 @@ cached runs complete in under 30 seconds.
 just op-build-image
 
 # 2. Bring up a kind cluster, load both images, install the CRD,
-#    deploy the operator, then apply BOTH bundled samples
-#    sequentially (hello-hackernews → seleniumbase-extract). The
-#    script polls each for Completed and asserts rowsExtracted >= 1
-#    per sample. It exits non-zero on any failure with diagnostic
-#    context.
+#    deploy the operator, then apply ALL THREE bundled samples
+#    sequentially (hello-hackernews → seleniumbase-extract →
+#    curl-impersonate-extract). The script polls each for
+#    Completed and asserts rowsExtracted >= 1 per sample. It exits
+#    non-zero on any failure with diagnostic context.
 just op-smoke-kind
 # Equivalent to: bash core/control-plane/hack/smoke-kind.sh
 ```
 
-Expected output (PR17: both bundled adapters):
+Expected output (PR18: all three bundled adapters):
 
 ```
-NAME                    PHASE       ROWS   AGE
-hello-hackernews        Completed   30     14s
-seleniumbase-extract    Completed   2      11s
+NAME                        PHASE       ROWS   AGE
+hello-hackernews            Completed   30     14s
+seleniumbase-extract        Completed   2      11s
+curl-impersonate-extract    Completed   2      6s
 ```
 
 `RowsExtracted` reflects the JSONL row count the engine emitted on
@@ -187,7 +206,7 @@ produces 2 anchors — "More information…" and IANA contact). The
 rows themselves stream from the engine subprocess into the
 operator container's stdout and surface via
 `kubectl logs <operator-pod>` per ADR-0019 §6. Sequential
-execution matches `MaxConcurrentReconciles=1`; running both
+execution matches `MaxConcurrentReconciles=1`; running the
 ScrapeJobs concurrently would contend for the single Pod. The
 kind smoke is linux/amd64 only — Apple Silicon hosts cannot run
 kubeadm reliably under Rosetta amd64 emulation, so local kind
@@ -261,14 +280,9 @@ Six axes:
 
 These deferrals are intentional and have PR pointers:
 
-- **curl-impersonate bundling.** PR16 + PR17 ship the Playwright
-  and SeleniumBase adapters in the operator image; curl-impersonate
-  is the last reference adapter still outside the bundle. It needs
-  the native `curl_chrome116` variant on PATH and replicates the
-  same builder-stage pattern in its own Dockerfile stage (PR18).
 - **Output sinks beyond stdout.** `s3://`, `pvc://`, `webhook://`,
   `kafka://` are valid `OutputSink` strings at the schema level but
-  the reconciler rejects them with an explicit error. PR16+ adds
+  the reconciler rejects them with an explicit error. PR19+ adds
   per-sink support.
 - **Per-job resource isolation.** `Spec.Resources` is recorded but
   not enforced; v1alpha1's single-Pod execution model cannot impose
@@ -278,10 +292,10 @@ These deferrals are intentional and have PR pointers:
   this once real execution lands.
 - **Fan-out and scheduling.** `ScrapeFleet` (parallel jobs over a
   parameter list) and `ScrapeSchedule` (cron-like recurrence) are
-  PR16+ work. Both build on `ScrapeJob` semantics.
-- **Helm chart.** `helm/spectre-control-plane/` is PR17+.
+  PR19+ work. Both build on `ScrapeJob` semantics.
+- **Helm chart.** `helm/spectre-control-plane/` is PR19+.
 - **Webhook validators.** Beyond `+kubebuilder:validation` markers
-  on the CRD, validating/mutating webhooks are PR18+.
+  on the CRD, validating/mutating webhooks are PR19+.
 - **Observability.** Prometheus metrics, OpenTelemetry traces, and
   structured logs beyond controller-runtime's defaults are
   Phase 3 follow-up.
@@ -296,14 +310,13 @@ These deferrals are intentional and have PR pointers:
   [`internal/controller/scrapejob_controller.go`](../../core/control-plane/internal/controller/scrapejob_controller.go).**
   It is a ~130-line `switch` over phases; the `runner.JobRunner`
   call site at the Running case is what PR15 wired to a real engine.
-- **For PR18 (curl-impersonate bundling):** the Go adapter compiles
-  to a single binary (no browser), but it links the native
-  libcurl-impersonate. The runtime needs the impersonate variant
-  (`curl_chrome116`) on PATH — either via the published release
-  tarball (the CI `python` job already documents the pinning) or
-  via apt where available. PR16's `playwright-builder` and PR17's
-  `seleniumbase-builder` are the two builder-stage patterns to
-  replicate; the §3 / §5 invariants from ADR-0019 still hold and
-  no Go change is expected. curl-impersonate has no browser to
-  sandbox, so the `SPECTRE_SELENIUMBASE_CONTAINER`-style env-var
-  knob is not needed.
+- **For PR19+ (ScrapeFleet, ScrapeSchedule, Helm chart):** with
+  v1alpha1 adapter bundling closed in PR18, the next concrete
+  Phase 3 tasks live above the per-Pod execution model.
+  `ScrapeFleet` (fan-out over a parameter list) and
+  `ScrapeSchedule` (cron-like recurrence) build on the existing
+  `ScrapeJob` semantics — see ADR-0019 §2 for the v1alpha2 escape
+  hatches that survived PR18. The Helm chart at
+  `helm/spectre-control-plane/` packages the operator image
+  bundled today (~1.95 GB on disk) plus the CRD and RBAC under
+  one `helm install`.
