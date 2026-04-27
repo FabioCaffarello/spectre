@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-26 (Phase 2 closed; PR13 opens Phase 2.5).
+> **Last updated:** 2026-04-26 (Phase 2.5 in progress; PR14 opens Phase 3).
 
 ## Phase 0 — Foundation (current)
 
@@ -191,19 +191,42 @@ Exit criterion: a contributor can `docker compose up` a working
 engine + Playwright (or SeleniumBase) stack, and CI publishes
 adapter images keyed on tagged releases.
 
-## Phase 3 — Distributed execution
+## Phase 3 — Distributed execution (kickoff: PR14)
 
-Goal: the control plane.
+Goal: the control plane. PR14 ships the foundation — kubebuilder v4
+scaffold, the `ScrapeJob` CRD, and a state-machine reconciler whose
+execution path is a stub. Subsequent PRs replace the stub with real
+engine invocation, add fan-out and scheduling CRDs, and package the
+operator for distribution. ADR-0019 records the per-axis decisions
+and the v1alpha2 escape hatches.
 
-- [ ] Control-plane API (job submission, status, logs).
-- [ ] Kubernetes operator (CRDs for jobs, drivers, fleets).
-- [ ] Worker pool with retry / quota / priority.
-- [ ] Helm chart in `helm/spectre/`.
-- [ ] Observability: structured logs, OpenTelemetry traces, metrics.
+- [x] kubebuilder v4 scaffold + `ScrapeJob` CRD (v1alpha1) +
+      state-machine reconciler. `JobRunner` interface + `StubRunner`
+      implementation. envtest suite covering five phase
+      transitions. Three sample CRs, one per reference adapter.
+      ADR-0019 §1–§6. (PR14.)
+- [ ] Real job execution via `SubprocessRunner` — shells out to the
+      spectre engine binary, captures JSONL, reports
+      `RowsExtracted`. The seam is documented in ADR-0019 §5; PR15
+      drops in the implementation without touching the reconciler.
+      (PR15.)
+- [ ] `ScrapeFleet` CRD (fan-out wrapper that creates N
+      `ScrapeJob` instances with parameter substitution) and
+      `ScrapeSchedule` CRD (cron-like recurring `ScrapeJob`
+      creator). Both build on `ScrapeJob` semantics. (PR16+.)
+- [ ] Helm chart at `helm/spectre-control-plane/` for cluster-side
+      installation. (PR17+.)
+- [ ] Validating and mutating webhooks beyond
+      `+kubebuilder:validation` markers. (PR18+.)
+- [ ] Observability: Prometheus metrics, OpenTelemetry traces,
+      structured logs beyond controller-runtime defaults. (Phase 3
+      follow-up.)
 
-Exit criterion: a job submitted to the control plane runs across N
-workers, with bounded retries, quota enforcement, and observable
-state.
+Exit criterion: a job submitted to the control plane runs against
+the engine, with bounded retries, quota enforcement, and observable
+state. The PR14 kickoff tightens this scope to "the operator
+recognises and reacts to ScrapeJob CRs"; the full criterion is met
+once `SubprocessRunner` (PR15) and observability are in place.
 
 ## Phase 4 — Intelligence layer
 

@@ -1,0 +1,7 @@
+## Sample ScrapeJob CRs, one per reference adapter.
+## Apply individually: kubectl apply -f spectre_v1alpha1_scrapejob_hello-hackernews.yaml
+resources:
+- spectre_v1alpha1_scrapejob_hello-hackernews.yaml
+- spectre_v1alpha1_scrapejob_seleniumbase.yaml
+- spectre_v1alpha1_scrapejob_curl-impersonate.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

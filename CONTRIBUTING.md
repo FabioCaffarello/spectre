@@ -97,9 +97,11 @@ within one week.
 | Tool                          | Used for                                                  |
 |-------------------------------|-----------------------------------------------------------|
 | Rust (stable)                 | `core/engine`                                             |
-| Go (1.22+)                    | `core/control-plane`, `adapters/curl-impersonate`         |
+| Go (1.24+ for adapters; 1.25+ for `core/control-plane`) | `core/control-plane`, `adapters/curl-impersonate` |
 | `goimports`                   | Pre-commit Go imports hook                                |
 | `golangci-lint`               | Go lint aggregator (used by `just cp-lint`)               |
+| `kubectl` (optional)          | Apply ScrapeJob CRs against a local cluster               |
+| `kind` or `minikube` (optional) | Local Kubernetes cluster for operator smoke tests       |
 | Node.js (20+) and `pnpm` (9+) | `adapters/playwright`                                     |
 | Python (3.10+) and `uv`       | `adapters/seleniumbase`, `tools/conformance`              |
 | `buf`                         | Protobuf lint, format, breaking-change detection          |
@@ -139,6 +141,35 @@ just check                    # runs lint and tests across all components
 
 Each component directory has its own README with build and test
 instructions specific to that language.
+
+### Operator development (`core/control-plane`)
+
+The control plane is a kubebuilder v4 operator. Its tests run against
+a real apiserver and etcd via the controller-runtime `envtest`
+package — no external Kubernetes cluster is required for unit tests.
+
+```bash
+just op-test           # envtest reconciler suite (downloads apiserver
+                       # binaries on first run; ~2 minutes)
+just op-build          # build bin/manager
+```
+
+For local-cluster smoke testing (kind / minikube / Docker Desktop):
+
+```bash
+just op-install-crds   # apply the ScrapeJob CRD to the current
+                       # kubectl context
+just op-run            # run the operator in the foreground
+# Apply a sample CR in another terminal:
+kubectl apply -f core/control-plane/config/samples/spectre_v1alpha1_scrapejob_hello-hackernews.yaml
+kubectl get scrapejob -w
+just op-uninstall-crds # tear down
+```
+
+PR14 ships a state-machine reconciler whose execution path is a
+sleep-based stub; PR15 wires real engine invocation. See
+[docs/architecture/control-plane.md](docs/architecture/control-plane.md)
+and [ADR-0019](docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md).
 
 ---
 

@@ -23,6 +23,7 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
       typescript: ${{ steps.filter.outputs.typescript }}
       python: ${{ steps.filter.outputs.python }}
+      operator: ${{ steps.filter.outputs.operator }}
       engine_image: ${{ steps.filter.outputs.engine_image }}
     steps:
       - uses: actions/checkout@v6
@@ -37,8 +38,18 @@ jobs:
               - 'core/engine/**'
               - '.github/workflows/ci.yml'
             go:
-              - 'core/control-plane/**'
+              # PR14: core/control-plane moved to its own `operator`
+              # job because the kubebuilder Makefile owns lint/test
+              # via envtest. Only adapters/curl-impersonate remains in
+              # this matrix.
               - 'adapters/curl-impersonate/**'
+              - '.github/workflows/ci.yml'
+            operator:
+              # PR14: core/control-plane is a kubebuilder v4 operator
+              # whose tests need envtest binaries (apiserver + etcd +
+              # kubectl). The dedicated job below drives `make test`
+              # and `make build`. See ADR-0019.
+              - 'core/control-plane/**'
               - '.github/workflows/ci.yml'
             typescript:
               - 'adapters/playwright/**'
@@ -130,7 +141,6 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - core/control-plane
           - adapters/curl-impersonate
     defaults:
       run:
@@ -418,6 +428,38 @@ jobs:
           PLAYWRIGHT_AVAILABLE: "1"
         run: cargo test --test integration -- --ignored --nocapture
 
+  operator:
+    name: Operator (control-plane envtest + build)
+    needs: changes
+    if: needs.changes.outputs.operator == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core/control-plane
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          # Match the toolchain kubebuilder v4 scaffolds in go.mod.
+          # The control-plane is on its own track; the curl-impersonate
+          # adapter remains pinned to 1.24 in the `go` matrix above.
+          go-version: "1.25"
+      # The kubebuilder Makefile vendors its own controller-gen,
+      # kustomize, setup-envtest and golangci-lint into bin/, then
+      # `make test` downloads apiserver/etcd/kubectl via setup-envtest.
+      # Cache the bin/ directory so subsequent CI runs skip those
+      # downloads. The cache key is keyed on go.sum so a controller-
+      # runtime bump invalidates the cache automatically.
+      - name: Cache kubebuilder tool chain
+        uses: actions/cache@v4
+        with:
+          path: core/control-plane/bin
+          key: kubebuilder-bin-${{ runner.os }}-${{ hashFiles('core/control-plane/go.sum') }}
+      - name: Run tests
+        run: make test
+      - name: Build
+        run: make build
+
   engine-image:
     name: Engine image (build + smoke test)
     needs: changes
@@ -447,7 +489,7 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, engine-integration, engine-image]
+    needs: [changes, proto, rust, go, typescript, python, operator, engine-integration, engine-image]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -457,6 +499,7 @@ jobs:
           echo "go:                  ${{ needs.go.result }}"
           echo "typescript:          ${{ needs.typescript.result }}"
           echo "python:              ${{ needs.python.result }}"
+          echo "operator:            ${{ needs.operator.result }}"
           echo "engine-integration:  ${{ needs.engine-integration.result }}"
           echo "engine-image:        ${{ needs.engine-image.result }}"
       - name: Fail if any required job failed or was cancelled
