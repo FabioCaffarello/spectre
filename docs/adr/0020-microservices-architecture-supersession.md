@@ -367,3 +367,96 @@ At every phase boundary, four invariants must hold:
    the status of every ADR. Partial supersessions are documented
    per the ADR-0002 / ADR-0013 pattern (Section 6 below describes
    the expected end state).
+
+## ADR status changes
+
+The table records every ADR's pre-refactor status (immediately
+after PR18 merged) and its post-R1.1 status. The post-R1.1
+status reflects the supersession recorded by this ADR's adoption,
+not the implementation work that subsequent phase PRs will
+deliver. Concretely: this ADR records that ADR-0019 §3 is
+superseded; the actual `SubprocessRunner` deletion lands in
+phase R3.
+
+| ADR    | Title                                                                       | Pre-refactor                              | Post-R1.1                                                            |
+|--------|-----------------------------------------------------------------------------|-------------------------------------------|----------------------------------------------------------------------|
+| 0001   | Driver protocol as architectural primitive                                  | accepted                                  | accepted (preserved — load-bearing primitive)                        |
+| 0002   | Polyglot language selection                                                 | accepted (CLI row superseded by ADR-0013) | accepted (CLI row retired entirely; see ADR-0020 §3)                 |
+| 0003   | Schema-transport separation                                                 | accepted                                  | accepted (preserved)                                                 |
+| 0004   | Protocol versioning strategy                                                | accepted                                  | accepted (preserved — reinforced by the protocol-freeze invariant)   |
+| 0005   | Licensing (Apache 2.0)                                                      | accepted                                  | accepted (preserved)                                                 |
+| 0006   | Build orchestration (Just)                                                  | accepted                                  | accepted (preserved)                                                 |
+| 0007   | Protocol code generation                                                    | accepted                                  | accepted (preserved)                                                 |
+| 0008   | Driver handshake and conformance harness                                    | accepted                                  | accepted (§1 handshake + §3 conformance preserved; §2 UDS superseded by ADR-0022 in R2)        |
+| 0009   | Navigate, session lifecycle, and the driver error mapping                   | accepted                                  | accepted (lazy-launch contract preserved; session lifecycle revisited under ADR-0023 in R4)    |
+| 0010   | Element lifecycle and capability gating                                     | accepted                                  | accepted (preserved — capability divergence chain stays intact)      |
+| 0011   | Screenshot RPC, scope mapping, and payload boundaries                       | accepted                                  | accepted (preserved — read-only contract unchanged)                  |
+| 0012   | Engine DSL surface, planner architecture, and execution pipeline            | accepted                                  | accepted (substantially revised — engine gains gRPC server, Postgres, Kafka in R3/R4)         |
+| 0013   | CLI as engine binary                                                        | accepted                                  | superseded by ADR-0020 (CLI retired completely)                      |
+| 0014   | SeleniumBase adapter and cross-language conformance                         | accepted                                  | accepted (preserved — capability progression discipline stays)        |
+| 0015   | SeleniumBase element lifecycle and screenshot coverage                      | accepted                                  | accepted (preserved)                                                 |
+| 0016   | curl-impersonate adapter and third-runtime divergence                       | accepted                                  | accepted (preserved)                                                 |
+| 0017   | curl-impersonate extraction and final capability divergence                 | accepted                                  | accepted (preserved — semantic-equivalence contract stays)           |
+| 0018   | Devcontainer and engine image                                               | accepted                                  | accepted (Devcontainer revisited under ADR-0025 in R6; engine image pattern retired alongside) |
+| 0019   | Control plane architecture and ScrapeJob CRD                                | accepted                                  | accepted (§3 subprocess-in-pod superseded by ADR-0020; §5 `JobRunner` preserved; §1/§2/§4/§6 preserved) |
+
+### Explicitly preserved baselines
+
+Four ADRs anchor architectural commitments the refactor must not
+disturb. They are listed here so future readers do not assume
+"everything is up for grabs" during the refactor:
+
+- **ADR-0001** — the driver protocol as architectural primitive.
+  The protocol is the project's central asset; the refactor
+  changes its transport, not its shape.
+- **ADR-0010** — element lifecycle and capability gating. The
+  strict-invalidation contract, the UUID registry, and the
+  capability-roles split are unchanged. Only the storage location
+  of session state moves (to Redis in R4); the in-memory contract
+  remains the source of truth at the adapter boundary.
+- **ADR-0014** — cross-language conformance and capability
+  progression. The "declared = tested" discipline applies to
+  every adapter that joins the topology before and after the
+  refactor.
+- **ADR-0017** — capability semantic equivalence. The
+  cross-driver contract that capability declaration is about
+  semantic equivalence, not implementation feasibility, is the
+  project's most architecturally sophisticated decision. The
+  refactor does not touch it.
+
+### Substantially revised, not retired
+
+Three ADRs see substantial revision through R2 / R3 / R4 without
+being superseded as wholes. ADR-0008 keeps its handshake and
+conformance-harness decisions but loses its UDS choice; ADR-0009
+keeps its lazy-launch and session-strictness decisions but moves
+session-state ownership to Redis; ADR-0012 keeps its DSL and
+planner shape but gains a gRPC server, a PostgreSQL backing
+store, and a Kafka producer. Each gets a per-section status note
+in the phase that lands its revision (R2 for ADR-0008, R3 for
+ADR-0019, R4 for ADR-0009 and ADR-0010).
+
+### Retired
+
+One ADR is retired in full: ADR-0013 (CLI as engine binary). The
+refactor's no-legacy principle and the two-entry-point model
+(operator + Compose) make a third entry point untenable; see §3
+"what about a hybrid that keeps the CLI?" for the full reasoning.
+
+## More Information
+
+- The strategy prompt for the refactor (carried in session
+  context, not in the repository) records the principles, the
+  locked decisions, and the resumption protocol that govern
+  every phase PR.
+- Related ADRs:
+  [ADR-0001 Driver protocol as architectural primitive](0001-driver-protocol-as-architectural-primitive.md),
+  [ADR-0008 Driver handshake and conformance harness](0008-driver-handshake-and-conformance-harness.md),
+  [ADR-0009 Navigate, session lifecycle, and the driver error mapping](0009-navigate-and-session-lifecycle.md),
+  [ADR-0013 CLI as engine binary](0013-cli-as-engine-binary.md),
+  [ADR-0019 Control plane architecture and ScrapeJob CRD](0019-control-plane-architecture-and-scrapejob-crd.md).
+- Forward references (ADRs introduced by subsequent phases):
+  ADR-0021 (service discovery, R2.1), ADR-0022 (TCP transport
+  details, R2.1), ADR-0023 (stateful services, R4.1), ADR-0024
+  (output sinks, R5.1), ADR-0025 (Compose layout, R6.2),
+  ADR-0026 (Helm chart structure, R7.1).
