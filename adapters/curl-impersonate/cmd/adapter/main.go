@@ -80,7 +80,7 @@ func run(argv []string, stdout, stderr *os.File) error {
 	// not leak cookie state into the new run's namespace.
 	mgr := sessions.NewManager()
 	if err := mgr.SweepStale(); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to sweep stale cookie jars: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "warning: failed to sweep stale cookie jars: %v\n", err)
 	}
 
 	// Replace any prior socket file. The adapter is the sole
@@ -103,9 +103,9 @@ func run(argv []string, stdout, stderr *os.File) error {
 		serveErr <- grpcServer.Serve(listener)
 	}()
 
-	fmt.Fprintf(stdout, "ready unix:%s\n", socketPath)
+	_, _ = fmt.Fprintf(stdout, "ready unix:%s\n", socketPath)
 	_ = stdout.Sync()
-	fmt.Fprintf(stderr, "%s %s (driver protocol %s) variant=%s listening on unix:%s\n",
+	_, _ = fmt.Fprintf(stderr, "%s %s (driver protocol %s) variant=%s listening on unix:%s\n",
 		binaryName, version, protocolVersion, variant, socketPath)
 	_ = stderr.Sync()
 
@@ -114,7 +114,7 @@ func run(argv []string, stdout, stderr *os.File) error {
 
 	select {
 	case sig := <-signals:
-		fmt.Fprintf(stderr, "received signal %v, shutting down\n", sig)
+		_, _ = fmt.Fprintf(stderr, "received signal %v, shutting down\n", sig)
 	case err := <-serveErr:
 		// Server.Serve returns nil on graceful stop; a non-nil
 		// error here means an unexpected listener failure.

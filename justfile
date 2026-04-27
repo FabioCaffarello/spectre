@@ -293,9 +293,13 @@ curl-imp-fmt:
     cd adapters/curl-impersonate && gofmt -l -w .
     cd adapters/curl-impersonate && goimports -l -w .
 
+# GOTOOLCHAIN is pinned to match cp-lint for the same reason (see
+# the cp-lint comment): go's auto-toolchain resolution must not bump
+# to a newer Go than golangci-lint v2.8.0 (built with Go 1.25.5) can
+# parse.
 curl-imp-lint:
-    cd adapters/curl-impersonate && go vet ./...
-    cd adapters/curl-impersonate && golangci-lint run
+    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.25.3 go vet ./...
+    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.25.3 golangci-lint run
 
 curl-imp-test:
     cd adapters/curl-impersonate && go test ./...
