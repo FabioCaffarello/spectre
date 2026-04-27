@@ -18,7 +18,7 @@ package controller
 
 import (
 	"context"
-	"io"
+	"os"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -92,14 +92,13 @@ func (r *ScrapeJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true}, nil
 
 	case spectrev1alpha1.ScrapeJobPhaseRunning:
-		// TODO(PR15): replace runner.StubRunner (wired in main.go) with
-		// runner.SubprocessRunner. The SubprocessRunner shells out to
-		// the spectre engine binary, captures JSONL output, and tracks
-		// row counts. See ADR-0019 §5 for the seam.
 		runCtx, cancel := context.WithTimeout(ctx, jobTimeout(&job))
 		defer cancel()
 
-		rows, runErr := r.Runner.Run(runCtx, job.Spec.JobDSL, io.Discard)
+		// JSONL rows flow to the operator's stdout so they surface in
+		// `kubectl logs <operator-pod>` per ADR-0019 §6. StubRunner
+		// ignores the writer; SubprocessRunner forwards every row to it.
+		rows, runErr := r.Runner.Run(runCtx, job.Spec.JobDSL, os.Stdout)
 
 		now := metav1.Now()
 		if runErr != nil {
