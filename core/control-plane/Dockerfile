@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
 # Multi-stage build for the Spectre control-plane operator. The
-# resulting image bundles four artifacts:
+# resulting image bundles five artifacts:
 #
 # - /manager — the kubebuilder controller manager (Go).
 # - /usr/local/bin/spectre — the spectre engine binary copied out
@@ -14,6 +14,11 @@
 #   (Python, uv-managed venv) plus driver.yaml. The shared
 #   `[tool.uv.sources]` editable for the generated proto bindings
 #   resolves at runtime via /opt/spectre/proto/gen/python/.
+# - /opt/spectre/adapters/curl-impersonate/ — the curl-impersonate
+#   adapter (Go, statically linked) plus driver.yaml. The adapter
+#   shells out to a `curl_chrome116` subprocess per Navigate
+#   (ADR-0016 §1); the variant binaries land on /usr/local/bin/
+#   from the upstream release tarball.
 #
 # The runtime base is the official Microsoft Playwright image, which
 # ships Ubuntu 24.04, Node 24, Chromium pinned to the same patch
@@ -33,18 +38,26 @@
 # Playwright supply-chain story from scratch — not worth it for one
 # extra adapter.
 #
-# Adapter bundling for curl-impersonate replicates this pattern in
-# its own stage and is deferred to PR18.
+# PR18 §4.1 extends the runtime stage further with the
+# curl-impersonate release tarball. The variant binaries are static
+# (ADR-0016 §1) so they install-and-go on /usr/local/bin/ — no apt
+# repo, no shared-library matching, no Pod-spec change. The pin lives
+# in `adapters/curl-impersonate/.curl-impersonate-version` (`VERSION
+# SHA256` on one line) so a bump touches one file.
 #
 # Build context is the repository root because the playwright-builder
 # stage regenerates the TypeScript protocol bindings from proto/
-# (gitignored per ADR-0007) before `pnpm build`, and the
-# seleniumbase-builder stage does the same for Python.
+# (gitignored per ADR-0007) before `pnpm build`, the
+# seleniumbase-builder stage does the same for Python, and the
+# curl-impersonate-builder stage does the same for Go.
 #
 # Usage:
+#   read VERSION SHA256 < <(grep -v '^#' adapters/curl-impersonate/.curl-impersonate-version | head -1)
 #   docker build \
 #     --build-arg ENGINE_IMAGE=spectre-engine:dev \
 #     --build-arg PLAYWRIGHT_BASE_IMAGE=$(cat adapters/playwright/.playwright-base-image) \
+#     --build-arg CURL_IMPERSONATE_VERSION="${VERSION}" \
+#     --build-arg CURL_IMPERSONATE_SHA256="${SHA256}" \
 #     -t spectre-control-plane:dev \
 #     -f core/control-plane/Dockerfile \
 #     .
@@ -66,6 +79,13 @@ ARG BUF_VERSION=1.55.1
 # the documented uv release used in CI; bumping is a single-line
 # change.
 ARG UV_VERSION=0.5.11
+# curl-impersonate release tarball + SHA-256 are sourced from
+# adapters/curl-impersonate/.curl-impersonate-version (one line:
+# "VERSION SHA256") so a bump touches one file. The Makefile /
+# justfile recipes parse the file and pass both as build-args. PR18
+# §4.1.
+ARG CURL_IMPERSONATE_VERSION
+ARG CURL_IMPERSONATE_SHA256
 
 # ---------------------------------------------------------------------------
 # Stage 1 — pull the engine binary out of the engine image.
@@ -201,7 +221,45 @@ RUN ./.venv/bin/python -c "import spectre_seleniumbase; print(spectre_seleniumba
  && ./.venv/bin/python -c "from spectre.driver.v1alpha1 import driver_pb2; print(driver_pb2.__file__)"
 
 # ---------------------------------------------------------------------------
-# Stage 5 — runtime: Microsoft Playwright base + manager + engine + both adapters.
+# Stage 5 — build the curl-impersonate adapter binary (Go) — PR18 §4.2.
+# ---------------------------------------------------------------------------
+# golang:1.25 matches the manager-builder stage. CGO_ENABLED=0 keeps
+# the binary statically linked: ADR-0016 §1 chose subprocess invocation
+# over cgo, so the adapter does not link libcurl-impersonate — it
+# shells out to a `curl_chrome116` subprocess per Navigate. The
+# adapter's `go.mod` declares a `replace` directive for the proto
+# bindings, so the regenerated tree under /workspace/proto/gen/go
+# resolves automatically.
+FROM golang:1.25 AS curl-impersonate-builder
+ARG TARGETOS
+ARG TARGETARCH
+ARG BUF_VERSION
+WORKDIR /workspace
+# buf regenerates the gitignored Go protocol bindings (ADR-0007).
+RUN BUF_ARCH=$(case "${TARGETARCH:-amd64}" in \
+        amd64|x86_64) echo "x86_64" ;; \
+        arm64|aarch64) echo "aarch64" ;; \
+        *) echo "unsupported BUF arch: ${TARGETARCH}"; exit 1 ;; \
+    esac) \
+ && curl -fsSL -o /usr/local/bin/buf \
+      "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-${BUF_ARCH}" \
+ && chmod +x /usr/local/bin/buf \
+ && buf --version
+COPY proto/                          /workspace/proto/
+COPY tools/codegen/post-generate.sh  /workspace/tools/codegen/post-generate.sh
+COPY adapters/curl-impersonate/      /workspace/adapters/curl-impersonate/
+RUN cd /workspace/proto && buf generate
+# post-generate.sh runs `go mod init` + `go mod tidy` inside
+# proto/gen/go so the curl-impersonate adapter's `replace` directive
+# resolves. Mirrors what `just proto-generate` does on a developer
+# host (ADR-0007).
+RUN bash /workspace/tools/codegen/post-generate.sh
+WORKDIR /workspace/adapters/curl-impersonate
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -o /out/bin/adapter ./cmd/adapter
+
+# ---------------------------------------------------------------------------
+# Stage 6 — runtime: Microsoft Playwright base + manager + engine + three adapters.
 # ---------------------------------------------------------------------------
 # Resulting image is roughly 1.0–1.4 GB compressed (Microsoft base ships
 # Chromium + Firefox + WebKit; we only use Chromium, but stripping the
@@ -268,6 +326,33 @@ RUN /opt/spectre/adapters/seleniumbase/.venv/bin/python -m seleniumbase install 
  && DRIVER_MAJOR=$(chromedriver --version | grep -oE '[0-9]+' | head -n 1) \
  && test "${CHROME_MAJOR}" = "${DRIVER_MAJOR}" \
  && echo "chrome=${CHROME_MAJOR} chromedriver=${DRIVER_MAJOR}"
+
+# PR18 §4.1: install the curl-impersonate runtime tarball. The variant
+# binaries (`curl_chrome116`, `curl_chrome110`, `curl_firefox117`,
+# `curl_safari16_5`, …) are static (ADR-0016 §1) so they install-and-go
+# on /usr/local/bin/ — no apt repo, no shared-library matching, no
+# Pod-spec change. The version + SHA-256 come from
+# `adapters/curl-impersonate/.curl-impersonate-version`; the SHA-256
+# check is defence-in-depth against tarball tampering. The
+# `curl_chrome116 --version` smoke at the end is cheaper to debug here
+# than at runtime.
+RUN url="https://github.com/lwthiker/curl-impersonate/releases/download/v${CURL_IMPERSONATE_VERSION}/curl-impersonate-v${CURL_IMPERSONATE_VERSION}.x86_64-linux-gnu.tar.gz" \
+ && curl -fsSL -o /tmp/curl-impersonate.tgz "${url}" \
+ && echo "${CURL_IMPERSONATE_SHA256}  /tmp/curl-impersonate.tgz" | sha256sum -c - \
+ && tar -xzf /tmp/curl-impersonate.tgz -C /usr/local/bin/ \
+ && rm /tmp/curl-impersonate.tgz \
+ && curl_chrome116 --version | head -n 1
+
+# COPY the adapter binary + driver.yaml at the path the engine
+# resolves via `<adapters_path>/curl-impersonate/`. The adapter is a
+# single static Go binary (ADR-0016 §1) — no venv, no node_modules,
+# no proto bindings to stage at runtime.
+RUN mkdir -p /opt/spectre/adapters/curl-impersonate/bin
+COPY --from=curl-impersonate-builder \
+     /out/bin/adapter \
+     /opt/spectre/adapters/curl-impersonate/bin/adapter
+COPY adapters/curl-impersonate/driver.yaml \
+     /opt/spectre/adapters/curl-impersonate/driver.yaml
 
 RUN chown -R 1001:1001 /opt/spectre /manager
 USER 1001:1001

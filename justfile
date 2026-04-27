@@ -207,26 +207,36 @@ op-uninstall-crds:
 # (ADR-0019 §3 / PR15 §4.3). PR16 added a playwright-builder stage
 # that bundles the Playwright adapter at /opt/spectre/adapters/playwright
 # and switched the runtime base to the Microsoft Playwright image
-# pinned in adapters/playwright/.playwright-base-image. Build context
-# is the repo root because the playwright-builder stage regenerates
-# TypeScript proto bindings from proto/. Single-arch (linux/amd64) to
-# match the engine image and the Microsoft base; multi-arch is
-# release-engineering work.
+# pinned in adapters/playwright/.playwright-base-image. PR17 added a
+# seleniumbase-builder stage and an apt overlay for Google Chrome +
+# ChromeDriver. PR18 added a curl-impersonate-builder stage and a
+# runtime-stage tarball download whose version + SHA-256 come from
+# adapters/curl-impersonate/.curl-impersonate-version (one line:
+# "VERSION SHA256"). Build context is the repo root because each
+# builder stage regenerates its language's proto bindings from
+# proto/. Single-arch (linux/amd64) to match the engine image and the
+# Microsoft base; multi-arch is release-engineering work.
 op-build-image: engine-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    read -r CURL_IMPERSONATE_VERSION CURL_IMPERSONATE_SHA256 < <(grep -v '^#' adapters/curl-impersonate/.curl-impersonate-version | head -n 1)
     docker buildx build \
         --platform=linux/amd64 \
         --build-arg ENGINE_IMAGE=spectre-engine:dev \
         --build-arg PLAYWRIGHT_BASE_IMAGE="$(cat adapters/playwright/.playwright-base-image)" \
+        --build-arg CURL_IMPERSONATE_VERSION="${CURL_IMPERSONATE_VERSION}" \
+        --build-arg CURL_IMPERSONATE_SHA256="${CURL_IMPERSONATE_SHA256}" \
         -t spectre-control-plane:dev \
         -f core/control-plane/Dockerfile \
         --load \
         .
 
 # Smoke-test the operator image by invoking the bundled spectre
-# binary AND verifying the bundled Playwright + SeleniumBase adapter
-# assets are in place. Mirrors the CI operator-image job; failures
-# here surface bad COPY paths, missing build-args, or Chrome /
-# ChromeDriver version skew before kind smoke.
+# binary AND verifying the bundled Playwright + SeleniumBase +
+# curl-impersonate adapter assets are in place. Mirrors the CI
+# operator-image job; failures here surface bad COPY paths, missing
+# build-args, Chrome / ChromeDriver version skew, or a missing
+# curl-impersonate variant on PATH before kind smoke.
 op-image-smoke: op-build-image
     docker run --rm --platform=linux/amd64 \
         --entrypoint=/usr/local/bin/spectre \
@@ -249,17 +259,27 @@ op-image-smoke: op-build-image
         google-chrome --version; \
         chromedriver --version; \
         echo "seleniumbase adapter assets OK"'
+    docker run --rm --platform=linux/amd64 \
+        --entrypoint=/bin/sh \
+        spectre-control-plane:dev -c '\
+        set -e; \
+        test -x /opt/spectre/adapters/curl-impersonate/bin/adapter; \
+        test -f /opt/spectre/adapters/curl-impersonate/driver.yaml; \
+        command -v curl_chrome116; \
+        curl_chrome116 --version | head -n 1; \
+        echo "curl-impersonate adapter assets OK"'
 
 # In-cluster end-to-end smoke test for the bundled operator image.
 # Brings up a kind cluster, loads the operator and engine images,
-# applies the CRD plus both reference samples, polls each until
-# its phase is terminal, and asserts rowsExtracted >= 1 per
-# sample. PR17 extended the script to cover both bundled
-# adapters (hello-hackernews + seleniumbase-extract); the CI
-# operator-smoke-kind job exercises the same flow.
+# applies the CRD plus all three reference samples, polls each
+# until its phase is terminal, and asserts rowsExtracted >= 1 per
+# sample. PR18 extended the script to cover all three bundled
+# adapters (hello-hackernews → seleniumbase-extract →
+# curl-impersonate-extract); the CI operator-smoke-kind job
+# exercises the same flow.
 #
-# Tear down with `kind delete cluster --name spectre-pr17` when done.
-op-smoke-kind CLUSTER='spectre-pr17': op-build-image
+# Tear down with `kind delete cluster --name spectre-pr18` when done.
+op-smoke-kind CLUSTER='spectre-pr18': op-build-image
     bash core/control-plane/hack/smoke-kind.sh {{CLUSTER}}
 
 # ---------------------------------------------------------------------------

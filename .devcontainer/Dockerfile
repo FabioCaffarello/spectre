@@ -14,7 +14,7 @@
 #   Node        20 LTS (Active LTS through April 2026)
 #   Python      3.12   (apt deadsnakes PPA)
 #   protoc      27.2   (matches engine Dockerfile)
-#   curl-impersonate 0.5.4 (matches CI; ADR-0016 §1)
+#   curl-impersonate 0.6.1 (matches CI; ADR-0016 §1)
 #   kubebuilder 4.13.1 (PR14: scaffolding for `kubebuilder create api`
 #                       on Phase 3 follow-up CRDs; ADR-0019 §1)
 #   kubectl     1.31.0 (PR14: apply ScrapeJob CRs against a local
@@ -28,7 +28,7 @@ FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
 ARG GO_VERSION=1.25.3
 ARG NODE_MAJOR=20
 ARG PROTOC_VERSION=27.2
-ARG CURL_IMPERSONATE_VERSION=0.5.4
+ARG CURL_IMPERSONATE_VERSION=0.6.1
 ARG BUF_VERSION=1.45.0
 ARG JUST_VERSION=1.36.0
 ARG ACTIONLINT_VERSION=1.7.4
@@ -129,8 +129,10 @@ RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
  && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# curl-impersonate v0.5.4 — pinned to the same release CI uses
-# (ADR-0016 §1 explains why bumping is a PR-sized change).
+# curl-impersonate v0.6.1 — pinned to the same release the operator
+# image and the CI conformance pipeline use (single source of truth
+# at adapters/curl-impersonate/.curl-impersonate-version, mirrored
+# here for the devcontainer's offline-buildable shape). ADR-0016 §1.
 # ---------------------------------------------------------------------------
 RUN CURL_ARCH=$(case "$(dpkg --print-architecture)" in \
         amd64) echo "x86_64" ;; \

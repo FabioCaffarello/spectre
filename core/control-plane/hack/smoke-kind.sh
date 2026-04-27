@@ -4,15 +4,17 @@
 # images, and runs the bundled adapters against the canonical sample
 # ScrapeJobs.
 #
-# PR17: the script now exercises BOTH bundled adapters sequentially.
-# `MaxConcurrentReconciles=1` means at most one ScrapeJob runs at a
-# time anyway, so running two cases back-to-back matches what the
-# operator actually does in production.
+# PR18: the script now exercises ALL THREE bundled adapters
+# sequentially. `MaxConcurrentReconciles=1` means at most one
+# ScrapeJob runs at a time anyway, so running three cases
+# back-to-back matches what the operator actually does in
+# production.
 #
-#   1. hello-hackernews   (Playwright; PR16 acceptance)
-#   2. seleniumbase-extract (SeleniumBase; PR17 acceptance)
+#   1. hello-hackernews         (Playwright;       PR16 acceptance)
+#   2. seleniumbase-extract     (SeleniumBase;     PR17 acceptance)
+#   3. curl-impersonate-extract (curl-impersonate; PR18 acceptance)
 #
-# Both must reach `phase: Completed` with `rowsExtracted >= MIN_ROWS`
+# All three must reach `phase: Completed` with `rowsExtracted >= MIN_ROWS`
 # for the script (and the CI smoke job) to pass.
 #
 # Usage:
@@ -30,12 +32,17 @@
 
 set -euo pipefail
 
-CLUSTER="${1:-spectre-pr17}"
+CLUSTER="${1:-spectre-pr18}"
 NAMESPACE="control-plane-system"
 DEPLOY="deployment/control-plane-controller-manager"
 ENGINE_IMAGE="${ENGINE_IMAGE:-spectre-engine:dev}"
 OPERATOR_IMAGE="${OPERATOR_IMAGE:-spectre-control-plane:dev}"
-TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-300}"
+# PR18: TIMEOUT_SECONDS is per-sample; bumped from 300 to 420
+# (matching the CI override) so all three samples have headroom on a
+# warming kind node. curl-impersonate is the fastest of the three
+# (no browser warm-up); the bump is mostly defensive headroom for
+# SeleniumBase's Chrome bootstrap.
+TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-420}"
 MIN_ROWS="${MIN_ROWS:-1}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -121,6 +128,7 @@ kubectl -n "${NAMESPACE}" rollout status "${DEPLOY}" --timeout=180s
 SAMPLES=(
     "hello-hackernews:core/control-plane/config/samples/spectre_v1alpha1_scrapejob_hello-hackernews.yaml"
     "seleniumbase-extract:core/control-plane/config/samples/spectre_v1alpha1_scrapejob_seleniumbase.yaml"
+    "curl-impersonate-extract:core/control-plane/config/samples/spectre_v1alpha1_scrapejob_curl-impersonate.yaml"
 )
 
 failed=0
@@ -137,4 +145,4 @@ if [ "${failed}" -ne 0 ]; then
     exit 1
 fi
 
-log "OVERALL PASS: both samples reached Completed"
+log "OVERALL PASS: all samples reached Completed"
