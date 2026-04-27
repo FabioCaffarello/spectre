@@ -342,21 +342,35 @@ jobs:
       # The conformance tests target a local HTTP fixture so the
       # fingerprint itself is not asserted, but pinning keeps CI
       # determinism. ADR-0016 §1.
+      #
+      # PR18 §4.1: read VERSION + SHA256 from the pin file shared
+      # with the operator image (`adapters/curl-impersonate/.curl-impersonate-version`)
+      # so the operator-image runtime and the conformance suite stay
+      # on the same release. Single source of truth.
+      - if: matrix.package == 'tools/conformance'
+        id: curl-imp-pin
+        name: Resolve curl-impersonate pin (conformance)
+        run: |
+          read -r version sha256 < <(grep -v '^#' adapters/curl-impersonate/.curl-impersonate-version | head -n 1)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
       - if: matrix.package == 'tools/conformance'
         name: Cache curl-impersonate release
         id: curl-imp-cache
         uses: actions/cache@v4
         with:
           path: /opt/curl-impersonate
-          key: curl-impersonate-${{ runner.os }}-0.5.4
+          key: curl-impersonate-${{ runner.os }}-${{ steps.curl-imp-pin.outputs.version }}
       - if: matrix.package == 'tools/conformance' && steps.curl-imp-cache.outputs.cache-hit != 'true'
         name: Download curl-impersonate
         run: |
           set -eux
-          version=0.5.4
+          version="${{ steps.curl-imp-pin.outputs.version }}"
+          sha256="${{ steps.curl-imp-pin.outputs.sha256 }}"
           url="https://github.com/lwthiker/curl-impersonate/releases/download/v${version}/curl-impersonate-v${version}.x86_64-linux-gnu.tar.gz"
-          sudo mkdir -p /opt/curl-impersonate
           curl -fsSL "${url}" -o /tmp/curl-impersonate.tgz
+          echo "${sha256}  /tmp/curl-impersonate.tgz" | sha256sum -c -
+          sudo mkdir -p /opt/curl-impersonate
           sudo tar -xzf /tmp/curl-impersonate.tgz -C /opt/curl-impersonate
       - if: matrix.package == 'tools/conformance'
         name: Add curl-impersonate to PATH
