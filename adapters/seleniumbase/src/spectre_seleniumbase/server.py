@@ -263,14 +263,6 @@ def _default_driver_factory() -> Any:
     # - ``--disable-gpu`` / ``--disable-software-rasterizer``: the
     #   container has no GPU drivers; the software-rasterizer
     #   fallback can crash on a renderless host.
-    # - ``--disable-breakpad``: disables Chrome's crashpad child
-    #   process. Without this flag, ``chrome_crashpad_handler``
-    #   tries to create its database under ``$HOME/.local`` and
-    #   dies (`--database is required`) when the rootfs is
-    #   read-only — Chromedriver then reports the resulting child
-    #   exit as "Chrome instance exited", masking the real cause.
-    #   Playwright's default flag set already disables breakpad
-    #   for the same reason.
     # - ``--user-data-dir=<tmp>``: when ``readOnlyRootFilesystem``
     #   is true on the Pod, Chrome cannot write its preferences
     #   directory under ``$HOME``. Pointing the data dir at an
@@ -278,6 +270,11 @@ def _default_driver_factory() -> Any:
     #   the Pod) keeps Chrome's per-profile state happy.
     #   ``mkdtemp`` returns a fresh path per ``Initialize``;
     #   Kubernetes reclaims it on Pod termination.
+    #
+    # Crashpad is *not* disabled here. Its database directory
+    # resolves under ``$HOME/.local`` independently of
+    # ``--user-data-dir``; the pod spec sets ``HOME=/tmp`` so
+    # crashpad's writes land on the writable /tmp emptyDir.
     if os.environ.get("SPECTRE_SELENIUMBASE_CONTAINER") == "1":
         user_data_dir = tempfile.mkdtemp(prefix="spectre-chrome-")
         kwargs["chromium_arg"] = ",".join(
@@ -286,7 +283,6 @@ def _default_driver_factory() -> Any:
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-software-rasterizer",
-                "--disable-breakpad",
                 f"--user-data-dir={user_data_dir}",
             ]
         )

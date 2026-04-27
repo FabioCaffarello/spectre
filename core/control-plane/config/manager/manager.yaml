@@ -75,17 +75,34 @@ spec:
         ports: []
         # PR17 §4.4: opt the SeleniumBase adapter into the
         # container-friendly Chrome flags
-        # (`--no-sandbox --disable-dev-shm-usage`). Without this,
-        # Chrome's zygote refuses to launch its sandbox under the
-        # `restricted` PodSecurityStandard and Navigate fails with
-        # "Chrome failed to start: exited abnormally". The adapter's
-        # `_default_driver_factory` reads the env var and forwards
-        # the flags via SeleniumBase's `chromium_arg`. The Playwright
-        # adapter handles its own sandbox via the /dev/shm mount and
+        # (`--no-sandbox --disable-dev-shm-usage --disable-gpu
+        # --disable-software-rasterizer --user-data-dir=<tmp>`).
+        # Without this, Chrome's zygote refuses to launch its
+        # sandbox under the `restricted` PodSecurityStandard and
+        # Navigate fails with "Chrome failed to start: exited
+        # abnormally". The adapter's `_default_driver_factory`
+        # reads the env var and forwards the flags via
+        # SeleniumBase's `chromium_arg`. The Playwright adapter
+        # handles its own sandbox via the /dev/shm mount and
         # ignores this knob.
+        #
+        # HOME=/tmp redirects every $HOME-rooted write off the
+        # read-only rootfs and onto the /tmp emptyDir. Chrome's
+        # crashpad child process resolves its database directory
+        # under ``$HOME/.local`` independently of
+        # ``--user-data-dir``; with HOME pointing at the read-only
+        # /home/pwuser baked into the Microsoft Playwright base,
+        # crashpad fails to create its database directory and
+        # exits, which chromedriver mis-reports as "Chrome instance
+        # exited". The Microsoft base only uses /home/pwuser as a
+        # default; Playwright's runtime Chromium launch resolves
+        # browser binaries through ``PLAYWRIGHT_BROWSERS_PATH``,
+        # not HOME, so HOME=/tmp does not regress hello-hackernews.
         env:
           - name: SPECTRE_SELENIUMBASE_CONTAINER
             value: "1"
+          - name: HOME
+            value: /tmp
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
