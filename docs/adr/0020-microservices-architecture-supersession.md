@@ -306,3 +306,64 @@ The refactor is complete when all of the following hold:
 6. The cross-driver demo runs the same `ScrapeJob` YAML against
    three different `driver:` values and produces equivalent
    results from the same engine service.
+
+## Implementation phases
+
+The refactor is delivered as roughly seventeen PRs across eight
+phases. The sequence is fixed; phases cannot be reordered or
+skipped. Each phase introduces or supersedes a defined set of
+ADRs so the audit trail evolves alongside the code.
+
+| Phase | PRs    | Focus                                            | ADRs introduced / superseded                                       |
+|-------|--------|--------------------------------------------------|--------------------------------------------------------------------|
+| R1    | 1      | Architectural supersession (this ADR)            | +ADR-0020. Updates ADR-0008, ADR-0009, ADR-0013, ADR-0019 status.  |
+| R2    | 3      | TCP transport + service discovery                | +ADR-0021, +ADR-0022. Supersedes ADR-0008 §2 (UDS).                |
+| R3    | 2      | Control plane refactor + ScrapeJob CRD v1alpha2  | Supersedes ADR-0019 §3 (subprocess-in-pod) and §5 (`SubprocessRunner`). |
+| R4    | 4      | Stateful services (PostgreSQL, Kafka, Redis)     | +ADR-0023. Updates ADR-0010 (session state location).              |
+| R5    | 1      | Output sinks (S3, webhook, Kafka topic)          | +ADR-0024.                                                          |
+| R6    | 3      | Per-service Dockerfiles + Compose stack + Devcontainer | +ADR-0025. Retires PR16-PR18 bundled-image pattern.           |
+| R7    | 2      | Helm chart + production smoke                    | +ADR-0026.                                                          |
+| R8    | 1      | Documentation refresh + narrative closing        | None (docs only).                                                   |
+
+The driver protocol v1alpha1 directory at
+`proto/spectre/driver/v1alpha1/` is treated as read-only across
+every phase. Capability lists per adapter (Playwright 13,
+SeleniumBase 12, curl-impersonate 6) are preserved byte-for-byte.
+The conformance suite's semantics are preserved; only the
+transport layer it dials changes.
+
+### Inter-phase dependencies
+
+- **R1 must merge before R2.** This ADR establishes the
+  architectural commitment that every subsequent phase PR
+  references as upstream context.
+- **R2 must complete before R3.** Transport must be TCP before
+  the control plane can dial the engine as a service.
+- **R3 must complete before R4.** The structural shape (engine
+  as service, control plane as gRPC client) must be stable
+  before stateful dependencies are added.
+- **R4 must complete before R5.** Output sinks beyond stdout
+  presume Kafka exists.
+- **R6 may begin in parallel with R5.** Per-service Dockerfiles
+  do not depend on which sinks exist.
+- **R7 requires all of R2–R6.** The Helm chart packages
+  everything.
+- **R8 is the closing PR** — documentation refresh after the
+  refactored architecture has settled.
+
+### Phase-level invariants
+
+At every phase boundary, four invariants must hold:
+
+1. The conformance suite passes with the same test count and
+   the same capability assertions as pre-refactor.
+2. Each adapter's declared capability list is byte-for-byte
+   identical to its pre-refactor manifest.
+3. No legacy code path coexists with its replacement after the
+   phase that introduces the replacement merges. Per the no-
+   legacy principle, the old path is deleted in the same PR
+   that lands the new path.
+4. The ADR index in `docs/adr/README.md` accurately reflects
+   the status of every ADR. Partial supersessions are documented
+   per the ADR-0002 / ADR-0013 pattern (Section 6 below describes
+   the expected end state).
