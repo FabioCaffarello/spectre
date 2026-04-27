@@ -1,6 +1,11 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 
+# Engine image the multi-stage Dockerfile pulls /usr/local/bin/spectre
+# from (see ADR-0019 §3 / Section 5 of PR15). Override at build time
+# with ENGINE_IMAGE=<image:tag> when targeting a release-pinned engine.
+ENGINE_IMAGE ?= spectre-engine:dev
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -116,8 +121,8 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
-docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+docker-build: ## Build docker image with the manager. Requires the engine image identified by ENGINE_IMAGE to exist locally.
+	$(CONTAINER_TOOL) build --build-arg ENGINE_IMAGE=$(ENGINE_IMAGE) -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -136,7 +141,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name control-plane-builder
 	$(CONTAINER_TOOL) buildx use control-plane-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg ENGINE_IMAGE=$(ENGINE_IMAGE) --tag ${IMG} -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm control-plane-builder
 	rm Dockerfile.cross
 
