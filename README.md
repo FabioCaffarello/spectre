@@ -105,23 +105,28 @@ exist yet.
 
 ## Project status
 
-**Phase 1 — Hello, World** (complete)
+**Phases 1 and 2 — complete.** The engine parses the DSL, plans
+against driver capabilities, and runs `spectre run` against the
+Playwright (PR8), SeleniumBase (PR10), and curl-impersonate (PR12)
+adapters. The cross-driver equivalence demo in
+[examples/](examples/README.md) shows one CLI executing one protocol
+against three runtimes in three languages.
 
-- Repository structure, Driver Protocol at v1alpha1, three reference
-  adapter skeletons, CI/CD, pre-commit hooks, build orchestration.
-- Engine parses the DSL, plans against driver capabilities, launches
-  the Playwright adapter as a subprocess over a UDS, runs the full
-  RPC sequence, and emits JSONL.
-- `spectre run examples/hello-hackernews/job.yaml` produces real
-  Hacker News data. ADR-0013 records the language decision behind
-  the CLI binary.
+**Phase 2.5 — in progress.** PR13 added the
+[Devcontainer](docs/architecture/development-environment.md) and a
+distroless engine image. Per-adapter Dockerfiles and a Compose stack
+are deferred (PR15.5+).
 
-**Next: Phase 2 — three drivers, one protocol.** The protocol's
-value is validated when the same `job.yaml` runs unchanged across
-SeleniumBase and curl-impersonate. PR9+ introduces those drivers
-against the same v1alpha1 contract.
+**Phase 3 — kickoff.** PR14 begins the control plane with a
+kubebuilder v4 operator scaffold, the `ScrapeJob` Custom Resource
+Definition, and a state-machine reconciler whose execution path is a
+stub. Real engine invocation lands in PR15. See
+[docs/architecture/control-plane.md](docs/architecture/control-plane.md)
+for the user-facing guide and
+[ADR-0019](docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md)
+for the design decisions.
 
-See the full [roadmap](docs/roadmap.md) for Phases 2–5.
+See the full [roadmap](docs/roadmap.md) for Phases 3–5.
 
 ## Contributing
 
@@ -133,6 +138,8 @@ For everything else, read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - [Architecture overview](docs/architecture/overview.md)
 - [Driver Protocol deep dive](docs/architecture/driver-protocol.md)
+- [Control plane (Phase 3)](docs/architecture/control-plane.md)
+- [Development environment (Devcontainer)](docs/architecture/development-environment.md)
 - [Writing a driver](docs/guides/writing-a-driver.md)
 - [Architecture Decision Records](docs/adr/README.md)
 - [Roadmap](docs/roadmap.md)

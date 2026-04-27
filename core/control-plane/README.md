@@ -1,135 +1,102 @@
-# control-plane
-// TODO(user): Add simple overview of use/purpose
+# spectre-control-plane
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+The Spectre control plane: a Kubernetes-native operator that submits
+DSL extraction jobs to the engine, tracks their lifecycle, and (in
+PR16+) orchestrates fan-out and scheduling.
 
-## Getting Started
+> **Status:** Phase 3 kickoff (PR14). The operator scaffolding,
+> `ScrapeJob` CRD, and state-machine reconciler are shipped; real
+> engine invocation is a stub that PR15 replaces. See
+> [`docs/architecture/control-plane.md`](../../docs/architecture/control-plane.md)
+> for the user-facing guide and
+> [ADR-0019](../../docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md)
+> for the design decisions.
 
-### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+## Module path
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
-
-```sh
-make docker-build docker-push IMG=<some-registry>/control-plane:tag
+```
+github.com/FabioCaffarello/spectre/core/control-plane
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+## Layout
 
-**Install the CRDs into the cluster:**
+The standard kubebuilder v4 layout. Notable files:
 
-```sh
-make install
+- [`api/v1alpha1/scrapejob_types.go`](api/v1alpha1/scrapejob_types.go)
+  — `ScrapeJob` CRD Go types and `+kubebuilder:` markers. Edit here;
+  `make manifests` regenerates the YAML.
+- [`config/crd/bases/spectre.io_scrapejobs.yaml`](config/crd/bases/spectre.io_scrapejobs.yaml)
+  — generated CRD manifest. Committed; do not hand-edit.
+- [`internal/controller/scrapejob_controller.go`](internal/controller/scrapejob_controller.go)
+  — the state-machine reconciler. Pending → Running → Completed |
+  Failed.
+- [`internal/runner/runner.go`](internal/runner/runner.go) — the
+  `JobRunner` interface and PR14's `StubRunner`. ADR-0019 §5.
+- [`cmd/main.go`](cmd/main.go) — manager bootstrap; wires
+  `StubRunner` into the reconciler.
+- [`config/samples/`](config/samples/) — three sample CRs, one per
+  reference adapter.
+
+## Build and test
+
+From the repository root:
+
+```bash
+just op-test           # envtest reconciler suite
+just op-build          # produce bin/manager
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+Or directly via the kubebuilder Makefile:
 
-```sh
-make deploy IMG=<some-registry>/control-plane:tag
+```bash
+cd core/control-plane
+make test              # envtest reconciler suite
+make build             # produce bin/manager
+make manifests         # regenerate config/crd/bases/ and config/rbac/
+make help              # list every target
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+The first `make test` downloads apiserver / etcd / kubectl binaries
+into `bin/k8s/<version>-<platform>/` via setup-envtest (~150MB).
+Subsequent runs are cached.
 
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
+## Running locally
 
-```sh
-kubectl apply -k config/samples/
-```
+`make run` starts the operator in the foreground against the
+developer's current `kubectl` context. The full local-cluster
+walkthrough lives in
+[`docs/architecture/control-plane.md`](../../docs/architecture/control-plane.md#local-cluster-kind-minikube).
 
->**NOTE**: Ensure that the samples has default values to test it out.
+## API group
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+The CRD lives at `spectre.io/v1alpha1`. The kubebuilder default
+would have produced `spectre.spectre.io` (group + domain
+concatenation); we override `+groupName=spectre.io` in
+[`api/v1alpha1/groupversion_info.go`](api/v1alpha1/groupversion_info.go)
+so the canonical project domain is the API group. The `PROJECT`
+file's `domain: spectre.io` is preserved because it is also used to
+synthesise the LeaderElectionID.
 
-```sh
-kubectl delete -k config/samples/
-```
+## What this does not do (yet)
 
-**Delete the APIs(CRDs) from the cluster:**
+- **Execute extractions.** The reconciler invokes a `StubRunner`
+  that sleeps and returns 0 rows. PR15 wires `SubprocessRunner`
+  which shells out to the spectre engine binary.
+- **Fan-out / scheduling.** `ScrapeFleet` and `ScrapeSchedule` CRDs
+  are PR16+ work.
+- **Deployment artifacts.** No Helm chart yet (PR17+); no
+  validating/mutating webhooks yet (PR18+); no Prometheus metrics
+  beyond controller-runtime's defaults.
+- **Observability.** Structured logs, OpenTelemetry traces, and
+  metrics are Phase 3 follow-up.
 
-```sh
-make uninstall
-```
+Search the source tree for `// TODO(PR15)` to find the exact swap
+sites the next PR will touch.
 
-**UnDeploy the controller from the cluster:**
+## Architectural references
 
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/control-plane:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/control-plane/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2026 Fabio Caffarello.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+- [Control plane guide](../../docs/architecture/control-plane.md)
+- [ADR-0019 Control plane architecture and ScrapeJob CRD](../../docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md)
+- [ADR-0001 Driver protocol as architectural primitive](../../docs/adr/0001-driver-protocol-as-architectural-primitive.md)
+- [ADR-0002 Polyglot language selection](../../docs/adr/0002-polyglot-language-selection.md)
+- [Roadmap — Phase 3](../../docs/roadmap.md#phase-3--distributed-execution)
