@@ -284,6 +284,34 @@ of the three trade-offs above with a single targeted ADR.
 > from 2 GiB to 3 GiB for SeleniumBase headroom. curl-impersonate
 > (PR18) replicates the pattern in its own stage; the v1alpha2
 > escape hatches above remain available unchanged.
+>
+> **Status update (PR18).** The §3 invariant held a third time
+> with all three reference adapters bundled. PR18 added a
+> `curl-impersonate-builder` stage (Go, `CGO_ENABLED=0`) that
+> regenerates the gitignored protocol bindings via `buf generate`
+> + `tools/codegen/post-generate.sh` and produces a single static
+> `bin/adapter`. The runtime stage extends — does not replace —
+> the layered base from PR16/PR17 with the upstream
+> `curl-impersonate-v${VERSION}.x86_64-linux-gnu.tar.gz` release
+> tarball; the variant binaries (`curl_chrome116`, `curl_chrome110`,
+> `curl_firefox117`, `curl_safari16_5`, …) are static (ADR-0016 §1)
+> so they install-and-go on `/usr/local/bin/`. The version + SHA-256
+> are pinned together in
+> `adapters/curl-impersonate/.curl-impersonate-version` (one line:
+> `VERSION SHA256`); the Dockerfile downloads the tarball and
+> verifies the SHA-256 as defence-in-depth against tarball
+> tampering. No Pod-spec change: curl-impersonate has no browser
+> to sandbox, so no `--no-sandbox` knob, no `/dev/shm` sizing, no
+> `SPECTRE_*_CONTAINER` env var. The §5 invariant (reconciler /
+> `JobRunner` / runner tests / envtest suite) held byte-for-byte;
+> PR18 has zero Go changes. ADR-0016 §1's subprocess-over-cgo
+> contract held byte-for-byte too: the adapter still shells out
+> to `curl_chrome116` per Navigate, no link against
+> `libcurl-impersonate.so`. The kind smoke now runs all three
+> samples sequentially (hello-hackernews → seleniumbase-extract →
+> curl-impersonate-extract); all three reach Completed. PR18
+> closes v1alpha1 adapter bundling. The v1alpha2 escape hatches
+> above remain available unchanged.
 
 ### 4. ScrapeJob status as state machine, not condition arbiter
 
