@@ -52,6 +52,11 @@ adapters/playwright/src/proto/
 docs/
 examples/
 **/README.md
+# Exception (PR17): the SeleniumBase adapter's pyproject.toml has
+# `readme = "README.md"`, so hatchling reads it during the editable
+# install that runs inside the operator image's seleniumbase-builder
+# stage. The engine image does not consume this path.
+!adapters/seleniumbase/README.md
 CHANGELOG.md
 CODE_OF_CONDUCT.md
 CONTRIBUTING.md
