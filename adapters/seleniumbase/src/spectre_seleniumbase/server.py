@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import time
 import uuid
@@ -238,14 +239,27 @@ def _default_driver_factory() -> Any:
     """
     from seleniumbase import Driver
 
-    return Driver(
-        browser="chrome",
-        headless=True,
+    kwargs: dict[str, Any] = {
+        "browser": "chrome",
+        "headless": True,
         # uc=False keeps the driver in standard Selenium mode rather
         # than SeleniumBase's UC (undetected) variant. UC mode is a
         # v1alpha2 capability candidate (see ADR-0014 §2 out of scope).
-        uc=False,
-    )
+        "uc": False,
+    }
+    # Container deployment knob (PR17 §4.4). Default behaviour is
+    # unchanged for non-containerised callers: the conformance suite
+    # and the developer-host workflow continue to drive Chrome with
+    # its sandbox enabled. When the operator Pod sets
+    # SPECTRE_SELENIUMBASE_CONTAINER=1, add the two Chrome flags
+    # required to launch under the `restricted` PodSecurityStandard
+    # (no SYS_ADMIN, no privileged), which the Chrome zygote needs to
+    # avoid `Chrome failed to start: exited abnormally`. SeleniumBase
+    # forwards `chromium_arg` (comma-separated) onto the Chrome
+    # launch options.
+    if os.environ.get("SPECTRE_SELENIUMBASE_CONTAINER") == "1":
+        kwargs["chromium_arg"] = "--no-sandbox,--disable-dev-shm-usage"
+    return Driver(**kwargs)
 
 
 class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]

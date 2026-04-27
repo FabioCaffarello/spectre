@@ -91,6 +91,34 @@ just spectre-run examples/seleniumbase-navigate/job.yaml --verbose
   capability candidate.
 - **Windows is not supported.** Inherited from ADR-0008.
 
+## Container deployment
+
+The adapter runs inside the spectre control-plane operator image
+(PR17). That image extends the Microsoft Playwright base with Google
+Chrome, ChromeDriver, and a uv-built virtualenv at
+`/opt/spectre/adapters/seleniumbase/.venv`; the manager Pod runs
+under the Kubernetes `restricted` PodSecurityStandard (no
+`SYS_ADMIN`, no privileged container).
+
+Chrome's zygote refuses to launch its sandbox in that environment
+and fails with `Chrome failed to start: exited abnormally`. To
+opt the adapter into container-friendly Chrome flags, set the
+`SPECTRE_SELENIUMBASE_CONTAINER` environment variable to `1`. The
+adapter then forwards `--no-sandbox` and `--disable-dev-shm-usage`
+to Chrome via SeleniumBase's `chromium_arg`. Default behaviour is
+unchanged when the variable is absent — the conformance suite and
+host-side developers keep the sandbox on.
+
+```yaml
+env:
+  - name: SPECTRE_SELENIUMBASE_CONTAINER
+    value: "1"
+```
+
+The operator image bakes this env var into
+`config/manager/manager.yaml`; contributors driving the adapter
+from a host shell do not need to set it.
+
 ## Layout
 
 ```
