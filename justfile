@@ -307,16 +307,19 @@ curl-imp-test:
 curl-imp-build:
     cd adapters/curl-impersonate && go build -o bin/adapter ./cmd/adapter
 
-# Run the curl-impersonate adapter against a Unix domain socket.
-# Pass --socket=<path> after `--`, or set SPECTRE_DRIVER_SOCKET. The
-# server prints `ready unix:<path>` on stdout once it accepts
-# connections; SIGTERM/Ctrl-C drains, unlinks the socket, and
-# exits 0. Defaults to /tmp/spectre-curl.sock for ad-hoc local
-# testing. Override the curl-impersonate variant by setting
+# Run the curl-impersonate adapter as a TCP gRPC service. ADR-0021
+# §4 reserves 9093 as the canonical default port. Readiness is
+# signalled by the gRPC standard health check returning SERVING;
+# SIGTERM/Ctrl-C drains, removes session cookie-jars, and exits 0.
+# Override the curl-impersonate variant by setting
 # SPECTRE_CURL_VARIANT (default `curl_chrome116`). See ADR-0016 §3.
-curl-imp-run *ARGS='--socket=/tmp/spectre-curl.sock': curl-imp-build
+#
+# This recipe survives R2.2 as a developer convenience but is
+# scheduled for retirement in R6.2 when the Compose stack becomes
+# the canonical local-dev path.
+curl-imp-run PORT='9093': curl-imp-build
     cd adapters/curl-impersonate && \
-    ./bin/adapter {{ARGS}}
+    SPECTRE_ADAPTER_GRPC_PORT={{PORT}} ./bin/adapter
 
 # Run only the curl-impersonate conformance tests. PR11 wired
 # Initialize + Navigate; PR12 will add Close + Query + Extract.
