@@ -181,14 +181,44 @@ cp-build:
 op-test: cp-test
 op-build: cp-build
 
-op-run:
-    cd core/control-plane && make run
+# Run the operator from your host against the current kubectl context.
+# Points the SubprocessRunner at the workspace's release-build spectre
+# binary and the workspace adapters/ directory so JSONL output flows
+# through the real engine + Playwright stack — equivalent to what the
+# operator image does in-cluster, just outside the Pod. Builds the
+# spectre binary and the Playwright adapter on demand.
+op-run: spectre-build pw-build
+    cd core/control-plane && \
+        GOTOOLCHAIN=go1.25.3 go run ./cmd/main.go \
+            --engine-binary="$PWD/../engine/target/release/spectre" \
+            --adapters-path="$PWD/../../adapters"
 
 op-install-crds:
     cd core/control-plane && make install
 
 op-uninstall-crds:
     cd core/control-plane && make uninstall
+
+# Build the operator image. Depends on the engine image because the
+# multi-stage Dockerfile copies /usr/local/bin/spectre out of it
+# (ADR-0019 §3 / PR15 §4.3). Single-arch (linux/amd64) to match the
+# engine image; multi-arch is release-engineering work.
+op-build-image: engine-image
+    docker buildx build \
+        --platform=linux/amd64 \
+        --build-arg ENGINE_IMAGE=spectre-engine:dev \
+        -t spectre-control-plane:dev \
+        -f core/control-plane/Dockerfile \
+        --load \
+        core/control-plane
+
+# Smoke-test the operator image by invoking the bundled spectre
+# binary. Mirrors the engine-image-run recipe: confirms the multi-
+# stage COPY --from=engine landed the binary in the runtime layer.
+op-image-smoke: op-build-image
+    docker run --rm --platform=linux/amd64 \
+        --entrypoint=/usr/local/bin/spectre \
+        spectre-control-plane:dev version
 
 # ---------------------------------------------------------------------------
 # Go curl-impersonate adapter (adapters/curl-impersonate)

@@ -486,10 +486,55 @@ jobs:
       - name: Report image size
         run: docker images spectre-engine:ci --format '{{.Size}}'
 
+  operator-image:
+    name: Operator image (build + smoke test)
+    needs: changes
+    # Build the operator image whenever the operator source, the
+    # engine source (the engine binary is bundled), the protocol,
+    # the Dockerfile, or the workflow itself changes. The image
+    # depends on the engine image, which we build in-line so the
+    # job is self-contained and does not need a registry round-trip.
+    if: needs.changes.outputs.operator == 'true' || needs.changes.outputs.engine_image == 'true'
+    runs-on: ubuntu-latest
+    # Both builds run with `docker build` (BuildKit on the daemon)
+    # rather than `docker buildx build`. The default buildx
+    # docker-container driver keeps an image cache isolated from the
+    # local daemon, so a `--load`-ed image from one buildx call is
+    # not visible to a subsequent buildx call's
+    # `FROM ${ENGINE_IMAGE}`. Plain `docker build` shares the daemon
+    # cache between both steps; the GitHub runner is already
+    # linux/amd64 so no cross-platform emulation is needed (the
+    # local justfile recipes still use buildx for the Apple Silicon
+    # case, where QEMU is required).
+    env:
+      DOCKER_BUILDKIT: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build engine image
+        run: |
+          docker build \
+            -t spectre-engine:ci \
+            -f core/engine/Dockerfile \
+            .
+      - name: Build operator image
+        run: |
+          docker build \
+            --build-arg ENGINE_IMAGE=spectre-engine:ci \
+            -t spectre-control-plane:ci \
+            -f core/control-plane/Dockerfile \
+            core/control-plane
+      - name: Smoke test (engine binary present)
+        run: |
+          docker run --rm \
+            --entrypoint=/usr/local/bin/spectre \
+            spectre-control-plane:ci version
+      - name: Report image size
+        run: docker images spectre-control-plane:ci --format '{{.Size}}'
+
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, operator, engine-integration, engine-image]
+    needs: [changes, proto, rust, go, typescript, python, operator, operator-image, engine-integration, engine-image]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -500,6 +545,7 @@ jobs:
           echo "typescript:          ${{ needs.typescript.result }}"
           echo "python:              ${{ needs.python.result }}"
           echo "operator:            ${{ needs.operator.result }}"
+          echo "operator-image:      ${{ needs.operator-image.result }}"
           echo "engine-integration:  ${{ needs.engine-integration.result }}"
           echo "engine-image:        ${{ needs.engine-image.result }}"
       - name: Fail if any required job failed or was cancelled

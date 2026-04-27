@@ -4,9 +4,11 @@ The Spectre control plane: a Kubernetes-native operator that submits
 DSL extraction jobs to the engine, tracks their lifecycle, and (in
 PR16+) orchestrates fan-out and scheduling.
 
-> **Status:** Phase 3 kickoff (PR14). The operator scaffolding,
-> `ScrapeJob` CRD, and state-machine reconciler are shipped; real
-> engine invocation is a stub that PR15 replaces. See
+> **Status:** Phase 3 in progress. PR14 shipped the scaffolding,
+> the `ScrapeJob` CRD, and the state-machine reconciler against a
+> stub. PR15 wired `SubprocessRunner` so jobs actually run against
+> the spectre engine binary the operator image bundles. PR16 picks
+> up adapter bundling and the in-cluster smoke test. See
 > [`docs/architecture/control-plane.md`](../../docs/architecture/control-plane.md)
 > for the user-facing guide and
 > [ADR-0019](../../docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md)
@@ -32,8 +34,13 @@ The standard kubebuilder v4 layout. Notable files:
   Failed.
 - [`internal/runner/runner.go`](internal/runner/runner.go) — the
   `JobRunner` interface and PR14's `StubRunner`. ADR-0019 §5.
+- [`internal/runner/subprocess.go`](internal/runner/subprocess.go)
+  — PR15's `SubprocessRunner`: shells out to the spectre engine
+  binary, streams JSONL through `bufio.Scanner`, reports row counts.
 - [`cmd/main.go`](cmd/main.go) — manager bootstrap; wires
-  `StubRunner` into the reconciler.
+  `SubprocessRunner` into the reconciler. Exposes `--engine-binary`
+  (default `/usr/local/bin/spectre`, the path the operator image
+  installs to) and `--adapters-path` (optional engine override).
 - [`config/samples/`](config/samples/) — three sample CRs, one per
   reference adapter.
 
@@ -43,8 +50,19 @@ From the repository root:
 
 ```bash
 just op-test           # envtest reconciler suite
-just op-build          # produce bin/manager
+just op-build          # produce bin/manager (Go binary only)
+just op-build-image    # multi-stage operator image; depends on
+                       # the engine image (built first if missing)
+just op-image-smoke    # build the image and verify the bundled
+                       # spectre binary reports its version
 ```
+
+The operator image is multi-stage: the `manager` binary is
+built from this directory, and `/usr/local/bin/spectre` is copied
+out of `spectre-engine:dev` (override with `ENGINE_IMAGE=<image>`
+to the Makefile). PR15 §4.3 records the rationale; ADR-0019 §3
+records the single-Pod execution model that motivates bundling
+the engine into the operator image.
 
 Or directly via the kubebuilder Makefile:
 
@@ -79,9 +97,11 @@ synthesise the LeaderElectionID.
 
 ## What this does not do (yet)
 
-- **Execute extractions.** The reconciler invokes a `StubRunner`
-  that sleeps and returns 0 rows. PR15 wires `SubprocessRunner`
-  which shells out to the spectre engine binary.
+- **Bundle adapters.** The operator image carries the engine
+  binary but not Playwright/Chromium, SeleniumBase, or
+  curl-impersonate. In-cluster jobs need adapters mounted into the
+  Pod or available at `--adapters-path`. PR16 lands adapter
+  bundling.
 - **Fan-out / scheduling.** `ScrapeFleet` and `ScrapeSchedule` CRDs
   are PR16+ work.
 - **Deployment artifacts.** No Helm chart yet (PR17+); no
@@ -89,9 +109,6 @@ synthesise the LeaderElectionID.
   beyond controller-runtime's defaults.
 - **Observability.** Structured logs, OpenTelemetry traces, and
   metrics are Phase 3 follow-up.
-
-Search the source tree for `// TODO(PR15)` to find the exact swap
-sites the next PR will touch.
 
 ## Architectural references
 

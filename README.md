@@ -117,10 +117,13 @@ against three runtimes in three languages.
 distroless engine image. Per-adapter Dockerfiles and a Compose stack
 are deferred (PR15.5+).
 
-**Phase 3 — kickoff.** PR14 begins the control plane with a
+**Phase 3 — in progress.** PR14 began the control plane with a
 kubebuilder v4 operator scaffold, the `ScrapeJob` Custom Resource
-Definition, and a state-machine reconciler whose execution path is a
-stub. Real engine invocation lands in PR15. See
+Definition, and a state-machine reconciler. PR15 wired
+`SubprocessRunner` so the reconciler shells out to the spectre
+engine binary the operator image bundles, captures JSONL on stdout,
+and reports `RowsExtracted`. Adapter bundling and the in-cluster
+smoke test against `hello-hackernews` are PR16 work. See
 [docs/architecture/control-plane.md](docs/architecture/control-plane.md)
 for the user-facing guide and
 [ADR-0019](docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md)

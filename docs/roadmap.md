@@ -205,11 +205,19 @@ and the v1alpha2 escape hatches.
       implementation. envtest suite covering five phase
       transitions. Three sample CRs, one per reference adapter.
       ADR-0019 §1–§6. (PR14.)
-- [ ] Real job execution via `SubprocessRunner` — shells out to the
-      spectre engine binary, captures JSONL, reports
-      `RowsExtracted`. The seam is documented in ADR-0019 §5; PR15
-      drops in the implementation without touching the reconciler.
-      (PR15.)
+- [x] Real job execution via `SubprocessRunner` — shells out to the
+      spectre engine binary the operator image bundles, captures
+      JSONL on stdout, and reports `RowsExtracted` to the
+      reconciler. The §5 invariant from ADR-0019 held: zero changes
+      to the reconciler control flow, the `JobRunner` signature, or
+      the envtest suite (one-line writer swap from `io.Discard` to
+      `os.Stdout` so JSONL surfaces in `kubectl logs`). The operator
+      image is multi-stage: it pulls `/usr/local/bin/spectre` out of
+      `spectre-engine:dev` so the runtime layer carries both
+      binaries. (PR15.)
+- [ ] Operator image bundles the reference adapters (Playwright +
+      Chromium minimum) and the in-cluster smoke against
+      `hello-hackernews` ticks. (PR16.)
 - [ ] `ScrapeFleet` CRD (fan-out wrapper that creates N
       `ScrapeJob` instances with parameter substitution) and
       `ScrapeSchedule` CRD (cron-like recurring `ScrapeJob`
