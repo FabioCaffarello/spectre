@@ -105,6 +105,17 @@ exist yet.
 
 ## Project status
 
+> **Microservices refactor in progress.** Spectre is undergoing
+> an architectural refactor toward a fully microservices topology
+> (engine, control plane, and each adapter as standalone services
+> backed by PostgreSQL, Kafka, and Redis). See
+> [ADR-0020](docs/adr/0020-microservices-architecture-supersession.md)
+> for the architectural commitment and
+> [`docs/refactoring-status.md`](docs/refactoring-status.md) for
+> live progress. The pre-refactor architecture below continues to
+> function for existing examples; new contributions should align
+> with the post-refactor direction.
+
 **Phases 1 and 2 — complete.** The engine parses the DSL, plans
 against driver capabilities, and runs `spectre run` against the
 Playwright (PR8), SeleniumBase (PR10), and curl-impersonate (PR12)
