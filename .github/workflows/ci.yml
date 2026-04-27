@@ -510,6 +510,34 @@ jobs:
       DOCKER_BUILDKIT: "1"
     steps:
       - uses: actions/checkout@v6
+      - name: Resolve Playwright base image pin
+        id: pw-base
+        run: |
+          image="$(cat adapters/playwright/.playwright-base-image)"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          # Extract the digest portion for the cache key so a base-
+          # image bump invalidates the layer cache automatically.
+          digest="${image##*@}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+      # Cache the Microsoft Playwright base image layers. Pulling it
+      # is ~600 MB / ~90s on an Azure runner; caching keyed on the
+      # pinned digest cuts that to a few seconds. The `docker save /
+      # docker load` round-trip preserves layer identity so the
+      # subsequent operator-image build can reuse them.
+      - name: Cache Playwright base image
+        id: pw-base-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/pw-base.tar
+          key: pw-base-${{ runner.os }}-${{ steps.pw-base.outputs.digest }}
+      - if: steps.pw-base-cache.outputs.cache-hit == 'true'
+        name: Load cached Playwright base
+        run: docker load -i /tmp/pw-base.tar
+      - if: steps.pw-base-cache.outputs.cache-hit != 'true'
+        name: Pull and cache Playwright base
+        run: |
+          docker pull "${{ steps.pw-base.outputs.image }}"
+          docker save "${{ steps.pw-base.outputs.image }}" -o /tmp/pw-base.tar
       - name: Build engine image
         run: |
           docker build \
@@ -517,37 +545,103 @@ jobs:
             -f core/engine/Dockerfile \
             .
       - name: Build operator image
+        # Build context is the repository root: the playwright-builder
+        # stage regenerates TS proto bindings from proto/ before
+        # `pnpm build`. PR16 §6.3.
         run: |
           docker build \
             --build-arg ENGINE_IMAGE=spectre-engine:ci \
+            --build-arg PLAYWRIGHT_BASE_IMAGE="${{ steps.pw-base.outputs.image }}" \
             -t spectre-control-plane:ci \
             -f core/control-plane/Dockerfile \
-            core/control-plane
+            .
       - name: Smoke test (engine binary present)
         run: |
           docker run --rm \
             --entrypoint=/usr/local/bin/spectre \
             spectre-control-plane:ci version
+      - name: Smoke test (Playwright adapter bundled)
+        run: |
+          docker run --rm \
+            --entrypoint=/bin/sh \
+            spectre-control-plane:ci -c \
+            'test -f /opt/spectre/adapters/playwright/dist/index.js && \
+             test -d /opt/spectre/adapters/playwright/node_modules/playwright && \
+             test -f /opt/spectre/adapters/playwright/driver.yaml && \
+             echo "playwright adapter assets OK"'
       - name: Report image size
         run: docker images spectre-control-plane:ci --format '{{.Size}}'
+      - name: Save operator image for downstream jobs
+        run: docker save spectre-control-plane:ci -o /tmp/spectre-control-plane.tar
+      - name: Save engine image for downstream jobs
+        run: docker save spectre-engine:ci -o /tmp/spectre-engine.tar
+      - name: Upload operator image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-image
+          path: |
+            /tmp/spectre-control-plane.tar
+            /tmp/spectre-engine.tar
+          retention-days: 1
+
+  operator-smoke-kind:
+    name: Operator smoke (kind end-to-end)
+    needs: [changes, operator-image]
+    if: needs.changes.outputs.operator == 'true' || needs.changes.outputs.engine_image == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download operator + engine images
+        uses: actions/download-artifact@v4
+        with:
+          name: operator-image
+          path: /tmp
+      - name: Load images into local docker
+        run: |
+          docker load -i /tmp/spectre-engine.tar
+          docker load -i /tmp/spectre-control-plane.tar
+          docker tag spectre-engine:ci         spectre-engine:dev
+          docker tag spectre-control-plane:ci  spectre-control-plane:dev
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: spectre-pr16
+      - name: Install kubebuilder CLI dependencies
+        # `make install` / `make deploy` need kustomize and
+        # controller-gen. The kubebuilder Makefile vendors them into
+        # core/control-plane/bin on demand.
+        working-directory: core/control-plane
+        run: |
+          make kustomize
+          make controller-gen
+      # The hello-hackernews sample reaches news.ycombinator.com from
+      # inside the kind node. GitHub-hosted runners can typically
+      # reach it; if the workflow starts flaking on rate-limits, the
+      # documented fallback (in-cluster fixture targeting an httpd
+      # ConfigMap) replaces this step. PR16 §6.6.
+      - name: Run kind smoke
+        env:
+          ENGINE_IMAGE: spectre-engine:dev
+          OPERATOR_IMAGE: spectre-control-plane:dev
+        run: bash core/control-plane/hack/smoke-kind.sh spectre-pr16
 
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, operator, operator-image, engine-integration, engine-image]
+    needs: [changes, proto, rust, go, typescript, python, operator, operator-image, operator-smoke-kind, engine-integration, engine-image]
     runs-on: ubuntu-latest
     steps:
       - name: Report
         run: |
-          echo "proto:               ${{ needs.proto.result }}"
-          echo "rust:                ${{ needs.rust.result }}"
-          echo "go:                  ${{ needs.go.result }}"
-          echo "typescript:          ${{ needs.typescript.result }}"
-          echo "python:              ${{ needs.python.result }}"
-          echo "operator:            ${{ needs.operator.result }}"
-          echo "operator-image:      ${{ needs.operator-image.result }}"
-          echo "engine-integration:  ${{ needs.engine-integration.result }}"
-          echo "engine-image:        ${{ needs.engine-image.result }}"
+          echo "proto:                ${{ needs.proto.result }}"
+          echo "rust:                 ${{ needs.rust.result }}"
+          echo "go:                   ${{ needs.go.result }}"
+          echo "typescript:           ${{ needs.typescript.result }}"
+          echo "python:               ${{ needs.python.result }}"
+          echo "operator:             ${{ needs.operator.result }}"
+          echo "operator-image:       ${{ needs.operator-image.result }}"
+          echo "operator-smoke-kind:  ${{ needs.operator-smoke-kind.result }}"
+          echo "engine-integration:   ${{ needs.engine-integration.result }}"
+          echo "engine-image:         ${{ needs.engine-image.result }}"
       - name: Fail if any required job failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1

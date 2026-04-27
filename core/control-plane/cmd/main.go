@@ -47,6 +47,14 @@ import (
 // --engine-binary flag below.
 const defaultEnginePath = "/usr/local/bin/spectre"
 
+// defaultAdaptersPath is the path the operator image installs the
+// bundled reference adapters at. PR16 ships the Playwright adapter
+// here; PR17 / PR18 will land SeleniumBase and curl-impersonate
+// alongside it. Local development with `make run` / `just op-run`
+// overrides via the --adapters-path flag to point at the workspace
+// adapters/ directory.
+const defaultAdaptersPath = "/opt/spectre/adapters"
+
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
@@ -91,11 +99,11 @@ func main() {
 	flag.StringVar(&enginePath, "engine-binary", defaultEnginePath,
 		"Absolute path to the spectre engine binary the SubprocessRunner shells out to. "+
 			"Defaults to the path the operator image installs to.")
-	flag.StringVar(&adaptersPath, "adapters-path", "",
-		"Optional override for the engine's adapters search path. When empty, the "+
-			"engine resolves SPECTRE_ADAPTERS_PATH and its built-in default. Set this "+
-			"to the workspace adapters/ directory when running with `make run` from a "+
-			"developer checkout.")
+	flag.StringVar(&adaptersPath, "adapters-path", defaultAdaptersPath,
+		"Filesystem path to the engine's adapters directory. Defaults to the path "+
+			"the operator image installs adapters to (PR16 bundles Playwright there). "+
+			"Local development with `make run` / `just op-run` overrides this to the "+
+			"workspace adapters/ directory.")
 	opts := zap.Options{
 		Development: true,
 	}

@@ -155,13 +155,22 @@ just op-build          # build bin/manager
 just op-build-image    # multi-stage operator image. Depends on the
                        # engine image — `just engine-image` runs first
                        # if `spectre-engine:dev` is missing locally.
+                       # First run also pulls ~600 MB of Microsoft
+                       # Playwright base layers from mcr.microsoft.com.
+just op-smoke-kind     # full in-cluster end-to-end smoke (linux/amd64
+                       # hosts only; Apple Silicon falls back to CI).
 ```
 
 The operator image bundles the spectre engine binary at
-`/usr/local/bin/spectre` (PR15 §4.3); the multi-stage Dockerfile
-copies it out of `spectre-engine:dev`, so the engine image must be
-built first. `just op-build-image` chains `engine-image` → operator
-image automatically.
+`/usr/local/bin/spectre` (PR15 §4.3) and the Playwright adapter at
+`/opt/spectre/adapters/playwright/` (PR16). The runtime base is
+the official Microsoft Playwright image pinned by digest in
+[`adapters/playwright/.playwright-base-image`](adapters/playwright/.playwright-base-image);
+the first build needs network access to `mcr.microsoft.com`. The
+`playwright-builder` stage also fetches the `buf` CLI from
+GitHub releases to regenerate the TypeScript protocol bindings
+inside the build context. SeleniumBase (PR17) and curl-impersonate
+(PR18) replicate this pattern in their own builder stages.
 
 For local-cluster smoke testing (kind / minikube / Docker Desktop):
 

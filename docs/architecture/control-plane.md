@@ -19,10 +19,12 @@ execution lands in PR15.
 | `StubRunner`                       | shipped           | PR14  |
 | `SubprocessRunner` (engine invoke) | shipped           | PR15  |
 | Operator image bundles engine      | shipped           | PR15  |
-| Operator image bundles adapters    | not started       | PR16  |
-| `ScrapeFleet` CRD                  | not started       | PR16+ |
-| `ScrapeSchedule` CRD               | not started       | PR16+ |
-| Helm chart                         | not started       | PR17+ |
+| Operator image bundles Playwright  | shipped           | PR16  |
+| Operator image bundles SeleniumBase | not started       | PR17  |
+| Operator image bundles curl-impersonate | not started   | PR18  |
+| `ScrapeFleet` CRD                  | not started       | PR19+ |
+| `ScrapeSchedule` CRD               | not started       | PR19+ |
+| Helm chart                         | not started       | PR19+ |
 | Webhook validators                 | not started       | PR18+ |
 | Observability (metrics/traces)     | not started       | PR18+ |
 
@@ -36,16 +38,32 @@ in-tree edit to `internal/controller/` was a one-line writer swap
 (`io.Discard` → `os.Stdout`) so JSONL rows reach
 `kubectl logs <operator-pod>` per ADR-0019 §6.
 
-Adapter bundling is **not** part of the operator image yet:
-shipping Playwright + Chromium (~200 MB), SeleniumBase + Chrome,
-and curl-impersonate alongside the engine binary triples the
-attack surface and image size, so it has its own PR. PR15's
-operator image runs the engine subprocess but expects adapters to
-be either mounted into the Pod or resolved via
-`--adapters-path` (the local `op-run` recipe demonstrates the
-latter against the workspace `adapters/` directory). PR16 picks
-up adapter bundling and the in-cluster smoke against
-`hello-hackernews`.
+PR16 lands the Playwright adapter in the operator image. The
+runtime base is now the official Microsoft Playwright image
+(`mcr.microsoft.com/playwright:v1.59.1-noble`, pinned by digest in
+[`adapters/playwright/.playwright-base-image`](../../adapters/playwright/.playwright-base-image)),
+which ships Ubuntu 24.04, Node 24, Chromium pinned to the matching
+patch release, and every system dependency Chromium needs. The
+adapter sources are compiled in a `playwright-builder` stage
+(repo-root build context, so the stage can regenerate the
+TypeScript protocol bindings before `pnpm build`) and the resulting
+artefacts land at `/opt/spectre/adapters/playwright/`:
+
+```
+/opt/spectre/adapters/
+└── playwright/
+    ├── dist/             # compiled JS entry point at dist/index.js
+    ├── node_modules/     # production deps (playwright, @bufbuild/protobuf, …)
+    ├── driver.yaml       # transports[0].command = ["node", "dist/index.js"]
+    └── package.json
+```
+
+The on-disk image weighs ~1.0 GB (pull is ~600 MB once the
+Microsoft base layer is cached). The manager's `--adapters-path`
+flag defaults to `/opt/spectre/adapters`; local development with
+`just op-run` overrides this to the workspace `adapters/` directory.
+SeleniumBase (PR17) and curl-impersonate (PR18) replicate this
+builder-stage pattern in their own stages.
 
 ## The ScrapeJob CRD
 
@@ -111,30 +129,22 @@ runs the reconciler suite (5 transition tests + 1 runner test), and
 prints coverage. First run takes ~2 minutes (binary downloads);
 cached runs complete in under 30 seconds.
 
-### Local cluster (kind / minikube)
+### In-cluster smoke (PR16: bundled image, kind)
 
 ```bash
-# 1. Bring up a cluster (kind shown; minikube works similarly).
-kind create cluster --name spectre-dev
+# 1. Build the engine and operator images. just op-build-image
+#    chains engine-image first.
+just op-build-image
 
-# 2. Install the CRD.
-just op-install-crds
-# Equivalent to: cd core/control-plane && make install
-
-# 3. Run the operator against the current kubectl context.
-just op-run
-# Equivalent to: cd core/control-plane && make run
-# Leaves the operator in the foreground; Ctrl-C to stop.
-
-# 4. In another terminal, apply a sample.
-kubectl apply -f core/control-plane/config/samples/spectre_v1alpha1_scrapejob_hello-hackernews.yaml
-
-# 5. Watch the phase transitions.
-kubectl get scrapejob -w
+# 2. Bring up a kind cluster, load both images, install the CRD,
+#    deploy the operator, apply hello-hackernews, poll for
+#    Completed, and assert rowsExtracted >= 1. The script exits
+#    non-zero on any failure with diagnostic context.
+just op-smoke-kind
+# Equivalent to: bash core/control-plane/hack/smoke-kind.sh
 ```
 
-Expected output (PR15 onwards, against the workspace's spectre
-binary and Playwright adapter):
+Expected output (against the bundled Playwright adapter):
 
 ```
 NAME               PHASE       ROWS   AGE
@@ -145,11 +155,42 @@ hello-hackernews   Completed   30     12s
 
 `RowsExtracted` reflects the JSONL row count the engine emitted on
 stdout (one row per Hacker News story; the front page is ~30 at
-any given time). The rows themselves stream into the operator
-process's stdout and surface via `kubectl logs <operator-pod>` per
-ADR-0019 §6. `op-run` runs the operator on the developer host, so
-"operator logs" here means the foreground terminal where the
-recipe is running.
+any given time). The rows themselves stream from the engine
+subprocess into the operator container's stdout and surface via
+`kubectl logs <operator-pod>` per ADR-0019 §6. The kind smoke is
+linux/amd64 only — Apple Silicon hosts cannot run kubeadm reliably
+under Rosetta amd64 emulation, so local kind smoke requires either
+a Linux host or a remote Linux runner; CI's `operator-smoke-kind`
+job exercises the same flow on every PR that touches the operator.
+
+### Host operator against a local cluster (PR15-style)
+
+The PR15 host-operator workflow still works for iterating on the
+manager binary itself without rebuilding the image:
+
+```bash
+# 1. Bring up a cluster.
+kind create cluster --name spectre-dev
+
+# 2. Install the CRD.
+just op-install-crds
+
+# 3. Run the operator against the current kubectl context. The
+#    --adapters-path override points at the workspace adapters/
+#    directory (the bundled-image default of /opt/spectre/adapters
+#    does not exist on the developer host).
+just op-run
+
+# 4. In another terminal, apply a sample.
+kubectl apply -f core/control-plane/config/samples/spectre_v1alpha1_scrapejob_hello-hackernews.yaml
+
+# 5. Watch the phase transitions.
+kubectl get scrapejob -w
+```
+
+`op-run` runs the operator on the developer host, so "operator
+logs" here means the foreground terminal where the recipe is
+running.
 
 ### Tearing down
 
@@ -188,13 +229,12 @@ Six axes:
 
 These deferrals are intentional and have PR pointers:
 
-- **Adapter bundling in the operator image.** PR15 ships an
-  operator image that bundles only the engine binary; running real
-  extractions in-cluster requires Playwright + Chromium (or another
-  adapter) to be available either at the engine's
-  `--adapters-path` override or at the engine's default search
-  path. PR16 picks up adapter bundling and the in-cluster smoke
-  test against `hello-hackernews`.
+- **SeleniumBase and curl-impersonate bundling.** PR16 shipped the
+  Playwright adapter in the operator image; SeleniumBase needs
+  Google Chrome (not Chromium) and a uv-managed Python venv (PR17),
+  and curl-impersonate needs the native libcurl-impersonate library
+  (PR18). Each replicates the PR16 builder-stage pattern in its own
+  Dockerfile stage.
 - **Output sinks beyond stdout.** `s3://`, `pvc://`, `webhook://`,
   `kafka://` are valid `OutputSink` strings at the schema level but
   the reconciler rejects them with an explicit error. PR16+ adds
@@ -225,9 +265,17 @@ These deferrals are intentional and have PR pointers:
   [`internal/controller/scrapejob_controller.go`](../../core/control-plane/internal/controller/scrapejob_controller.go).**
   It is a ~130-line `switch` over phases; the `runner.JobRunner`
   call site at the Running case is what PR15 wired to a real engine.
-- **For PR16:** read
-  [`internal/runner/subprocess.go`](../../core/control-plane/internal/runner/subprocess.go)
-  for the engine-invocation contract, then look at the operator
-  image's
-  [`Dockerfile`](../../core/control-plane/Dockerfile)
-  for the adapter-bundling extension point.
+- **For PR17 (SeleniumBase bundling):** read PR16's
+  [`Dockerfile`](../../core/control-plane/Dockerfile) — the
+  `playwright-builder` stage is the pattern PR17's
+  `seleniumbase-builder` stage replicates with `uv`. SeleniumBase
+  drives Google Chrome (not Chromium), so the runtime base needs
+  Chrome installed; either install it on top of the Microsoft
+  Playwright base or pick a different base. Resources and volumes
+  in `config/manager/manager.yaml` carry over.
+- **For PR18 (curl-impersonate bundling):** the Go adapter compiles
+  to a single binary (no browser), but it links the native
+  libcurl-impersonate. The runtime needs the impersonate variant
+  (`curl_chrome116`) on PATH — either via the published release
+  tarball (the CI `python` job already documents the pinning) or
+  via apt where available.

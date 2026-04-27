@@ -6,6 +6,14 @@ IMG ?= controller:latest
 # with ENGINE_IMAGE=<image:tag> when targeting a release-pinned engine.
 ENGINE_IMAGE ?= spectre-engine:dev
 
+# Microsoft Playwright base image the runtime stage of the operator
+# Dockerfile builds on (PR16 §4.1). The exact pin lives at
+# adapters/playwright/.playwright-base-image so version bumps touch
+# one file. The default below resolves it at make-time so contributors
+# do not need to pass --build-arg explicitly; CI pins this in the
+# workflow step.
+PLAYWRIGHT_BASE_IMAGE ?= $(shell cat ../../adapters/playwright/.playwright-base-image)
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -122,7 +130,15 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager. Requires the engine image identified by ENGINE_IMAGE to exist locally.
-	$(CONTAINER_TOOL) build --build-arg ENGINE_IMAGE=$(ENGINE_IMAGE) -t ${IMG} .
+	# Build context is the repository root (PR16 §6.3): the
+	# playwright-builder stage needs proto/ to regenerate TypeScript
+	# bindings and adapters/playwright/ for the adapter source.
+	$(CONTAINER_TOOL) build \
+		--build-arg ENGINE_IMAGE=$(ENGINE_IMAGE) \
+		--build-arg PLAYWRIGHT_BASE_IMAGE=$(PLAYWRIGHT_BASE_IMAGE) \
+		-t ${IMG} \
+		-f Dockerfile \
+		../..
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -141,7 +157,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name control-plane-builder
 	$(CONTAINER_TOOL) buildx use control-plane-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg ENGINE_IMAGE=$(ENGINE_IMAGE) --tag ${IMG} -f Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg ENGINE_IMAGE=$(ENGINE_IMAGE) --build-arg PLAYWRIGHT_BASE_IMAGE=$(PLAYWRIGHT_BASE_IMAGE) --tag ${IMG} -f Dockerfile.cross ../..
 	- $(CONTAINER_TOOL) buildx rm control-plane-builder
 	rm Dockerfile.cross
 

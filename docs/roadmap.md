@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-26 (Phase 2.5 in progress; PR14 opens Phase 3).
+> **Last updated:** 2026-04-27 (Phase 3 in progress; PR16 closes the end-to-end loop with the bundled Playwright adapter).
 
 ## Phase 0 — Foundation (current)
 
@@ -215,17 +215,33 @@ and the v1alpha2 escape hatches.
       image is multi-stage: it pulls `/usr/local/bin/spectre` out of
       `spectre-engine:dev` so the runtime layer carries both
       binaries. (PR15.)
-- [ ] Operator image bundles the reference adapters (Playwright +
-      Chromium minimum) and the in-cluster smoke against
-      `hello-hackernews` ticks. (PR16.)
+- [x] Operator image bundles the Playwright adapter (Microsoft
+      Playwright base, pinned by digest) and the in-cluster smoke
+      against `hello-hackernews` ticks: 30 JSONL rows from the
+      Hacker News front page through engine → adapter → Chromium,
+      surfaced via `kubectl logs`. The §3 invariant
+      (subprocess-in-pod) and the §5 invariant (reconciler /
+      `JobRunner` / envtest unchanged) both held. SeleniumBase and
+      curl-impersonate replicate the builder-stage pattern in
+      PR17 and PR18 respectively. (PR16.)
+- [ ] Operator image bundles the SeleniumBase adapter. Adds a
+      `seleniumbase-builder` stage that uses `uv` to install the
+      adapter; the runtime needs Google Chrome (not Chromium) so
+      either install Chrome on top of the Microsoft Playwright
+      base or pick a different base; manager pod spec resources /
+      volumes extend to cover the second adapter. (PR17.)
+- [ ] Operator image bundles the curl-impersonate adapter. Adds
+      a `curl-impersonate-builder` stage; the runtime needs the
+      impersonate variant binary (`curl_chrome116`) on PATH.
+      (PR18.)
 - [ ] `ScrapeFleet` CRD (fan-out wrapper that creates N
       `ScrapeJob` instances with parameter substitution) and
       `ScrapeSchedule` CRD (cron-like recurring `ScrapeJob`
-      creator). Both build on `ScrapeJob` semantics. (PR16+.)
+      creator). Both build on `ScrapeJob` semantics. (PR19+.)
 - [ ] Helm chart at `helm/spectre-control-plane/` for cluster-side
-      installation. (PR17+.)
+      installation. (PR19+.)
 - [ ] Validating and mutating webhooks beyond
-      `+kubebuilder:validation` markers. (PR18+.)
+      `+kubebuilder:validation` markers. (PR19+.)
 - [ ] Observability: Prometheus metrics, OpenTelemetry traces,
       structured logs beyond controller-runtime defaults. (Phase 3
       follow-up.)

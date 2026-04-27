@@ -185,8 +185,11 @@ op-build: cp-build
 # Points the SubprocessRunner at the workspace's release-build spectre
 # binary and the workspace adapters/ directory so JSONL output flows
 # through the real engine + Playwright stack — equivalent to what the
-# operator image does in-cluster, just outside the Pod. Builds the
-# spectre binary and the Playwright adapter on demand.
+# operator image does in-cluster, just outside the Pod. The
+# --adapters-path override is mandatory here: PR16 changed the manager's
+# default to /opt/spectre/adapters (the in-image install path), which
+# does not exist on the developer host. Builds the spectre binary and
+# the Playwright adapter on demand.
 op-run: spectre-build pw-build
     cd core/control-plane && \
         GOTOOLCHAIN=go1.25.3 go run ./cmd/main.go \
@@ -201,24 +204,49 @@ op-uninstall-crds:
 
 # Build the operator image. Depends on the engine image because the
 # multi-stage Dockerfile copies /usr/local/bin/spectre out of it
-# (ADR-0019 §3 / PR15 §4.3). Single-arch (linux/amd64) to match the
-# engine image; multi-arch is release-engineering work.
+# (ADR-0019 §3 / PR15 §4.3). PR16 added a playwright-builder stage
+# that bundles the Playwright adapter at /opt/spectre/adapters/playwright
+# and switched the runtime base to the Microsoft Playwright image
+# pinned in adapters/playwright/.playwright-base-image. Build context
+# is the repo root because the playwright-builder stage regenerates
+# TypeScript proto bindings from proto/. Single-arch (linux/amd64) to
+# match the engine image and the Microsoft base; multi-arch is
+# release-engineering work.
 op-build-image: engine-image
     docker buildx build \
         --platform=linux/amd64 \
         --build-arg ENGINE_IMAGE=spectre-engine:dev \
+        --build-arg PLAYWRIGHT_BASE_IMAGE="$(cat adapters/playwright/.playwright-base-image)" \
         -t spectre-control-plane:dev \
         -f core/control-plane/Dockerfile \
         --load \
-        core/control-plane
+        .
 
 # Smoke-test the operator image by invoking the bundled spectre
-# binary. Mirrors the engine-image-run recipe: confirms the multi-
-# stage COPY --from=engine landed the binary in the runtime layer.
+# binary AND verifying the bundled Playwright adapter assets are in
+# place. Mirrors the CI operator-image job; failures here surface
+# bad COPY paths or missing build-args before kind smoke.
 op-image-smoke: op-build-image
     docker run --rm --platform=linux/amd64 \
         --entrypoint=/usr/local/bin/spectre \
         spectre-control-plane:dev version
+    docker run --rm --platform=linux/amd64 \
+        --entrypoint=/bin/sh \
+        spectre-control-plane:dev -c \
+        'test -f /opt/spectre/adapters/playwright/dist/index.js && \
+         test -d /opt/spectre/adapters/playwright/node_modules/playwright && \
+         test -f /opt/spectre/adapters/playwright/driver.yaml && \
+         echo "playwright adapter assets OK"'
+
+# In-cluster end-to-end smoke test for the bundled operator image.
+# Brings up a kind cluster, loads the operator and engine images,
+# applies the CRD plus the hello-hackernews sample, polls until phase
+# is terminal, and asserts rowsExtracted >= 25. Mirrors PR16 §6 §7;
+# the CI operator-smoke-kind job exercises the same flow.
+#
+# Tear down with `kind delete cluster --name spectre-pr16` when done.
+op-smoke-kind CLUSTER='spectre-pr16': op-build-image
+    bash core/control-plane/hack/smoke-kind.sh {{CLUSTER}}
 
 # ---------------------------------------------------------------------------
 # Go curl-impersonate adapter (adapters/curl-impersonate)
