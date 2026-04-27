@@ -77,6 +77,42 @@ smoke_one() {
         log "[${name}] FAIL: phase=${phase:-<empty>} (expected Completed)"
         log "[${name}] Operator pod describe"
         kubectl -n "${NAMESPACE}" describe pod -l control-plane=controller-manager || true
+        # Direct google-chrome diagnostic from inside the live
+        # operator Pod when SeleniumBase fails: chromedriver
+        # collapses any Chrome child-process exit into a generic
+        # "Chrome instance exited" — running google-chrome
+        # ourselves with the same flags surfaces Chrome's actual
+        # stderr (crashpad failures, missing libs, syscall
+        # rejection, etc.). The Pod is still up; only the
+        # ScrapeJob's child process tree died.
+        if [ "${name}" = "seleniumbase-extract" ]; then
+            log "[${name}] Direct Chrome diagnostic from inside the operator Pod"
+            local pod
+            pod="$(kubectl -n "${NAMESPACE}" get pod \
+                -l control-plane=controller-manager \
+                -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+            if [ -n "${pod}" ]; then
+                kubectl -n "${NAMESPACE}" exec "${pod}" -c manager -- \
+                    /bin/sh -c '
+                        set +e
+                        echo "--- env"
+                        echo "HOME=${HOME:-<unset>}"
+                        id
+                        echo "--- chrome direct (mirrors adapter chromium_arg)"
+                        UD=$(mktemp -d -p /tmp chrome-diag-XXXXXX 2>/dev/null || echo /tmp/chrome-diag)
+                        google-chrome \
+                            --headless \
+                            --no-sandbox \
+                            --disable-dev-shm-usage \
+                            --disable-gpu \
+                            --disable-software-rasterizer \
+                            --disable-breakpad \
+                            --user-data-dir="${UD}" \
+                            --dump-dom https://example.com 2>&1 | head -60
+                        echo "--- chrome exit=$?"
+                    ' || true
+            fi
+        fi
         return 1
     fi
 
