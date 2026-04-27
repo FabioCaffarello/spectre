@@ -50,7 +50,7 @@ Both paths produce the same environment for `just check` and
 | Toolchain          | Version                  | Source                           |
 |--------------------|--------------------------|----------------------------------|
 | Rust               | stable (system-wide)     | rustup                           |
-| Go                 | 1.24                     | Official tarball                 |
+| Go                 | 1.25.3                   | Official tarball                 |
 | Node.js            | 20 LTS                   | NodeSource apt                   |
 | pnpm               | 9 (via corepack)         | corepack                         |
 | Python             | 3.12                     | deadsnakes PPA                   |
@@ -64,6 +64,8 @@ Both paths produce the same environment for `just check` and
 | actionlint         | 1.7.4                    | upstream binary                  |
 | gitleaks           | 8.21.2                   | upstream binary                  |
 | pre-commit         | latest                   | pip3                             |
+| kubebuilder        | 4.13.1                   | upstream binary                  |
+| kubectl            | 1.31.0                   | upstream binary                  |
 
 VS Code extensions installed automatically: rust-analyzer,
 even-better-toml, Go, Python, mypy-type-checker, ruff, ESLint,

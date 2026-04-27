@@ -8,17 +8,24 @@
 # ADR-0018 records the decisions.
 #
 # Pinned versions for reproducibility:
-#   Go        1.24.0 (matches engine + adapters CI)
-#   Node      20 LTS (Active LTS through April 2026)
-#   Python    3.12   (apt deadsnakes PPA)
-#   protoc    27.2   (matches engine Dockerfile)
+#   Go          1.25.3 (matches the kubebuilder-scaffolded
+#                       core/control-plane go.mod; backwards-compatible
+#                       with adapters that pin go 1.24)
+#   Node        20 LTS (Active LTS through April 2026)
+#   Python      3.12   (apt deadsnakes PPA)
+#   protoc      27.2   (matches engine Dockerfile)
 #   curl-impersonate 0.5.4 (matches CI; ADR-0016 §1)
+#   kubebuilder 4.13.1 (PR14: scaffolding for `kubebuilder create api`
+#                       on Phase 3 follow-up CRDs; ADR-0019 §1)
+#   kubectl     1.31.0 (PR14: apply ScrapeJob CRs against a local
+#                       cluster; the operator's `make install/run`
+#                       targets call kubectl directly)
 #
 # Chrome / ChromeDriver track the apt stable channel (auto-update on
 # image rebuild). PR14+ may pin them if conformance flakes.
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
 
-ARG GO_VERSION=1.24.0
+ARG GO_VERSION=1.25.3
 ARG NODE_MAJOR=20
 ARG PROTOC_VERSION=27.2
 ARG CURL_IMPERSONATE_VERSION=0.5.4
@@ -26,6 +33,8 @@ ARG BUF_VERSION=1.45.0
 ARG JUST_VERSION=1.36.0
 ARG ACTIONLINT_VERSION=1.7.4
 ARG GITLEAKS_VERSION=8.21.2
+ARG KUBEBUILDER_VERSION=4.13.1
+ARG KUBECTL_VERSION=1.31.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -188,6 +197,31 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends python3-pip \
  && pip3 install --no-cache-dir --break-system-packages pre-commit \
  && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Kubernetes operator tooling (PR14, ADR-0019). kubebuilder scaffolds
+# CRDs and controllers; kubectl drives `make install/run` against the
+# developer's current kubectl context. setup-envtest, controller-gen,
+# kustomize, and golangci-lint are vendored on demand by the
+# kubebuilder Makefile into core/control-plane/bin/, so the image
+# itself only needs the two top-level binaries.
+# ---------------------------------------------------------------------------
+RUN KB_ARCH=$(case "$(uname -m)" in \
+        x86_64) echo "amd64" ;; \
+        aarch64) echo "arm64" ;; \
+        *) echo "unsupported"; exit 1 ;; \
+    esac) \
+ && curl -fsSL -o /usr/local/bin/kubebuilder \
+      "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v${KUBEBUILDER_VERSION}/kubebuilder_linux_${KB_ARCH}" \
+ && chmod +x /usr/local/bin/kubebuilder
+RUN KC_ARCH=$(case "$(uname -m)" in \
+        x86_64) echo "amd64" ;; \
+        aarch64) echo "arm64" ;; \
+        *) echo "unsupported"; exit 1 ;; \
+    esac) \
+ && curl -fsSL -o /usr/local/bin/kubectl \
+      "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${KC_ARCH}/kubectl" \
+ && chmod +x /usr/local/bin/kubectl
 
 # ---------------------------------------------------------------------------
 # Per-user PATH propagation. The vscode user inherits the system tools
