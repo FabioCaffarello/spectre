@@ -53,7 +53,7 @@ prompt. Updated each session that lands work on this PR.
 - [x] Step 9 — Append update note to ADR-0008 (R2.1 supersession of §2 / §4)
 - [x] Step 10 — Generate `docs/refactor-audit.md` (tabular inventory)
 - [x] Step 11 — Update `docs/adr/README.md` index, status tracker, roadmap
-- [ ] Step 12 — Final verification (`just check`, diff scope)
+- [x] Step 12 — Final verification (diff scope confirmed: 7 `.md` files only; `just check` blocked by the same pre-existing `curl-imp-lint` Go 1.26-vs-1.25 toolchain mismatch noted under R1.1, unrelated to R2.1)
 - [ ] Step 13 — Open the PR
 - [ ] Step 14 — Summary report
 
