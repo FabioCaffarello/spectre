@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -37,8 +38,14 @@ import (
 
 	spectrev1alpha1 "github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha1"
 	"github.com/FabioCaffarello/spectre/core/control-plane/internal/controller"
+	"github.com/FabioCaffarello/spectre/core/control-plane/internal/runner"
 	// +kubebuilder:scaffold:imports
 )
+
+// stubRunnerSleep is the simulated work time PR14's StubRunner spends
+// in the Running phase. Long enough to make Pending → Running →
+// Completed transitions visible by hand in `kubectl get scrapejob -w`.
+const stubRunnerSleep = 5 * time.Second
 
 var (
 	scheme   = runtime.NewScheme()
@@ -178,9 +185,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// TODO(PR15): replace runner.StubRunner with runner.SubprocessRunner.
+	// The SubprocessRunner shells out to the spectre engine binary,
+	// captures JSONL output, and tracks row counts. See ADR-0019 §5 for
+	// the seam.
+	jobRunner := &runner.StubRunner{SleepDuration: stubRunnerSleep}
+
 	if err := (&controller.ScrapeJobReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Runner: jobRunner,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScrapeJob")
 		os.Exit(1)
