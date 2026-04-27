@@ -329,3 +329,31 @@ diagnostic rather than a generic "connection refused" timeout.
   [ADR-0001 Driver Protocol as primitive](0001-driver-protocol-as-architectural-primitive.md),
   [ADR-0003 Schema-transport separation](0003-schema-transport-separation.md),
   [ADR-0007 Protocol code generation](0007-protocol-code-generation.md).
+
+## Update (R1.1, ADR-0020)
+
+This ADR's decisions are partially superseded. Specifically:
+
+- §1 (Node gRPC framework — `@connectrpc/connect-node`):
+  preserved. The framework choice carries forward; only the
+  transport address changes.
+- §2 (Adapter lifecycle and socket management — UDS-based):
+  superseded by ADR-0022 (R2). Adapters become gRPC services
+  listening on TCP; service discovery replaces socket-path
+  resolution; `:authority`-header workarounds and stale-socket
+  cleanup become irrelevant.
+- §3 (Python conformance harness layout): preserved. The harness
+  shape (the `DriverHarness` class, the pytest fixture pattern,
+  the `capabilities.py` constants module) stays; only the
+  transport it dials changes.
+- §4 (Readiness detection — stdout-line primary, connect-poll
+  fallback): superseded by ADR-0022 (R2). Readiness for TCP-
+  served adapter services uses gRPC health-check semantics
+  rather than a stdout banner.
+
+The refactor's phase R2 contains the implementation work that
+retires the superseded portions (UDS socket creation, the
+`:authority` workaround, the connect-poll fallback). See
+[ADR-0020](0020-microservices-architecture-supersession.md) §5
+for the full phase sequence and §4 for the chosen architectural
+direction.

@@ -350,3 +350,34 @@ Rejected:
   [ADR-0003 Schema-transport separation](0003-schema-transport-separation.md),
   [ADR-0004 Protocol versioning strategy](0004-protocol-versioning-strategy.md),
   [ADR-0008 Driver handshake and conformance harness](0008-driver-handshake-and-conformance-harness.md).
+
+## Update (R1.1, ADR-0020)
+
+This ADR's decisions are partially revisited. Specifically:
+
+- §1 (Browser launch timing — lazy on first `Navigate`):
+  preserved. The contract that `Initialize` is a metadata
+  exchange and that the first `Navigate` is what launches the
+  browser carries forward unchanged; only the process boundary
+  on which the launch happens (a long-lived adapter service
+  rather than a per-job subprocess) changes.
+- §2 (Session lifecycle and reuse semantics): revisited under
+  ADR-0023 (R4). The strict-`session_id` contract and the
+  per-session `BrowserContext`/`Page` reuse stay in force; the
+  storage location of the session record moves from in-process
+  memory to Redis so sessions survive adapter restarts. The
+  ephemeral default (no persistence across `Close`) is
+  preserved.
+- §3 (Error taxonomy mapping — Playwright surface →
+  `DriverError.Code`): preserved. The frozen v1alpha1 enum and
+  the mapping table are unchanged. Per-row test coverage grows
+  in subsequent phases as service-level error paths surface
+  evidence.
+- §4 (Local HTTP fixture pattern): preserved. The pattern moves
+  into the Compose stack as a service, but the stdlib
+  `ThreadingHTTPServer` shape and the four routes are unchanged.
+
+The refactor's phase R4 contains the implementation work that
+moves session-state ownership to Redis. See
+[ADR-0020](0020-microservices-architecture-supersession.md) §5
+for the full phase sequence.
