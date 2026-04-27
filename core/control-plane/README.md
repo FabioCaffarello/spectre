@@ -7,8 +7,11 @@ PR16+) orchestrates fan-out and scheduling.
 > **Status:** Phase 3 in progress. PR14 shipped the scaffolding,
 > the `ScrapeJob` CRD, and the state-machine reconciler against a
 > stub. PR15 wired `SubprocessRunner` so jobs actually run against
-> the spectre engine binary the operator image bundles. PR16 picks
-> up adapter bundling and the in-cluster smoke test. See
+> the spectre engine binary the operator image bundles. PR16
+> bundled the Playwright adapter into the operator image and
+> closed the end-to-end loop with an in-cluster smoke against
+> `hello-hackernews`. SeleniumBase (PR17) and curl-impersonate
+> (PR18) replicate the builder-stage pattern. See
 > [`docs/architecture/control-plane.md`](../../docs/architecture/control-plane.md)
 > for the user-facing guide and
 > [ADR-0019](../../docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md)
@@ -39,8 +42,10 @@ The standard kubebuilder v4 layout. Notable files:
   binary, streams JSONL through `bufio.Scanner`, reports row counts.
 - [`cmd/main.go`](cmd/main.go) — manager bootstrap; wires
   `SubprocessRunner` into the reconciler. Exposes `--engine-binary`
-  (default `/usr/local/bin/spectre`, the path the operator image
-  installs to) and `--adapters-path` (optional engine override).
+  (default `/usr/local/bin/spectre`) and `--adapters-path` (default
+  `/opt/spectre/adapters`, the path the operator image installs the
+  bundled adapters to; overridden by `just op-run` to point at the
+  workspace `adapters/` directory).
 - [`config/samples/`](config/samples/) — three sample CRs, one per
   reference adapter.
 
@@ -53,16 +58,28 @@ just op-test           # envtest reconciler suite
 just op-build          # produce bin/manager (Go binary only)
 just op-build-image    # multi-stage operator image; depends on
                        # the engine image (built first if missing)
-just op-image-smoke    # build the image and verify the bundled
-                       # spectre binary reports its version
+just op-image-smoke    # build the image, verify the bundled spectre
+                       # binary reports its version, and verify the
+                       # bundled Playwright adapter assets are in place
+just op-smoke-kind     # full in-cluster end-to-end smoke against
+                       # hello-hackernews (linux/amd64 hosts only)
 ```
 
-The operator image is multi-stage: the `manager` binary is
-built from this directory, and `/usr/local/bin/spectre` is copied
-out of `spectre-engine:dev` (override with `ENGINE_IMAGE=<image>`
-to the Makefile). PR15 §4.3 records the rationale; ADR-0019 §3
-records the single-Pod execution model that motivates bundling
-the engine into the operator image.
+The operator image is multi-stage: the `manager` binary is built
+from this directory, `/usr/local/bin/spectre` is copied out of
+`spectre-engine:dev` (override with `ENGINE_IMAGE=<image>` to the
+Makefile), and the Playwright adapter is built in a
+`playwright-builder` stage and installed at
+`/opt/spectre/adapters/playwright/`. The runtime base is the
+official Microsoft Playwright image
+(`mcr.microsoft.com/playwright:v1.59.1-noble`), pinned by digest in
+[`adapters/playwright/.playwright-base-image`](../../adapters/playwright/.playwright-base-image)
+so version bumps touch one file. The first build pulls ~600 MB of
+Microsoft base layers; subsequent builds reuse them. The resulting
+operator image is ~1.0 GB on disk (Microsoft base ships Chromium +
+Firefox + WebKit; trimming to Chromium-only is a separate
+optimisation PR). ADR-0019 §3 records the single-Pod execution
+model.
 
 Or directly via the kubebuilder Makefile:
 
@@ -97,15 +114,19 @@ synthesise the LeaderElectionID.
 
 ## What this does not do (yet)
 
-- **Bundle adapters.** The operator image carries the engine
-  binary but not Playwright/Chromium, SeleniumBase, or
-  curl-impersonate. In-cluster jobs need adapters mounted into the
-  Pod or available at `--adapters-path`. PR16 lands adapter
-  bundling.
+- **Bundle SeleniumBase / curl-impersonate.** PR16 ships only the
+  Playwright adapter in the operator image. SeleniumBase (PR17)
+  needs Google Chrome rather than Chromium and a uv-managed venv;
+  curl-impersonate (PR18) needs the native libcurl-impersonate
+  binary on PATH. Each replicates PR16's builder-stage pattern.
+- **Multi-arch images.** PR16 ships linux/amd64 only — the engine
+  Dockerfile cross-compiles to `x86_64-unknown-linux-musl`, and
+  the manager / Microsoft base images run on the same arch.
+  linux/arm64 is release-engineering follow-up.
 - **Fan-out / scheduling.** `ScrapeFleet` and `ScrapeSchedule` CRDs
-  are PR16+ work.
-- **Deployment artifacts.** No Helm chart yet (PR17+); no
-  validating/mutating webhooks yet (PR18+); no Prometheus metrics
+  are PR19+ work.
+- **Deployment artifacts.** No Helm chart yet (PR19+); no
+  validating/mutating webhooks yet (PR19+); no Prometheus metrics
   beyond controller-runtime's defaults.
 - **Observability.** Structured logs, OpenTelemetry traces, and
   metrics are Phase 3 follow-up.

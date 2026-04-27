@@ -240,6 +240,25 @@ Rejected:
 The chosen model is right for v1alpha1. v1alpha2 may revisit any
 of the three trade-offs above with a single targeted ADR.
 
+> **Status update (PR16).** The §3 invariant (single Pod, three
+> nested processes) held. PR16 added a `playwright-builder` stage
+> to `core/control-plane/Dockerfile` and switched the runtime base
+> to the official Microsoft Playwright image
+> (`mcr.microsoft.com/playwright:v1.59.1-noble`, pinned by digest
+> in `adapters/playwright/.playwright-base-image`). The Playwright
+> adapter is installed at `/opt/spectre/adapters/playwright/`
+> (compiled `dist/`, pruned production `node_modules/`, and
+> `driver.yaml`); Chromium and its system dependencies come from
+> the base image. The reconciler, the `JobRunner` interface, the
+> runner unit tests, and the envtest suite are byte-for-byte
+> unchanged from PR15 — the only Go diff is a two-line
+> default-flag change in `cmd/main.go` (`--adapters-path` defaults
+> to `/opt/spectre/adapters`). The bundled engine + adapter flow
+> produced 30 JSONL rows from `hello-hackernews` end-to-end.
+> SeleniumBase (PR17) and curl-impersonate (PR18) replicate the
+> same builder-stage pattern; the v1alpha2 escape hatches above
+> remain available unchanged.
+
 ### 4. ScrapeJob status as state machine, not condition arbiter
 
 Chosen: **`ScrapeJobStatus.Phase` is the source of truth for the
