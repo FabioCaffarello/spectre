@@ -496,29 +496,36 @@ jobs:
     # job is self-contained and does not need a registry round-trip.
     if: needs.changes.outputs.operator == 'true' || needs.changes.outputs.engine_image == 'true'
     runs-on: ubuntu-latest
+    # Both builds run with `docker build` (BuildKit on the daemon)
+    # rather than `docker buildx build`. The default buildx
+    # docker-container driver keeps an image cache isolated from the
+    # local daemon, so a `--load`-ed image from one buildx call is
+    # not visible to a subsequent buildx call's
+    # `FROM ${ENGINE_IMAGE}`. Plain `docker build` shares the daemon
+    # cache between both steps; the GitHub runner is already
+    # linux/amd64 so no cross-platform emulation is needed (the
+    # local justfile recipes still use buildx for the Apple Silicon
+    # case, where QEMU is required).
+    env:
+      DOCKER_BUILDKIT: "1"
     steps:
       - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v3
       - name: Build engine image
         run: |
-          docker buildx build \
-            --platform=linux/amd64 \
+          docker build \
             -t spectre-engine:ci \
             -f core/engine/Dockerfile \
-            --load \
             .
       - name: Build operator image
         run: |
-          docker buildx build \
-            --platform=linux/amd64 \
+          docker build \
             --build-arg ENGINE_IMAGE=spectre-engine:ci \
             -t spectre-control-plane:ci \
             -f core/control-plane/Dockerfile \
-            --load \
             core/control-plane
       - name: Smoke test (engine binary present)
         run: |
-          docker run --rm --platform=linux/amd64 \
+          docker run --rm \
             --entrypoint=/usr/local/bin/spectre \
             spectre-control-plane:ci version
       - name: Report image size
