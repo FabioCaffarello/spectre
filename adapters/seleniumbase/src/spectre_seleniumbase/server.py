@@ -263,15 +263,21 @@ def _default_driver_factory() -> Any:
     # - ``--disable-gpu`` / ``--disable-software-rasterizer``: the
     #   container has no GPU drivers; the software-rasterizer
     #   fallback can crash on a renderless host.
+    # - ``--disable-breakpad``: disables Chrome's crashpad child
+    #   process. Without this flag, ``chrome_crashpad_handler``
+    #   tries to create its database under ``$HOME/.local`` and
+    #   dies (`--database is required`) when the rootfs is
+    #   read-only — Chromedriver then reports the resulting child
+    #   exit as "Chrome instance exited", masking the real cause.
+    #   Playwright's default flag set already disables breakpad
+    #   for the same reason.
     # - ``--user-data-dir=<tmp>``: when ``readOnlyRootFilesystem``
-    #   is true on the Pod, Chrome cannot write its default
-    #   user-data-dir under ``$HOME`` and exits with a generic
-    #   "Chrome instance exited" the moment chromedriver hands it
-    #   the first command. Pointing the data dir at an emptyDir
-    #   ``/tmp`` mount (the only writable location on the Pod)
-    #   keeps Chrome happy. ``mkdtemp`` returns a fresh path per
-    #   ``Initialize``; the lifecycle of the directory is tied to
-    #   the Pod (Kubernetes reclaims it on Pod termination).
+    #   is true on the Pod, Chrome cannot write its preferences
+    #   directory under ``$HOME``. Pointing the data dir at an
+    #   emptyDir ``/tmp`` mount (the only writable location on
+    #   the Pod) keeps Chrome's per-profile state happy.
+    #   ``mkdtemp`` returns a fresh path per ``Initialize``;
+    #   Kubernetes reclaims it on Pod termination.
     if os.environ.get("SPECTRE_SELENIUMBASE_CONTAINER") == "1":
         user_data_dir = tempfile.mkdtemp(prefix="spectre-chrome-")
         kwargs["chromium_arg"] = ",".join(
@@ -280,6 +286,7 @@ def _default_driver_factory() -> Any:
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-software-rasterizer",
+                "--disable-breakpad",
                 f"--user-data-dir={user_data_dir}",
             ]
         )
