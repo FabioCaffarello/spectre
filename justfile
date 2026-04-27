@@ -223,9 +223,10 @@ op-build-image: engine-image
         .
 
 # Smoke-test the operator image by invoking the bundled spectre
-# binary AND verifying the bundled Playwright adapter assets are in
-# place. Mirrors the CI operator-image job; failures here surface
-# bad COPY paths or missing build-args before kind smoke.
+# binary AND verifying the bundled Playwright + SeleniumBase adapter
+# assets are in place. Mirrors the CI operator-image job; failures
+# here surface bad COPY paths, missing build-args, or Chrome /
+# ChromeDriver version skew before kind smoke.
 op-image-smoke: op-build-image
     docker run --rm --platform=linux/amd64 \
         --entrypoint=/usr/local/bin/spectre \
@@ -237,15 +238,28 @@ op-image-smoke: op-build-image
          test -d /opt/spectre/adapters/playwright/node_modules/playwright && \
          test -f /opt/spectre/adapters/playwright/driver.yaml && \
          echo "playwright adapter assets OK"'
+    docker run --rm --platform=linux/amd64 \
+        --entrypoint=/bin/sh \
+        spectre-control-plane:dev -c '\
+        set -e; \
+        test -f /opt/spectre/adapters/seleniumbase/driver.yaml; \
+        test -x /opt/spectre/adapters/seleniumbase/.venv/bin/python; \
+        /opt/spectre/adapters/seleniumbase/.venv/bin/python -c "import spectre_seleniumbase"; \
+        /opt/spectre/adapters/seleniumbase/.venv/bin/python -c "from spectre.driver.v1alpha1 import driver_pb2"; \
+        google-chrome --version; \
+        chromedriver --version; \
+        echo "seleniumbase adapter assets OK"'
 
 # In-cluster end-to-end smoke test for the bundled operator image.
 # Brings up a kind cluster, loads the operator and engine images,
-# applies the CRD plus the hello-hackernews sample, polls until phase
-# is terminal, and asserts rowsExtracted >= 25. Mirrors PR16 §6 §7;
-# the CI operator-smoke-kind job exercises the same flow.
+# applies the CRD plus both reference samples, polls each until
+# its phase is terminal, and asserts rowsExtracted >= 1 per
+# sample. PR17 extended the script to cover both bundled
+# adapters (hello-hackernews + seleniumbase-extract); the CI
+# operator-smoke-kind job exercises the same flow.
 #
-# Tear down with `kind delete cluster --name spectre-pr16` when done.
-op-smoke-kind CLUSTER='spectre-pr16': op-build-image
+# Tear down with `kind delete cluster --name spectre-pr17` when done.
+op-smoke-kind CLUSTER='spectre-pr17': op-build-image
     bash core/control-plane/hack/smoke-kind.sh {{CLUSTER}}
 
 # ---------------------------------------------------------------------------
