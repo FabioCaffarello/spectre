@@ -30,7 +30,7 @@ A decision moves through three states:
 | 0005  | [Licensing (Apache 2.0)](0005-licensing.md)                                   | accepted |
 | 0006  | [Build orchestration (Just)](0006-build-orchestration.md)                     | accepted |
 | 0007  | [Protocol code generation](0007-protocol-code-generation.md)                  | accepted |
-| 0008  | [Driver handshake and conformance harness](0008-driver-handshake-and-conformance-harness.md) | accepted (§2 UDS superseded by ADR-0022 in R2) |
+| 0008  | [Driver handshake and conformance harness](0008-driver-handshake-and-conformance-harness.md) | accepted (§1 + §3 preserved; §2 + §4 superseded by ADR-0022 / ADR-0021 §6 in R2; implementation in R2.2 / R2.3) |
 | 0009  | [Navigate, session lifecycle, and the driver error mapping](0009-navigate-and-session-lifecycle.md) | accepted (session lifecycle revisited under ADR-0023 in R4) |
 | 0010  | [Element lifecycle, capability granularity, and selector mapping](0010-element-lifecycle-and-capability-gating.md) | accepted |
 | 0011  | [Screenshot RPC, scope mapping, and payload boundaries](0011-screenshot-rpc-and-payload-boundaries.md) | accepted |
@@ -43,6 +43,8 @@ A decision moves through three states:
 | 0018  | [Devcontainer and engine image (Phase 2.5 kickoff)](0018-devcontainer-and-engine-image.md) | accepted (revisited under ADR-0025 in R6) |
 | 0019  | [Control plane architecture and ScrapeJob CRD (Phase 3 kickoff)](0019-control-plane-architecture-and-scrapejob-crd.md) | accepted (§3 subprocess-in-pod superseded by ADR-0020; §5 `JobRunner` preserved) |
 | 0020  | [Microservices architecture supersession](0020-microservices-architecture-supersession.md) | accepted |
+| 0021  | [Service discovery](0021-service-discovery.md)                                | accepted |
+| 0022  | [TCP / gRPC transport](0022-tcp-grpc-transport.md)                            | accepted (supersedes ADR-0008 §2) |
 
 ## When to write an ADR
 

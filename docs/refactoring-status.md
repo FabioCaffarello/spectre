@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-27
-Current phase: **R1.1 — ADR-0020 supersession (in progress)**
-Next PR: **R2.1 — ADR-0021 (service discovery) + ADR-0022 (TCP transport details)**
+Current phase: **R2.1 — ADR-0021 (service discovery) + ADR-0022 (TCP transport) (in progress)**
+Next PR: **R2.2 — Adapter transport switch (UDS → TCP, all three adapters)**
 
 ## Phases
 
@@ -19,8 +19,8 @@ eight phases. Order is fixed; phases cannot be reordered or
 skipped. See [ADR-0020 §5](adr/0020-microservices-architecture-supersession.md)
 for the per-phase ADR deltas.
 
-- [ ] **R1.1 — ADR-0020 supersession** *(in progress)*
-- [ ] R2.1 — ADR-0021 service discovery + ADR-0022 TCP transport details
+- [x] **R1.1 — ADR-0020 supersession** *(merged 2026-04-27, PRs #26 + #27)*
+- [ ] **R2.1 — ADR-0021 service discovery + ADR-0022 TCP transport details** *(in progress)*
 - [ ] R2.2 — Adapter transport switch (UDS → TCP, all three adapters)
 - [ ] R2.3 — Engine transport + gRPC server (UDS client → TCP client)
 - [ ] R3.1 — `EngineClientRunner` replaces `SubprocessRunner`
@@ -37,39 +37,42 @@ for the per-phase ADR deltas.
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R1.1)
+## Current PR checklist (R2.1)
 
-The R1.1 PR's per-step checklist mirrors Section 7 of the phase
+The R2.1 PR's per-step checklist mirrors Section 7 of the phase
 prompt. Updated each session that lands work on this PR.
 
 - [x] Step 1 — Inventory and confirm working tree
-- [x] Step 2 — Draft ADR-0020 §1 (Context and problem statement)
-- [x] Step 3 — Draft ADR-0020 §2 (Decision drivers)
-- [x] Step 4 — Draft ADR-0020 §3 (Considered options)
-- [x] Step 5 — Draft ADR-0020 §4 (Decision outcome)
-- [x] Step 6 — Draft ADR-0020 §5 (Implementation phases)
-- [x] Step 7 — Draft ADR-0020 §6 (ADR status changes table)
-- [x] Step 8 — Status notes on superseded ADRs (0008, 0009, 0013, 0019)
-- [x] Step 9 — Update `docs/adr/README.md` index
-- [x] Step 10 — Create `docs/refactoring-status.md` *(this file)*
-- [x] Step 11 — Update top-level docs (`roadmap.md`, `README.md`, `CHANGELOG.md`)
-- [x] Step 12 — Final verification (diff scope confirmed: 10 `.md` files only; `just check` blocked by pre-existing `curl-imp-lint` Go-toolchain mismatch unrelated to R1.1)
+- [x] Step 2 — Scan current code for UDS usage (grep-based inventory)
+- [x] Step 3 — Draft ADR-0021 §1–§3 (context, drivers, discovery model)
+- [x] Step 4 — Draft ADR-0021 §4–§5 (port allocation, env vars)
+- [x] Step 5 — Draft ADR-0021 §6–§8 (healthcheck, exclusions, alternatives)
+- [x] Step 6 — Draft ADR-0022 §1–§4 (context, drivers, contract, lifecycle)
+- [x] Step 7 — Draft ADR-0022 §5 (removal targets inventory)
+- [x] Step 8 — Draft ADR-0022 §6–§8 (security, exclusions, migration)
+- [x] Step 9 — Append update note to ADR-0008 (R2.1 supersession of §2 / §4)
+- [x] Step 10 — Generate `docs/refactor-audit.md` (tabular inventory)
+- [x] Step 11 — Update `docs/adr/README.md` index, status tracker, roadmap
+- [ ] Step 12 — Final verification (`just check`, diff scope)
 - [ ] Step 13 — Open the PR
 - [ ] Step 14 — Summary report
 
 ## Surfaced decisions
 
-No open architectural questions awaiting maintainer input. All
-four locked decisions for the refactor (microservices over
-subprocess-in-pod, TCP over UDS, stateful services included,
-Compose-only development) were settled before R1.1 began and are
-recorded in
-[ADR-0020 §2](adr/0020-microservices-architecture-supersession.md).
+No open architectural questions awaiting maintainer input. The
+five locked decisions for R2.1 (port allocation, env-var
+discovery, eager-fail dial, gRPC standard healthcheck, mTLS
+deferred to v1alpha2) were settled before the phase began and
+are documented in
+[ADR-0021](adr/0021-service-discovery.md) and
+[ADR-0022](adr/0022-tcp-grpc-transport.md).
 
 ## Known issues
 
-None. R1.1 is documentation-only; no code paths are quarantined,
-no tests skipped, no regressions introduced.
+None. R2.1 is documentation-only; no code paths are quarantined,
+no tests skipped, no regressions introduced. The pre-existing
+`curl-imp-lint` Go-toolchain mismatch noted under R1.1 is still
+present (unrelated to the refactor) and is tracked separately.
 
 ## How to read this document
 
