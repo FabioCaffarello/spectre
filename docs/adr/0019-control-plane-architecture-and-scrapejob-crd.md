@@ -258,6 +258,32 @@ of the three trade-offs above with a single targeted ADR.
 > SeleniumBase (PR17) and curl-impersonate (PR18) replicate the
 > same builder-stage pattern; the v1alpha2 escape hatches above
 > remain available unchanged.
+>
+> **Status update (PR17).** The §3 invariant held again with two
+> adapters bundled. PR17 added a `seleniumbase-builder` stage that
+> uses `uv` (pinned 0.5.11) to build the adapter's virtualenv at
+> the FINAL runtime path (`/opt/spectre/adapters/seleniumbase/.venv`)
+> so the venv's shebangs and `pyvenv.cfg` resolve unchanged after
+> COPY. The runtime stage extends — does not replace — the
+> Microsoft Playwright base from PR16 §4.1 with an apt overlay
+> (Python 3.12, Google Chrome stable from `dl.google.com`, and a
+> matching ChromeDriver provisioned via SeleniumBase's own
+> installer). Chrome and Chromium coexist cleanly: Playwright
+> launches Chromium via `PLAYWRIGHT_BROWSERS_PATH`, SeleniumBase
+> launches `/usr/bin/google-chrome` via ChromeDriver. At any
+> moment at most one runs (`MaxConcurrentReconciles=1` plus the
+> DSL `driver:` field selects exactly one). The §5 invariant
+> (reconciler / `JobRunner` / runner tests / envtest suite) held
+> byte-for-byte; PR17 has zero Go changes. The only adapter
+> source diff was a five-line patch to
+> `_default_driver_factory` adding a
+> `SPECTRE_SELENIUMBASE_CONTAINER` env-var knob that injects
+> `--no-sandbox --disable-dev-shm-usage` for the `restricted`
+> PodSecurityStandard; the env var is set in
+> `config/manager/manager.yaml`, the memory limit there bumped
+> from 2 GiB to 3 GiB for SeleniumBase headroom. curl-impersonate
+> (PR18) replicates the pattern in its own stage; the v1alpha2
+> escape hatches above remain available unchanged.
 
 ### 4. ScrapeJob status as state machine, not condition arbiter
 
