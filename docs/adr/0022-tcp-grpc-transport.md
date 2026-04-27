@@ -175,3 +175,222 @@ conformance suite. Per-platform divergence is confined to how
 the platform sends SIGTERM (Compose's `docker compose down`,
 Kubernetes' Pod termination grace period, the conformance
 harness's `Popen.send_signal`).
+
+## Removal targets
+
+The transport switch deletes every UDS-shaped construct from
+the codebase. The list below is grep-derived from the repo
+state at R2.1 and is the prescriptive work plan for R2.2 and
+R2.3. The companion file [`docs/refactor-audit.md`](../refactor-audit.md)
+restates the same inventory as a table for review-time
+spot-checking.
+
+The no-legacy principle (strategy prompt §2.2) requires that
+each item in the list be deleted, not parameterised. There is
+no UDS-or-TCP toggle, no fallback path, no environment-gated
+branch.
+
+### R2.2 — adapter-side removals
+
+Per-adapter source code that binds, advertises, or signals on
+a UDS:
+
+- **Playwright adapter** (`adapters/playwright/`).
+  - `src/server.ts` lines 626 and 639: replace
+    `http2.createServer` + `server.listen(socketPath)` with a
+    TCP-bound HTTP/2 server (or the `@connectrpc/connect-node`
+    Node-server adaptor) listening on `0.0.0.0:<port>`.
+  - `src/index.ts` lines 37-40 and 55: delete the
+    `resolveSocketPath` helper, the `--socket` /
+    `SPECTRE_DRIVER_SOCKET` precedence logic, and the
+    `ready unix:<path>` stdout banner. Replace with a
+    `SPECTRE_ADAPTER_GRPC_PORT` env-var read and a gRPC health
+    service registration.
+  - `src/index.test.ts` lines 34-49: delete the three
+    `resolveSocketPath` tests (precedence, fallback, relative-
+    path rejection); add an equivalent test for the bind-port
+    resolver.
+- **SeleniumBase adapter**
+  (`adapters/seleniumbase/src/spectre_seleniumbase/adapter.py`).
+  - Lines 39-61: delete the `resolve_socket_path` function and
+    the `--socket` / `SPECTRE_DRIVER_SOCKET` precedence logic.
+  - Lines 74-76: replace
+    `server.add_insecure_port(f"unix:{socket_path}")` with
+    `server.add_insecure_port(f"0.0.0.0:{port}")`.
+  - Lines 84-100: delete the `ready unix:<path>\n` stdout
+    banner; the gRPC health service is the new readiness
+    signal.
+  - `tests/test_smoke.py` lines 25-38: delete the
+    `resolve_socket_path` test trio.
+- **curl-impersonate adapter**
+  (`adapters/curl-impersonate/cmd/adapter/`).
+  - `main.go` lines 93, 106, 156-159 and the file header
+    block (lines 15-22): replace
+    `net.Listen("unix", socketPath)` with
+    `net.Listen("tcp", fmt.Sprintf(":%s", port))`, delete the
+    socket-path resolver and the `ready unix:` banner.
+  - `main_test.go` lines 14-59: delete the
+    `resolveSocketPath` test set.
+
+Per-adapter manifests:
+
+- `adapters/playwright/driver.yaml` line 6,
+  `adapters/seleniumbase/driver.yaml` line 6,
+  `adapters/curl-impersonate/driver.yaml` line 6:
+  remove the `transports[0].kind: grpc-uds` block. The
+  `transports` array is retired entirely — discovery moves to
+  the env-var contract in ADR-0021 §5, and the manifest's
+  `command` field becomes irrelevant once the adapter runs as
+  its own container image (R6.1).
+
+Per-adapter READMEs:
+
+- `adapters/playwright/README.md`,
+  `adapters/seleniumbase/README.md`,
+  `adapters/curl-impersonate/README.md`: rewrite the "Run
+  locally" sections to reference the Compose stack
+  (R6.2). Remove the `--socket=` examples, the
+  `ready unix:<path>` documentation, and the absolute-path
+  warnings.
+
+Conformance harness:
+
+- `tools/conformance/src/spectre_conformance/harness.py`:
+  retire the subprocess-spawning `DriverHarness`. The
+  replacement is a TCP-dialling client that reads its target
+  endpoint from an env var (or a fixture-supplied
+  `grpc://<host>:<port>` URL when the harness is exercised
+  outside the Compose stack). The class name `DriverHarness`
+  may be preserved for test-source compatibility; the
+  internals — process management, UDS allocation, readiness
+  parsing — are deleted. The
+  `from_driver_yaml` constructor retires; the new constructor
+  reads endpoints from the Compose service or an explicit URL
+  parameter.
+- `tools/conformance/src/spectre_conformance/__init__.py`:
+  update the module docstring to reflect the new harness
+  shape; the `DriverHarness` re-export stays.
+- `tools/conformance/tests/conftest.py` lines 50-146: rewrite
+  the three adapter fixtures (`playwright_adapter`,
+  `seleniumbase_adapter`, `curl_impersonate_adapter`) to dial
+  TCP endpoints supplied by env vars or Compose service names;
+  delete the manifest-reading `from_driver_yaml` calls and the
+  manual `DriverHarness(command=…)` construction for
+  SeleniumBase.
+- `tools/conformance/README.md` lines 55, 93-97, 134-139:
+  rewrite the harness-architecture section and the demo
+  invocation examples.
+- `tools/conformance/src/spectre_conformance/demo_navigate.py`,
+  `tools/conformance/src/spectre_conformance/demo_full_cycle.py`:
+  replace the `--socket=` invocations with the Compose
+  workflow.
+
+Build orchestration:
+
+- `justfile` lines 307-313 (`curl-imp-run`), 350-354
+  (`pw-run`), 389-395 (`sb-run`): rewrite or delete the
+  per-adapter run recipes. The Compose stack (R6.2) is the
+  canonical local-run path; standalone `just <adapter>-run`
+  recipes lose their reason to exist.
+
+Examples (touched for documentation correctness):
+
+- `examples/hello-hackernews/README.md` line 57,
+  `examples/seleniumbase-extract/README.md` line 73,
+  `examples/curl-impersonate-extract/README.md` line 75:
+  replace the `ready unix:<path>` narrative with a Compose
+  stack reference.
+
+### R2.3 — engine-side removals
+
+The engine's UDS-shaped subprocess launcher and UDS gRPC
+client retire entirely. The replacement is a TCP gRPC client
+that reads adapter endpoints from env vars per ADR-0021 §5.
+
+Engine launcher and client:
+
+- `core/engine/src/launcher.rs`: retire the entire file. The
+  module's responsibilities — manifest reading for the
+  `grpc-uds` transport, UDS path allocation, subprocess spawn
+  with `--socket=` and `SPECTRE_DRIVER_SOCKET`, stdout-line
+  readiness parsing, SIGTERM-driven socket unlink — disappear
+  with the subprocess-in-pod model. The crate's `lib.rs`
+  removes the `pub mod launcher` line; consumers of
+  `DriverHandle` migrate to ADR-0022 §3's TCP dial path.
+- `core/engine/src/client.rs`: rewrite the UDS-specific
+  `Client::dial(socket: &Path)` into a TCP-dial signature
+  taking `&str` endpoint URLs (`grpc://host:port`). The
+  `UnixStream::connect` connector, the
+  `grpc.default_authority=localhost` `:authority` workaround
+  (a Node-http2-over-UDS quirk that does not surface on TCP),
+  and the path-only validation logic are deleted. The
+  `tonic-health` health-check shim per ADR-0021 §6 is added
+  for startup probing.
+- `core/engine/src/engine.rs` line 117:
+  `Client::dial(handle.socket_path())` becomes
+  `Client::dial(<endpoint-from-env>)`. The `handle` source
+  changes from `launcher::launch(…).await?` to a discovery
+  helper that resolves the env var.
+
+Engine binary entry points:
+
+- `core/engine/src/bin/spectre.rs`: retire the `spectre run`
+  CLI binary entirely. ADR-0020 §3 retires the CLI; the engine
+  binary that survives is the gRPC service-mode binary
+  introduced in R2.3. The workspace's `Cargo.toml` `[[bin]]`
+  registration for `spectre` is removed alongside.
+
+Engine tests:
+
+- `core/engine/tests/integration.rs` line 14 and the
+  `LocalServer::spawn()` helper at line 49: rewrite the
+  integration test to dial a TCP-bound stub server instead of
+  spawning a subprocess and dialling its UDS path.
+- `core/engine/src/launcher.rs` test module (lines 494-612):
+  removed alongside the production module.
+
+Engine packaging:
+
+- `core/engine/Cargo.toml` lines 28-36 and 66-73: update the
+  dependency-rationale comments to remove UDS / Node-http2
+  references; drop dependencies that exist solely for
+  subprocess management (`nix` for SIGTERM signalling, the
+  `regex` crate's UDS-path role) if no remaining call site
+  uses them after the launcher retires.
+- `core/engine/Dockerfile` line 12: rewrite the comment that
+  documents the engine spawning adapters; the engine's
+  Dockerfile becomes service-mode-only in R6.1.
+- `core/engine/README.md` lines 5, 146, 154, 156: update the
+  module overview and the file map to reflect TCP transport
+  and the absence of the launcher module.
+
+Cross-cutting documentation touched in R2.3 for accuracy:
+
+- `docs/architecture/overview.md` and
+  `docs/architecture/development-environment.md`: revise the
+  UDS-coloured sections to point at the new transport and
+  refer back to ADR-0021 / ADR-0022 for the contracts.
+- `docs/adr/0012-engine-dsl-and-execution-pipeline.md` lines
+  292-301 and 334-335: per ADR-0020 §6, ADR-0012 receives
+  per-section status notes when its revision lands. The UDS
+  references in §4 of ADR-0012 fall under that update; R3 is
+  the phase that lands the note (engine becomes a gRPC
+  server). R2.3 limits its ADR-0012 touches to factual cross-
+  references.
+
+### Out of scope for R2
+
+The control plane's `SubprocessRunner`
+(`core/control-plane/internal/runner/subprocess.go`) and the
+related `SubprocessRunner` references in
+`core/control-plane/cmd/main.go`, the e2e test scaffolding,
+and the operator Dockerfile, are not removed in R2. ADR-0019
+§3 is superseded by ADR-0020, but the deletion lands in R3.1
+(`EngineClientRunner` replaces `SubprocessRunner`). R2 leaves
+those files untouched so the R3.1 PR's diff is focused.
+
+The CI workflows that build and load the operator image
+(`.github/workflows/ci.yml`) are similarly deferred to R3.1
+and R6.1 — R2 does not edit CI surface beyond what its own
+test changes require.
+
