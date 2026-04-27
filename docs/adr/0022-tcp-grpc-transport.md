@@ -394,3 +394,154 @@ The CI workflows that build and load the operator image
 and R6.1 — R2 does not edit CI surface beyond what its own
 test changes require.
 
+## Security posture
+
+v1alpha1 of the refactor uses **plaintext gRPC**. The transport
+carries no TLS, the channels are not authenticated, and the
+producers do not authorise their callers. This section documents
+the choice plainly so the audit trail is honest about what the
+v1alpha1 stance covers and what it does not.
+
+### What the model assumes
+
+The plaintext-gRPC stance treats the network namespace itself
+as the trust boundary. Specifically:
+
+- On Compose, the boundary is the user-defined Docker network
+  the stack runs on. Only the containers in the stack can
+  reach the application ports; the host's external interface
+  does not expose them unless the operator publishes them.
+- On Kubernetes, the boundary is the namespace plus any
+  cluster-level network policy. A `ClusterIP` Service is
+  reachable from any Pod in the cluster by default; an
+  operator who needs stricter isolation applies a
+  `NetworkPolicy` admitting only intended consumers.
+
+A consumer dialling an adapter trusts that the producer behind
+the endpoint is the intended adapter. A producer accepting an
+RPC trusts that the caller is an intended consumer. Both trust
+the platform layer to enforce that boundary.
+
+### What the model does not protect against
+
+The plaintext stance is suitable for trusted networks. It is
+**not** an answer to the following:
+
+- An attacker with access to the cluster network or the
+  Compose network can read or replay traffic.
+- A second workload sharing the namespace can dial the engine
+  or any adapter without authorisation.
+- A producer cannot distinguish a legitimate consumer from a
+  rogue one. There is no per-call identity beyond the TCP
+  connection's source address.
+
+These properties are weaker than what an authenticated, mutual-
+TLS deployment provides. v1alpha1 does not pretend otherwise.
+Operators who deploy Spectre into untrusted networks need
+additional layers — see "v1alpha2 path" below.
+
+### v1alpha2 path
+
+Three options become viable once the v1alpha1 baseline is
+stable. None ship in the refactor; each is a future ADR
+candidate.
+
+- **Service-mesh mTLS (Istio, Linkerd).** The mesh injects
+  sidecars that terminate mTLS at the Pod boundary. The
+  application code stays plaintext-gRPC; the mesh handles
+  identity, authorisation, and observability. Operationally
+  heavy, but well-trodden in production Kubernetes.
+- **Application-level mTLS.** Each service holds a client and
+  server certificate signed by a project CA (cert-manager
+  issuing into the Helm chart). gRPC channels and listeners
+  are configured with TLS. The discovery URI scheme moves
+  from `grpc://` to `grpcs://`. No mesh dependency, but the
+  certificate distribution becomes the operator's
+  responsibility.
+- **Helm-values opt-in.** R7's Helm chart introduces a
+  `tls.enabled` value. When true, the chart materialises
+  Issuer / Certificate resources and patches Deployment env
+  vars to `grpcs://` URLs. Off by default to keep the
+  plaintext baseline, on by Helm-value flip when the operator
+  is ready.
+
+The R7 Helm chart opens the configuration gate; the actual
+mTLS implementation is deferred to a v1alpha2 candidate ADR.
+Until then, Spectre operates under the trusted-network
+assumption, and that assumption is documented every place a
+contributor might look — README, CONTRIBUTING, the Helm chart
+README, and this ADR.
+
+## What this ADR does not decide
+
+Items that surface in adjacent reviews and are explicitly out
+of scope for v1alpha1.
+
+- **mTLS implementation.** Covered above; v1alpha2 candidate.
+- **Authorisation model.** Beyond the trusted-network
+  assumption, no per-call identity check exists in v1alpha1.
+  An authorisation framework (RBAC, signed JWTs, mTLS-derived
+  identity) is a v1alpha2 candidate.
+- **Network policies.** The Helm chart in R7 may ship a
+  default `NetworkPolicy` admitting only intended consumers,
+  but the policy details are R7's concern, not this ADR's.
+- **Connection-pool tuning.** The gRPC channel defaults
+  (HTTP/2 keepalive, idle timeout, max concurrent streams)
+  are accepted as-is. Tuning is deferred to operational
+  evidence; load-driven changes are documented per their
+  phase.
+- **Cross-cluster topologies.** The discovery model assumes
+  one cluster (or one Compose stack). Multi-cluster
+  federation is not addressed.
+
+## Migration semantics
+
+The refactor's scope at the protocol level is precisely zero.
+The driver protocol v1alpha1 directory at
+`proto/spectre/driver/v1alpha1/` is treated as read-only across
+every refactor phase (strategy prompt §2.1; ADR-0020 §4
+invariant one).
+
+Three concrete commitments follow.
+
+- **Wire contract preserved.** The same `.proto` files compile
+  to the same generated bindings before and after R2.2 / R2.3.
+  An adapter built from v1alpha1 source against the post-
+  refactor codebase produces byte-identical wire frames to one
+  built before the refactor; only the bind address differs.
+- **Conformance assertions byte-identical.** Every test in
+  `tools/conformance/tests/` asserts the same capability lists,
+  the same message shapes, and the same negative behaviours
+  (`UNIMPLEMENTED` for absent capabilities, etc.). The Step 5
+  inventory rewrites the harness's transport layer; the
+  assertions inside the tests are untouched.
+- **Capability divergence preserved (ADR-0017 §1).**
+  Playwright 13, SeleniumBase 12, curl-impersonate 6 — the
+  strict-subset chain — is unchanged. Each adapter's
+  `driver.yaml` `capabilities:` block is preserved verbatim
+  even as the `transports:` block retires.
+
+These three commitments are the audit-grade promise the
+refactor makes to readers of the codebase: the architecture
+moves; the protocol does not.
+
+## More Information
+
+- [ADR-0008 — Driver handshake and conformance harness](0008-driver-handshake-and-conformance-harness.md)
+  (the predecessor; §2 is superseded by this ADR per the
+  R2.1 update note appended to ADR-0008)
+- [ADR-0020 — Microservices architecture supersession](0020-microservices-architecture-supersession.md)
+  (the architectural anchor; this ADR is the §5 phase R2 work)
+- [ADR-0021 — Service discovery](0021-service-discovery.md)
+  (companion document; defines the discovery contract this
+  transport ADR references)
+- [ADR-0001 — Driver protocol as architectural primitive](0001-driver-protocol-as-architectural-primitive.md)
+  (the protocol-freeze invariant cited in §2 and §8)
+- [`docs/refactor-audit.md`](../refactor-audit.md) — the
+  full removal inventory in tabular form
+- gRPC over HTTP/2:
+  <https://grpc.io/docs/what-is-grpc/core-concepts/>
+- Tonic TCP transport guide:
+  <https://docs.rs/tonic/latest/tonic/transport/index.html>
+
+
