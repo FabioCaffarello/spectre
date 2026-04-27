@@ -212,3 +212,97 @@ the CLI used to occupy. Keeping `spectre run` as a third path
 would dilute the architecture without adding capability the
 other two cannot deliver. ADR-0013 is therefore retired in full
 rather than partially preserved.
+
+## Decision Outcome
+
+Chosen option: **Option C — Full microservices**.
+
+Spectre will refactor to a fully microservices architecture. Each
+component — the engine, the control plane, and each of the three
+reference adapters — becomes a standalone service with its own
+Dockerfile, exposing gRPC over TCP. The system is backed by
+stateful services (PostgreSQL for job state, Kafka for output
+streaming, Redis for adapter session cache). Local development
+happens via `docker compose up`; production deployment uses
+Helm-installed Kubernetes manifests. The driver protocol
+v1alpha1 wire contract is preserved unchanged; only the transport
+address and the discovery model change. The `spectre` CLI mode
+(ADR-0013) is retired completely; the operator and the Compose
+stack are the two user-facing entry points.
+
+### Consequences
+
+- Good, because the deployed shape becomes coherent with the
+  project's stated thesis. Documentation and architecture
+  diagrams describing microservices are now factually accurate
+  rather than aspirational.
+- Good, because services scale independently. The engine, the
+  control plane, and each adapter have their own resource
+  budgets, replica counts, and failure domains.
+- Good, because the protocol primitive (ADR-0001) becomes
+  visibly load-bearing. A community-authored adapter ships as
+  its own image and joins the topology without modifying any
+  other service.
+- Good, because state externalisation removes a class of failure
+  the demonstrator could not handle. Pod restarts no longer mean
+  lost in-flight work; adapter session caches survive engine
+  restarts; output streaming is durable rather than ephemeral.
+- Good, because local development mirrors production topology.
+  Contributors who run `docker compose up` exercise the same
+  service graph that runs in Kubernetes; "works on my machine"
+  divergence shrinks to image-pull and resource-limit
+  differences.
+- Good, because the conformance suite's value compounds. The
+  same 56 tests that ran against subprocess-spawned adapters in
+  Phase 2 will run against TCP-dialled adapter services after
+  Phase R2; the protocol contract holds across both transports.
+- Bad, because operational complexity rises substantially. Six
+  services plus PostgreSQL, Kafka, and Redis is a real
+  distributed system; the failure modes (network partition,
+  partial broker availability, Redis cache miss under churn)
+  require engineering attention that the demonstrator did not.
+- Bad, because Docker becomes a hard requirement for local
+  development. There is no native fallback for contributors who
+  cannot run Docker. The Devcontainer with Docker-in-Docker
+  closes some of the gap but not all of it.
+- Bad, because the bundled-operator-image pattern from PR16
+  through PR18 is retired. The work was correct in its phase
+  (it closed v1alpha1 adapter bundling and proved the pipeline
+  end-to-end) but its outputs are not reusable in the new
+  architecture. Three PRs' worth of Dockerfile staging moves
+  from "load-bearing" to "historical record."
+- Bad, because the CLI retirement breaks any contributor habits
+  that depend on `spectre run`. The operator and the Compose
+  stack cover the same surface but require Kubernetes or Docker
+  respectively; there is no minimal shell-only invocation
+  anymore.
+- Neutral, because the refactor is bounded. Seventeen PRs across
+  eight phases (see §5) deliver the new architecture; the
+  refactor has a defined endpoint rather than being open-ended.
+- Neutral, because the protocol freeze means adapter source
+  trees see minimal change. The wire format does not move;
+  adapter authors update their listening transport and their
+  manifest discovery, not their RPC handlers.
+
+### Confirmation
+
+The refactor is complete when all of the following hold:
+
+1. `git clone` followed by `docker compose up` produces a
+   running stack of six application services (control-plane,
+   engine, three adapters, plus PostgreSQL, Kafka, Redis).
+2. `kubectl apply -f scrapejob.yaml` against a Helm-installed
+   cluster produces JSONL output to the configured sink (S3,
+   webhook, or Kafka topic).
+3. The conformance suite passes against the running Compose
+   stack with the same test count as pre-refactor, all green,
+   no skipped tests.
+4. Each adapter's declared capability list is byte-for-byte
+   identical to its pre-refactor manifest (Playwright 13,
+   SeleniumBase 12, curl-impersonate 6).
+5. No legacy code paths remain. Specifically: no UDS transport
+   support, no `SubprocessRunner`, no `spectre run` CLI, no
+   bundled operator image with adapters inside.
+6. The cross-driver demo runs the same `ScrapeJob` YAML against
+   three different `driver:` values and produces equivalent
+   results from the same engine service.
