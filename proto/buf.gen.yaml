@@ -40,11 +40,19 @@ plugins:
   # Python — protocolbuffers/python writes `*_pb2.py`; grpc/python writes
   # `*_pb2_grpc.py`. Output is consumed by the SeleniumBase adapter and
   # the conformance suite via uv editable sources.
+  #
+  # The plugin is pinned to a revision that emits gencode compatible
+  # with the protobuf 6.x runtime. The `grpcio-health-checking`
+  # package the SeleniumBase adapter and the conformance suite depend
+  # on (R2.2; ADR-0021 §6) caps protobuf at <7.0.0; an unpinned
+  # plugin pulls the latest hosted revision, which currently emits
+  # gencode that requires the protobuf 7.x runtime and therefore
+  # collides with grpcio-health-checking's upper bound.
   # -------------------------------------------------------------------------
-  - remote: buf.build/protocolbuffers/python
+  - remote: buf.build/protocolbuffers/python:v33.1
     out: gen/python
 
-  - remote: buf.build/grpc/python
+  - remote: buf.build/grpc/python:v1.74.0
     out: gen/python
 
   # -------------------------------------------------------------------------

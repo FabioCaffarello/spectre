@@ -3,7 +3,9 @@
 Spectre's curl-impersonate driver adapter. Wraps the
 [curl-impersonate](https://github.com/lwthiker/curl-impersonate)
 binary as a per-request subprocess and exposes a gRPC Driver
-server over a Unix domain socket.
+server on a TCP listener. The R2.2 refactor retired the original
+Unix-domain-socket transport in favour of TCP + the gRPC standard
+health check (ADR-0021, ADR-0022).
 
 > **Status:** v0.1.0-alpha.0 — Phase 2 closing. PR12 closes the
 > v1alpha1 unary surface for this adapter: full `Close`, `Query`
@@ -31,13 +33,25 @@ From the repository root:
 just curl-imp-build       # go build -o bin/adapter ./cmd/adapter
 just curl-imp-test        # go test ./...
 just curl-imp-lint        # go vet + golangci-lint
-just curl-imp-run         # bind to /tmp/spectre-curl.sock
+just curl-imp-run         # bind 0.0.0.0:9093 (ADR-0021 §4)
 just curl-imp-conf-test   # run the curl-impersonate conformance suite
 ```
 
-The adapter prints `ready unix:<path>` on stdout once it is
-accepting connections. SIGTERM/SIGINT drains, removes every
-session's cookie-jar file, and unlinks the socket before exit.
+The adapter logs a single `listening on 0.0.0.0:<port>` line on
+stderr when ready. Readiness is signalled exclusively by the gRPC
+standard health check (`grpc.health.v1.Health/Check`) returning
+`SERVING`; there is no readiness banner on stdout. SIGTERM/SIGINT
+drains in-flight RPCs, removes every session's cookie-jar file,
+and exits zero. The bind port is read from
+`SPECTRE_ADAPTER_GRPC_PORT` — the conformance harness allocates a
+free ephemeral port at start time; production deployments use the
+canonical 9093 reserved by ADR-0021 §4.
+
+> The R6.2 Compose stack will replace `just curl-imp-run` as the
+> canonical local-dev path. Until then this recipe survives as a
+> convenience. The R2.2-R2.3 sequence breaks `spectre run`
+> end-to-end because the engine still dials UDS — see
+> `KNOWN_BREAKAGE.md` at the repo root.
 
 ## Why subprocess invocation, not cgo
 
@@ -47,9 +61,9 @@ chose **subprocess invocation** of the binary deliberately.
 ADR-0016 §1 records the rationale, summarised here:
 
 - **Architectural symmetry.** Spectre's adapters are subprocesses
-  speaking gRPC over UDS (ADR-0008). This adapter is a subprocess
-  that itself shells out to a subprocess. cgo would be the
-  project's first architectural exception.
+  speaking gRPC over TCP (ADR-0008 + ADR-0022). This adapter is a
+  subprocess that itself shells out to a subprocess. cgo would be
+  the project's first architectural exception.
 - **CI tractability.** Linux installs a static release tarball
   into `/usr/local/bin`. macOS is a manual download from the
   release page. cgo would require dev headers, dynamic linkage,

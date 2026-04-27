@@ -2,12 +2,14 @@
 
 Spectre's reference SeleniumBase driver adapter.
 
-> **Status:** v0.1.0a0 — Phase 2 in progress. PR10 closes the
-> v1alpha1 unary surface for this driver: `Initialize`,
-> `Navigate`, `Close`, `Query`, `Extract`, and `Screenshot` all
-> ship over gRPC on a Unix domain socket. Capabilities declared:
-> twelve names — `["extract_attribute", "extract_eval",
-> "extract_html", "extract_text", "js_execution", "navigation",
+> **Status:** v0.1.0a0 — PR10 closes the v1alpha1 unary surface
+> for this driver: `Initialize`, `Navigate`, `Close`, `Query`,
+> `Extract`, and `Screenshot` ship over gRPC on a TCP listener.
+> The R2.2 refactor retired the original Unix-domain-socket
+> transport in favour of TCP + the gRPC standard health check
+> (ADR-0021, ADR-0022). Capabilities declared: twelve names —
+> `["extract_attribute", "extract_eval", "extract_html",
+> "extract_text", "js_execution", "navigation",
 > "query_attribute", "query_css", "query_text", "query_xpath",
 > "screenshot_element", "screenshot_viewport"]`.
 > `screenshot_full_page` is *intentionally absent* — see
@@ -49,38 +51,54 @@ uv run pytest
 
 ## Run the adapter locally
 
-```bash
-# Terminal A — start the adapter
-just sb-run                                  # uses /tmp/spectre-sb.sock
-# or pick your own:
-just sb-run -- --socket=/tmp/my.sock
-```
-
-The server prints `ready unix:<path>` on stdout once it accepts
-connections; diagnostics go to stderr. Send `SIGTERM` (or press
-Ctrl-C) to stop the gRPC server, tear down any launched Chrome
-sessions, unlink the socket, and exit zero. The shutdown deadline
-is 5 seconds; in-flight RPCs that exceed it are aborted.
+The conformance harness is the canonical way to exercise the
+adapter end-to-end: it spawns the binary, allocates a free TCP
+port, polls the gRPC health check until SERVING, and then drives
+the adapter through the v1alpha1 RPC surface.
 
 ```bash
-# Terminal B — exercise it from the conformance suite
-just sb-conf-test                            # SeleniumBase tests only
-just conf-test                               # Playwright + SeleniumBase
+just sb-conf-test                            # SeleniumBase only
+just conf-test                               # all three adapters
 ```
 
-You can also drive the adapter through `spectre run`:
+For ad-hoc manual runs, `just sb-run` exposes the adapter on the
+canonical port (ADR-0021 §4 reserves `9092` for SeleniumBase).
 
 ```bash
-just spectre-build
-just spectre-run examples/seleniumbase-navigate/job.yaml --verbose
+# Terminal A — start the adapter on port 9092.
+just sb-run               # binds 0.0.0.0:9092
+# or pick a different port:
+just sb-run 19092
+
+# Terminal B — probe the gRPC health check.
+grpc_health_probe -addr=127.0.0.1:9092       # → status: SERVING
 ```
+
+The adapter logs a single `listening on 0.0.0.0:<port>` line on
+stderr when ready. Readiness is signalled exclusively by the gRPC
+standard health check (`grpc.health.v1.Health/Check`) returning
+`SERVING`; there is no readiness banner on stdout. Send `SIGTERM`
+(or press Ctrl-C) to drain in-flight RPCs, tear down launched
+Chrome sessions, and exit zero. The shutdown deadline is 5
+seconds; in-flight RPCs that exceed it are aborted.
+
+> The R6.2 Compose stack will replace `just sb-run` as the canonical
+> local-dev path. Until then this recipe survives as a convenience.
+> The R2.2-R2.3 sequence breaks `spectre run` end-to-end because the
+> engine still dials UDS — see `KNOWN_BREAKAGE.md` at the repo root.
 
 ### Constraints
 
-- **Absolute socket paths only.** Pass `--socket=/abs/path.sock` or
-  set `SPECTRE_DRIVER_SOCKET=/abs/path.sock`. Relative paths are
-  rejected; the harness anchors short paths under `/tmp` to fit
-  macOS' 104-character AF_UNIX limit (ADR-0008).
+- **Port is set via `SPECTRE_ADAPTER_GRPC_PORT`.** The env var is
+  required; the resolver rejects empty, non-integer, and
+  out-of-range values. The conformance harness allocates a free
+  ephemeral port at start time and injects it via env. Production
+  deployments use the canonical port reserved by ADR-0021 §4.
+- **Health check is the readiness signal.** The adapter registers
+  `grpc.health.v1.Health` and starts in the `SERVING` state. The
+  conformance harness polls `Check` until it returns `SERVING`
+  within a 10-second deadline; production deployments wire the
+  same endpoint into Compose / Kubernetes readiness probes.
 - **Chrome and ChromeDriver are required.** The adapter does not
   bundle them. `seleniumbase install chromedriver` fetches the
   matching driver for the local Chrome install. If either is
@@ -89,6 +107,8 @@ just spectre-run examples/seleniumbase-navigate/job.yaml --verbose
 - **Headless by default.** PR9's factory builds `Driver(browser="chrome",
   headless=True, uc=False)`. UC (undetected) mode is a v1alpha2
   capability candidate.
+- **No mTLS or authentication in v1alpha1.** ADR-0022 §6 defers
+  transport security to v1alpha2.
 - **Windows is not supported.** Inherited from ADR-0008.
 
 ## Container deployment
@@ -139,17 +159,17 @@ adapters/seleniumbase/
 │   ├── test_selectors.py
 │   ├── test_capabilities.py
 │   └── test_errors.py
-├── driver.yaml            # adapter manifest (transport, capabilities, runtime)
+├── driver.yaml            # adapter manifest (capabilities, runtime)
 ├── pyproject.toml         # PEP 621, hatchling backend, uv-managed
 └── README.md
 ```
 
 ## What this adapter owns
 
-- A `Driver` server that listens on a Unix-domain-socket gRPC
-  channel (transport configured in `driver.yaml`). Built on the
-  `grpcio` Python runtime; see ADR-0008 for the framework
-  rationale carried forward.
+- A `Driver` server that listens on a TCP gRPC channel. Built on
+  the `grpcio` Python runtime; see ADR-0008 for the framework
+  rationale carried forward and ADR-0022 for the TCP transport
+  contract that superseded the original UDS binding.
 - Implementations of every v1alpha1 unary RPC against the
   SeleniumBase / Selenium WebDriver API: `Initialize`,
   `Navigate`, `Close`, `Query`, `Extract`, and `Screenshot`

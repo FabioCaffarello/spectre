@@ -3,65 +3,67 @@
 package main
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/curlx"
 )
 
-func TestResolveSocketPathFromFlag(t *testing.T) {
-	t.Setenv("SPECTRE_DRIVER_SOCKET", "")
-	got, err := resolveSocketPath([]string{"--socket=/tmp/spectre-curl.sock"})
+func TestResolvePortFromEnv(t *testing.T) {
+	t.Setenv(portEnvVar, "9093")
+	got, err := resolvePort()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if got != "/tmp/spectre-curl.sock" {
-		t.Fatalf("got %q", got)
+	if got != 9093 {
+		t.Fatalf("got %d, want 9093", got)
 	}
 }
 
-func TestResolveSocketPathFlagWinsOverEnv(t *testing.T) {
-	t.Setenv("SPECTRE_DRIVER_SOCKET", "/tmp/from-env.sock")
-	got, err := resolveSocketPath([]string{"--socket=/tmp/from-flag.sock"})
+func TestResolvePortAcceptsZero(t *testing.T) {
+	// Port 0 lets the kernel assign a free ephemeral port. The
+	// conformance harness pre-allocates a port instead of using
+	// this path, but the parser must not reject it.
+	t.Setenv(portEnvVar, "0")
+	got, err := resolvePort()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if got != "/tmp/from-flag.sock" {
-		t.Fatalf("flag must win; got %q", got)
+	if got != 0 {
+		t.Fatalf("got %d, want 0", got)
 	}
 }
 
-func TestResolveSocketPathFromEnv(t *testing.T) {
-	t.Setenv("SPECTRE_DRIVER_SOCKET", "/tmp/from-env.sock")
-	got, err := resolveSocketPath(nil)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if got != "/tmp/from-env.sock" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestResolveSocketPathRequired(t *testing.T) {
-	t.Setenv("SPECTRE_DRIVER_SOCKET", "")
-	_, err := resolveSocketPath(nil)
+func TestResolvePortRequired(t *testing.T) {
+	t.Setenv(portEnvVar, "")
+	_, err := resolvePort()
 	if err == nil {
-		t.Fatal("expected error when no socket path is provided")
+		t.Fatal("expected error when env var is unset")
 	}
-	if !strings.Contains(err.Error(), "no socket path") {
-		t.Fatalf("expected helpful message, got %v", err)
+	if !strings.Contains(err.Error(), portEnvVar) {
+		t.Fatalf("expected error to name the env var, got %v", err)
 	}
 }
 
-func TestResolveSocketPathRejectsRelative(t *testing.T) {
-	t.Setenv("SPECTRE_DRIVER_SOCKET", "")
-	_, err := resolveSocketPath([]string{"--socket=relative.sock"})
+func TestResolvePortRejectsNonInteger(t *testing.T) {
+	t.Setenv(portEnvVar, "abc")
+	_, err := resolvePort()
 	if err == nil {
-		t.Fatal("expected error for relative path")
+		t.Fatal("expected error for non-integer value")
 	}
-	if !strings.Contains(err.Error(), "must be absolute") {
-		t.Fatalf("expected absolute-path error, got %v", err)
+	if !strings.Contains(err.Error(), "port number") {
+		t.Fatalf("expected port-number error, got %v", err)
+	}
+}
+
+func TestResolvePortRejectsOutOfRange(t *testing.T) {
+	t.Setenv(portEnvVar, "70000")
+	_, err := resolvePort()
+	if err == nil {
+		t.Fatal("expected error for out-of-range port")
+	}
+	if !strings.Contains(err.Error(), "between 0 and 65535") {
+		t.Fatalf("expected range error, got %v", err)
 	}
 }
 
@@ -78,24 +80,6 @@ func TestResolveVariantOverride(t *testing.T) {
 	got := resolveVariant()
 	if got != "curl_firefox117" {
 		t.Fatalf("env var override must apply; got %q", got)
-	}
-}
-
-func TestEnsureParentCreatesDir(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "nested", "child", "d.sock")
-	if err := ensureParent(target); err != nil {
-		t.Fatalf("ensureParent: %v", err)
-	}
-	// A second call must succeed.
-	if err := ensureParent(target); err != nil {
-		t.Fatalf("ensureParent (second call): %v", err)
-	}
-}
-
-func TestEnsureParentTolerates(t *testing.T) {
-	if err := ensureParent("name"); err != nil {
-		t.Fatalf("ensureParent on bare filename: %v", err)
 	}
 }
 

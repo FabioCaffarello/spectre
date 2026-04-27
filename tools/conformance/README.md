@@ -3,13 +3,14 @@
 The Spectre Driver Protocol conformance test suite.
 
 > **Status:** v0.1.0a0 — exercises every v1alpha1 unary RPC
-> against the Playwright adapter over gRPC on a Unix domain
-> socket: `Initialize`, `Navigate`, `Close`, `Query`, `Extract`,
-> and `Screenshot`. The Playwright adapter has no unimplemented
-> unary RPCs; SeleniumBase and curl-impersonate will reintroduce
-> equivalent negative coverage when those adapters land.
-> Transport equivalence and per-capability tests follow in
-> Phase 1 of the [roadmap](../../docs/roadmap.md).
+> against all three reference adapters over TCP gRPC:
+> `Initialize`, `Navigate`, `Close`, `Query`, `Extract`, and
+> `Screenshot`. The R2.2 refactor swapped the harness's transport
+> from Unix domain sockets to TCP and made the gRPC standard
+> health check the readiness signal (ADR-0021, ADR-0022). The
+> wire-level driver protocol contract is unchanged. Transport
+> equivalence and per-capability tests follow in Phase 1 of the
+> [roadmap](../../docs/roadmap.md).
 
 ## Build
 
@@ -32,7 +33,8 @@ uv run pytest
 ## Run the conformance suite
 
 The Playwright handshake test launches the adapter as a subprocess
-on a per-test Unix domain socket, dials it as a gRPC client, sends
+bound to a per-test localhost TCP port, dials it as a gRPC client
+once `grpc.health.v1.Health.Check` reports `SERVING`, sends
 `InitializeRequest`, and validates the response:
 
 ```bash
@@ -91,14 +93,19 @@ responsibilities:
 ## Driver invocation
 
 `spectre_conformance.harness.DriverHarness.from_driver_yaml(<path>)`
-reads the manifest, picks a fresh per-instance socket path under
-`/tmp` (short enough to fit macOS' 104-character UDS limit),
-launches the subprocess with `--socket=<path>` (also exported as
-`SPECTRE_DRIVER_SOCKET`), waits for the driver's `ready unix:<path>`
-line on stdout, and exposes a configured `grpc.Channel` via
-`harness.dial()`. Use it as a context manager — the subprocess is
-terminated and the socket is cleaned up on exit, even when an
-assertion fails.
+reads the manifest, allocates a free localhost TCP port, exports
+it to the subprocess as `SPECTRE_ADAPTER_GRPC_PORT` (ADR-0021 §4),
+launches the spawn directive declared in `runtime.command`, polls
+`grpc.health.v1.Health.Check` until `SERVING` (ADR-0021 §6), and
+exposes a configured `grpc.Channel` aimed at `127.0.0.1:<port>`
+via `harness.dial()`. Use it as a context manager — the subprocess
+is terminated on exit, even when an assertion fails.
+
+The R2.2 refactor retired the prior Unix-domain-socket transport
+and the stdout `ready unix:<path>` readiness banner; the manifest's
+`transports:` block was removed in the same change (ADR-0022 §5).
+The harness-spawn flow itself survives until R6.2's Compose stack
+becomes the canonical local-dev path.
 
 A future `--driver=PATH/TO/driver.yaml` pytest CLI option will
 allow running the same suite against any conforming driver. The
@@ -131,12 +138,12 @@ the same surface automatically.
 ```bash
 just pw-build
 just pw-install-browsers
-just pw-run -- --socket=/tmp/spectre-demo.sock
+just pw-run 19091
 
 # in a second terminal:
 uv --project tools/conformance run python -m \
     spectre_conformance.demo_full_cycle \
-    --socket=/tmp/spectre-demo.sock \
+    --endpoint=127.0.0.1:19091 \
     --url=https://example.com \
     --selector="h1"
 ```

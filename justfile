@@ -293,9 +293,13 @@ curl-imp-fmt:
     cd adapters/curl-impersonate && gofmt -l -w .
     cd adapters/curl-impersonate && goimports -l -w .
 
+# GOTOOLCHAIN is pinned to match cp-lint for the same reason (see
+# the cp-lint comment): go's auto-toolchain resolution must not bump
+# to a newer Go than golangci-lint v2.8.0 (built with Go 1.25.5) can
+# parse.
 curl-imp-lint:
-    cd adapters/curl-impersonate && go vet ./...
-    cd adapters/curl-impersonate && golangci-lint run
+    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.25.3 go vet ./...
+    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.25.3 golangci-lint run
 
 curl-imp-test:
     cd adapters/curl-impersonate && go test ./...
@@ -303,16 +307,19 @@ curl-imp-test:
 curl-imp-build:
     cd adapters/curl-impersonate && go build -o bin/adapter ./cmd/adapter
 
-# Run the curl-impersonate adapter against a Unix domain socket.
-# Pass --socket=<path> after `--`, or set SPECTRE_DRIVER_SOCKET. The
-# server prints `ready unix:<path>` on stdout once it accepts
-# connections; SIGTERM/Ctrl-C drains, unlinks the socket, and
-# exits 0. Defaults to /tmp/spectre-curl.sock for ad-hoc local
-# testing. Override the curl-impersonate variant by setting
+# Run the curl-impersonate adapter as a TCP gRPC service. ADR-0021
+# §4 reserves 9093 as the canonical default port. Readiness is
+# signalled by the gRPC standard health check returning SERVING;
+# SIGTERM/Ctrl-C drains, removes session cookie-jars, and exits 0.
+# Override the curl-impersonate variant by setting
 # SPECTRE_CURL_VARIANT (default `curl_chrome116`). See ADR-0016 §3.
-curl-imp-run *ARGS='--socket=/tmp/spectre-curl.sock': curl-imp-build
+#
+# This recipe survives R2.2 as a developer convenience but is
+# scheduled for retirement in R6.2 when the Compose stack becomes
+# the canonical local-dev path.
+curl-imp-run PORT='9093': curl-imp-build
     cd adapters/curl-impersonate && \
-    ./bin/adapter {{ARGS}}
+    SPECTRE_ADAPTER_GRPC_PORT={{PORT}} ./bin/adapter
 
 # Run only the curl-impersonate conformance tests. PR11 wired
 # Initialize + Navigate; PR12 will add Close + Query + Extract.
@@ -346,13 +353,17 @@ pw-test:
 pw-build:
     cd adapters/playwright && pnpm build
 
-# Run the Playwright adapter against a Unix domain socket.
-# Pass --socket=<path> after `--`, or set SPECTRE_DRIVER_SOCKET. The
-# server prints `ready unix:<path>` on stdout once it accepts
-# connections; SIGTERM/Ctrl-C drains, unlinks the socket, and exits 0.
-# Defaults to /tmp/spectre-pw.sock for ad-hoc local testing.
-pw-run *ARGS='--socket=/tmp/spectre-pw.sock': pw-build
-    cd adapters/playwright && node dist/index.js {{ARGS}}
+# Run the Playwright adapter as a TCP gRPC service. Set
+# SPECTRE_ADAPTER_GRPC_PORT to the desired port (ADR-0021 §4 reserves
+# 9091 as the canonical default). The server registers the gRPC
+# standard health check; readiness is signalled by Health.Check
+# returning SERVING. SIGTERM/Ctrl-C drains and exits 0.
+#
+# This recipe survives R2.2 as a developer convenience but is
+# scheduled for retirement in R6.2 when the Compose stack becomes the
+# canonical local-dev path.
+pw-run PORT='9091': pw-build
+    cd adapters/playwright && SPECTRE_ADAPTER_GRPC_PORT={{PORT}} node dist/index.js
 
 # Install the Chromium browser Playwright drives. Idempotent: skips
 # when the binary at the expected version is already present. On
@@ -385,16 +396,18 @@ sb-lint:
 sb-test:
     cd adapters/seleniumbase && uv run pytest
 
-# Run the SeleniumBase adapter against a Unix domain socket.
-# Pass --socket=<path> after `--`, or set SPECTRE_DRIVER_SOCKET. The
-# server prints `ready unix:<path>` on stdout once it accepts
-# connections; SIGTERM/Ctrl-C stops the server, tears down any
-# launched Chrome sessions, unlinks the socket, and exits 0.
-# Defaults to /tmp/spectre-sb.sock for ad-hoc local testing. See
-# ADR-0008.
-sb-run *ARGS='--socket=/tmp/spectre-sb.sock': sb-bootstrap
+# Run the SeleniumBase adapter as a TCP gRPC service. ADR-0021 §4
+# reserves 9092 as the canonical default port. Readiness is
+# signalled by the gRPC standard health check returning SERVING;
+# SIGTERM/Ctrl-C stops the server, tears down any launched Chrome
+# sessions, and exits 0.
+#
+# This recipe survives R2.2 as a developer convenience but is
+# scheduled for retirement in R6.2 when the Compose stack becomes
+# the canonical local-dev path.
+sb-run PORT='9092': sb-bootstrap
     cd adapters/seleniumbase && \
-    .venv/bin/python -m spectre_seleniumbase.adapter {{ARGS}}
+    SPECTRE_ADAPTER_GRPC_PORT={{PORT}} .venv/bin/python -m spectre_seleniumbase.adapter
 
 # Install ChromeDriver for SeleniumBase. Idempotent: SeleniumBase's
 # `install chromedriver` recipe matches the local Chrome version

@@ -69,9 +69,12 @@ is one YAML edit away.)
    Close`. The plan is identical to the one the engine produces
    for `hello-hackernews`; only the driver name differs.
 2. Engine launches the SeleniumBase adapter as a subprocess
-   (reading `adapters/seleniumbase/driver.yaml`), waits for the
-   `ready unix:<path>` readiness line, and dials the socket
-   over gRPC.
+   (reading `adapters/seleniumbase/driver.yaml`), polls the gRPC
+   standard health check until SERVING (ADR-0021 §6), and dials
+   the TCP listener over gRPC (ADR-0022). The engine-side TCP
+   dial lands in R2.3; until then the `spectre run` flow against
+   this example is broken — see `KNOWN_BREAKAGE.md` at the repo
+   root.
 3. Engine sends the RPC sequence. `Query(a)` returns one
    `ElementRef` per link; `ExtractEach` reads `textContent` and
    the `href` attribute from each one. The handlers go through

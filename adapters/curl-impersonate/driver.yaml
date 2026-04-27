@@ -2,10 +2,6 @@ name: curl-impersonate
 version: 0.1.0-alpha.0
 protocol_version: spectre.driver.v1alpha1
 
-transports:
-  - kind: grpc-uds
-    command: ["./bin/adapter"]
-
 # Capabilities follow the "declared = tested" rule from ADR-0014 §1.
 # Six entries, alphabetical, declared by PR12 (Close + Query +
 # Extract). The capability list will not grow further in v1alpha1:
@@ -39,8 +35,14 @@ capabilities:
 # on the curl-impersonate release that's installed on PATH. See
 # ADR-0016 §3.
 
+# `runtime.command` is the spawn directive read by the conformance
+# harness in R2.2. The `transports:` block from the prior UDS-era
+# manifest is retired (ADR-0022 §5). When the Compose stack lands in
+# R6.2, service definitions there supersede the harness-spawn flow
+# and `runtime.command` becomes documentation only.
 runtime:
   go: ">=1.22"
+  command: ["./bin/adapter"]
   system_libraries:
     - "curl-impersonate"
 

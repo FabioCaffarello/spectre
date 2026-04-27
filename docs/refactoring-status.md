@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-27
-Current phase: **R2.1 — ADR-0021 (service discovery) + ADR-0022 (TCP transport) (in progress)**
-Next PR: **R2.2 — Adapter transport switch (UDS → TCP, all three adapters)**
+Current phase: **R2.2 — Adapter transport switch (UDS → TCP, all three adapters) (in progress)**
+Next PR: **R2.3 — Engine transport + gRPC server (UDS client → TCP client)**
 
 ## Phases
 
@@ -20,8 +20,8 @@ skipped. See [ADR-0020 §5](adr/0020-microservices-architecture-supersession.md)
 for the per-phase ADR deltas.
 
 - [x] **R1.1 — ADR-0020 supersession** *(merged 2026-04-27, PRs #26 + #27)*
-- [ ] **R2.1 — ADR-0021 service discovery + ADR-0022 TCP transport details** *(in progress)*
-- [ ] R2.2 — Adapter transport switch (UDS → TCP, all three adapters)
+- [x] **R2.1 — ADR-0021 service discovery + ADR-0022 TCP transport details** *(merged 2026-04-27, PR #28)*
+- [ ] **R2.2 — Adapter transport switch (UDS → TCP, all three adapters)** *(in progress)*
 - [ ] R2.3 — Engine transport + gRPC server (UDS client → TCP client)
 - [ ] R3.1 — `EngineClientRunner` replaces `SubprocessRunner`
 - [ ] R3.2 — `ScrapeJob` CRD v1alpha2 (breaking change, no conversion webhook)
@@ -37,42 +37,58 @@ for the per-phase ADR deltas.
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R2.1)
+## Current PR checklist (R2.2)
 
-The R2.1 PR's per-step checklist mirrors Section 7 of the phase
+The R2.2 PR's per-step checklist mirrors Section 7 of the phase
 prompt. Updated each session that lands work on this PR.
 
+- [x] Step 0 — Pre-existing curl-imp-lint Go toolchain fix (`GOTOOLCHAIN=go1.25.3` mirrors cp-lint; three pre-existing `errcheck` warnings on `fmt.Fprintf` returns annotated with `_, _ =`)
 - [x] Step 1 — Inventory and confirm working tree
-- [x] Step 2 — Scan current code for UDS usage (grep-based inventory)
-- [x] Step 3 — Draft ADR-0021 §1–§3 (context, drivers, discovery model)
-- [x] Step 4 — Draft ADR-0021 §4–§5 (port allocation, env vars)
-- [x] Step 5 — Draft ADR-0021 §6–§8 (healthcheck, exclusions, alternatives)
-- [x] Step 6 — Draft ADR-0022 §1–§4 (context, drivers, contract, lifecycle)
-- [x] Step 7 — Draft ADR-0022 §5 (removal targets inventory)
-- [x] Step 8 — Draft ADR-0022 §6–§8 (security, exclusions, migration)
-- [x] Step 9 — Append update note to ADR-0008 (R2.1 supersession of §2 / §4)
-- [x] Step 10 — Generate `docs/refactor-audit.md` (tabular inventory)
-- [x] Step 11 — Update `docs/adr/README.md` index, status tracker, roadmap
-- [x] Step 12 — Final verification (diff scope confirmed: 7 `.md` files only; `just check` blocked by the same pre-existing `curl-imp-lint` Go 1.26-vs-1.25 toolchain mismatch noted under R1.1, unrelated to R2.1)
-- [ ] Step 13 — Open the PR
-- [ ] Step 14 — Summary report
+- [x] Step 2 — Playwright adapter TCP switch (`SPECTRE_ADAPTER_GRPC_PORT`, `grpc.health.v1.Health` registration via vendored `proto/grpc/health/v1` bindings, UDS deletions)
+- [x] Step 3 — SeleniumBase adapter TCP switch (`grpcio-health-checking` HealthServicer, `argparse` retired, UDS deletions)
+- [x] Step 4 — curl-impersonate adapter TCP switch (`google.golang.org/grpc/health` HealthServer, `flag` import retired, UDS deletions)
+- [x] Step 5 — Conformance harness rewrite (`_allocate_free_port`, `_wait_for_health_serving`, `from_driver_yaml` reads `runtime.command`, demos take `--endpoint=host:port`)
+- [x] Step 6 — `docs/refactor-audit.md` R2.2 status note
+- [x] Step 7 — `KNOWN_BREAKAGE.md` created (engine ↔ adapter transport mismatch documented; R2.3 deletes the file)
+- [x] Step 8 — `docs/refactoring-status.md` and `CHANGELOG.md` updated
+- [x] Step 9 — Final verification: `just check` exits zero; `just conf-test` ran three consecutive times with 44 passed / 13 skipped (the 13 skips are environmental — `curl_chrome116` not on the local PATH per ADR-0016 §3, identical to the R2.1 baseline); manual `grpc.health.v1.Health.Check` against each adapter on its canonical port returned `status: SERVING` (1)
+- [ ] Step 10 — Open the PR
+- [ ] Step 11 — Summary report
 
 ## Surfaced decisions
 
 No open architectural questions awaiting maintainer input. The
-five locked decisions for R2.1 (port allocation, env-var
-discovery, eager-fail dial, gRPC standard healthcheck, mTLS
-deferred to v1alpha2) were settled before the phase began and
-are documented in
+five locked decisions for R2.2 (Step 0 toolchain alignment as
+out-of-scope but pragmatic, gRPC standard health check as
+readiness signal, dynamic port allocation in the harness,
+`driver.yaml` schema evolution to drop `transports:` and add
+`runtime.command:`, mandatory `grpc.health.v1.Health` registration
+in every adapter) were settled before the phase began and are
+documented in
 [ADR-0021](adr/0021-service-discovery.md) and
 [ADR-0022](adr/0022-tcp-grpc-transport.md).
 
+The Step 0 diagnostic in the phase prompt was inverted relative
+to the actual cause (the prompt assumed Go 1.26 was the linter's
+target; in fact `golangci-lint v2.8.0` is built with Go 1.25.5
+and panics on the Go 1.26 stdlib loaded by an unconstrained
+toolchain). Pinning `GOTOOLCHAIN=go1.25.3` in `curl-imp-lint`
+mirrors the existing `cp-lint` pattern and is the smallest
+possible change. The buf python plugins were also pinned to
+`v33.1`/`v1.74.0` because the unpinned hosted plugins emit gencode
+requiring protobuf 7.x at runtime, which collides with
+`grpcio-health-checking==1.80.0`'s `protobuf<7.0.0` upper bound.
+Both pins are documented inline.
+
 ## Known issues
 
-None. R2.1 is documentation-only; no code paths are quarantined,
-no tests skipped, no regressions introduced. The pre-existing
-`curl-imp-lint` Go-toolchain mismatch noted under R1.1 is still
-present (unrelated to the refactor) and is tracked separately.
+The engine binary still dials UDS while the adapters bind TCP —
+the deliberate intermediate state between R2.2 and R2.3 merges,
+documented at the repo root in
+[`KNOWN_BREAKAGE.md`](../KNOWN_BREAKAGE.md). R2.3's first commit
+deletes that file. No tests are quarantined; the conformance
+suite continues to pass three consecutive times against the new
+TCP transport.
 
 ## How to read this document
 
