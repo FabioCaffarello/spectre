@@ -57,7 +57,7 @@ Both paths produce the same environment for `just check` and
 | uv                 | latest                   | astral.sh installer              |
 | Chrome             | stable                   | Google apt repo                  |
 | ChromeDriver       | matched to Chrome        | SeleniumBase installer (post-create) |
-| curl-impersonate   | 0.5.4                    | upstream release tarball         |
+| curl-impersonate   | 0.6.1                    | upstream release tarball         |
 | protoc             | 27.2                     | upstream release zip             |
 | buf                | 1.45.0                   | upstream binary                  |
 | just               | 1.36.0                   | upstream binary                  |
