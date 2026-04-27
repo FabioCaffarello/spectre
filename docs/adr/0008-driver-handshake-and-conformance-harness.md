@@ -357,3 +357,47 @@ retires the superseded portions (UDS socket creation, the
 [ADR-0020](0020-microservices-architecture-supersession.md) §5
 for the full phase sequence and §4 for the chosen architectural
 direction.
+
+## Update (R2.1, ADR-0021 / ADR-0022)
+
+Phase R2.1 ratifies the contracts the R1.1 forward reference
+above sketched. The supersession of §2 and §4 is now in force;
+the replacement contracts live in two companion ADRs.
+
+- **§1 (Node gRPC framework).** Preserved unchanged. The
+  `@connectrpc/connect-node` choice carries forward to the
+  TCP-bound Playwright adapter; the `protoc-gen-es` /
+  `@bufbuild/protobuf` alignment from PR2 stays the source of
+  truth.
+- **§2 (Adapter lifecycle and socket management).** Superseded
+  by [ADR-0022 — TCP / gRPC transport](0022-tcp-grpc-transport.md).
+  The CLI flag `--socket=`, the `SPECTRE_DRIVER_SOCKET` env var,
+  the stale-socket unlink, the `:authority=localhost`
+  workaround, and the SIGTERM-driven socket cleanup all retire
+  in phase R2.2. Adapter bind is `0.0.0.0:<port>`; discovery is
+  the env-var contract in
+  [ADR-0021 — Service discovery](0021-service-discovery.md) §5.
+  The full removal inventory lives in ADR-0022 §5 and
+  [`docs/refactor-audit.md`](../refactor-audit.md).
+- **§3 (Python conformance harness layout).** Preserved as a
+  shape decision. The `src/`-layout package, the
+  `DriverHarness` class name, and the `capabilities.py`
+  constants module stay; what changes is the harness's
+  internals — the subprocess spawn, the UDS path allocation,
+  and the readiness-line parsing retire in R2.2 in favour of a
+  TCP-dialling client that reads endpoints from the env-var
+  contract or from a Compose service name. The pytest fixture
+  pattern (one fixture per adapter) survives.
+- **§4 (Readiness detection).** Superseded by ADR-0022 §3 and
+  ADR-0021 §6. The stdout-line primary / connect-poll fallback
+  pair retires entirely; readiness becomes the standard
+  `grpc.health.v1.Health/Check` RPC, which the engine's
+  startup dial (ADR-0022 §4) and the conformance harness both
+  consume.
+
+The implementation lands across PRs R2.2 (adapter transport
+switch) and R2.3 (engine transport + service mode). Each PR
+deletes the corresponding §2 / §4 surface in the same diff
+that introduces its replacement, per the no-legacy principle
+recorded in [ADR-0020](0020-microservices-architecture-supersession.md)
+§4.
