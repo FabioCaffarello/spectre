@@ -569,6 +569,29 @@ jobs:
              test -d /opt/spectre/adapters/playwright/node_modules/playwright && \
              test -f /opt/spectre/adapters/playwright/driver.yaml && \
              echo "playwright adapter assets OK"'
+      - name: Smoke test (SeleniumBase adapter bundled)
+        # PR17 §6 acceptance: the seleniumbase venv exists at the
+        # canonical path with shebangs that resolve, the adapter
+        # package imports cleanly through the editable proto-bindings
+        # source, and Chrome + ChromeDriver report the same major.
+        # A failure here surfaces packaging bugs (missing apt deps,
+        # broken venv shebangs, version skew) before kind smoke.
+        run: |
+          docker run --rm \
+            --entrypoint=/bin/sh \
+            spectre-control-plane:ci -c '
+              set -e
+              test -f /opt/spectre/adapters/seleniumbase/driver.yaml
+              test -x /opt/spectre/adapters/seleniumbase/.venv/bin/python
+              /opt/spectre/adapters/seleniumbase/.venv/bin/python -c "import spectre_seleniumbase"
+              /opt/spectre/adapters/seleniumbase/.venv/bin/python -c "from spectre.driver.v1alpha1 import driver_pb2"
+              google-chrome --version
+              chromedriver --version
+              chrome_major=$(google-chrome --version | grep -oE "[0-9]+" | head -n 1)
+              driver_major=$(chromedriver --version | grep -oE "[0-9]+" | head -n 1)
+              test "${chrome_major}" = "${driver_major}"
+              echo "seleniumbase adapter assets OK (chrome=${chrome_major} chromedriver=${driver_major})"
+            '
       - name: Report image size
         run: docker images spectre-control-plane:ci --format '{{.Size}}'
       - name: Save operator image for downstream jobs
@@ -604,7 +627,7 @@ jobs:
           docker tag spectre-control-plane:ci  spectre-control-plane:dev
       - uses: helm/kind-action@v1
         with:
-          cluster_name: spectre-pr16
+          cluster_name: spectre-pr17
       - name: Install kubebuilder CLI dependencies
         # `make install` / `make deploy` need kustomize and
         # controller-gen. The kubebuilder Makefile vendors them into
@@ -613,16 +636,26 @@ jobs:
         run: |
           make kustomize
           make controller-gen
-      # The hello-hackernews sample reaches news.ycombinator.com from
-      # inside the kind node. GitHub-hosted runners can typically
-      # reach it; if the workflow starts flaking on rate-limits, the
-      # documented fallback (in-cluster fixture targeting an httpd
-      # ConfigMap) replaces this step. PR16 §6.6.
+      # PR17: the smoke script runs both bundled samples
+      # sequentially (hello-hackernews → seleniumbase-extract).
+      # The hello-hackernews sample reaches news.ycombinator.com
+      # from inside the kind node; the seleniumbase-extract sample
+      # reaches example.com (IANA-controlled, stable, two anchor
+      # tags). GitHub-hosted runners can typically reach both; if
+      # either starts flaking on rate-limits, the documented
+      # fallback (in-cluster fixture targeting an httpd ConfigMap)
+      # replaces this step. PR16 §6.6 / PR17 §6.9.
+      #
+      # TIMEOUT_SECONDS is per-sample. SeleniumBase's first launch
+      # is heavier than Playwright's (Python interpreter bootstrap
+      # plus Chrome's renderer subprocess tree), so 420s gives both
+      # cases comfortable headroom.
       - name: Run kind smoke
         env:
           ENGINE_IMAGE: spectre-engine:dev
           OPERATOR_IMAGE: spectre-control-plane:dev
-        run: bash core/control-plane/hack/smoke-kind.sh spectre-pr16
+          TIMEOUT_SECONDS: "420"
+        run: bash core/control-plane/hack/smoke-kind.sh spectre-pr17
 
   ci-summary:
     name: CI summary

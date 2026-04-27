@@ -19,7 +19,9 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
+import tempfile
 import time
 import uuid
 from typing import Any
@@ -238,14 +240,53 @@ def _default_driver_factory() -> Any:
     """
     from seleniumbase import Driver
 
-    return Driver(
-        browser="chrome",
-        headless=True,
+    kwargs: dict[str, Any] = {
+        "browser": "chrome",
+        "headless": True,
         # uc=False keeps the driver in standard Selenium mode rather
         # than SeleniumBase's UC (undetected) variant. UC mode is a
         # v1alpha2 capability candidate (see ADR-0014 §2 out of scope).
-        uc=False,
-    )
+        "uc": False,
+    }
+    # Container deployment knob (PR17 §4.4). Default behaviour is
+    # unchanged for non-containerised callers: the conformance suite
+    # and the developer-host workflow continue to drive Chrome with
+    # its sandbox enabled. When the operator Pod sets
+    # SPECTRE_SELENIUMBASE_CONTAINER=1, forward the Chrome flags
+    # required to launch under the `restricted` PodSecurityStandard.
+    # SeleniumBase splits ``chromium_arg`` on commas onto the Chrome
+    # launch options. The flags are:
+    #
+    # - ``--no-sandbox`` / ``--disable-dev-shm-usage``: the Chrome
+    #   zygote needs both to start without SYS_ADMIN and the
+    #   default 64 MiB /dev/shm a Pod may have.
+    # - ``--disable-gpu`` / ``--disable-software-rasterizer``: the
+    #   container has no GPU drivers; the software-rasterizer
+    #   fallback can crash on a renderless host.
+    # - ``--user-data-dir=<tmp>``: when ``readOnlyRootFilesystem``
+    #   is true on the Pod, Chrome cannot write its preferences
+    #   directory under ``$HOME``. Pointing the data dir at an
+    #   emptyDir ``/tmp`` mount (the only writable location on
+    #   the Pod) keeps Chrome's per-profile state happy.
+    #   ``mkdtemp`` returns a fresh path per ``Initialize``;
+    #   Kubernetes reclaims it on Pod termination.
+    #
+    # Crashpad is *not* disabled here. Its database directory
+    # resolves under ``$HOME/.local`` independently of
+    # ``--user-data-dir``; the pod spec sets ``HOME=/tmp`` so
+    # crashpad's writes land on the writable /tmp emptyDir.
+    if os.environ.get("SPECTRE_SELENIUMBASE_CONTAINER") == "1":
+        user_data_dir = tempfile.mkdtemp(prefix="spectre-chrome-")
+        kwargs["chromium_arg"] = ",".join(
+            [
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                f"--user-data-dir={user_data_dir}",
+            ]
+        )
+    return Driver(**kwargs)
 
 
 class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]

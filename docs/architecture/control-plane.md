@@ -20,7 +20,7 @@ execution lands in PR15.
 | `SubprocessRunner` (engine invoke) | shipped           | PR15  |
 | Operator image bundles engine      | shipped           | PR15  |
 | Operator image bundles Playwright  | shipped           | PR16  |
-| Operator image bundles SeleniumBase | not started       | PR17  |
+| Operator image bundles SeleniumBase | shipped           | PR17  |
 | Operator image bundles curl-impersonate | not started   | PR18  |
 | `ScrapeFleet` CRD                  | not started       | PR19+ |
 | `ScrapeSchedule` CRD               | not started       | PR19+ |
@@ -46,24 +46,51 @@ which ships Ubuntu 24.04, Node 24, Chromium pinned to the matching
 patch release, and every system dependency Chromium needs. The
 adapter sources are compiled in a `playwright-builder` stage
 (repo-root build context, so the stage can regenerate the
-TypeScript protocol bindings before `pnpm build`) and the resulting
-artefacts land at `/opt/spectre/adapters/playwright/`:
+TypeScript protocol bindings before `pnpm build`).
+
+PR17 lands the SeleniumBase adapter alongside Playwright. A new
+`seleniumbase-builder` stage uses `uv` to install the adapter's
+virtualenv at the final runtime path
+(`/opt/spectre/adapters/seleniumbase/.venv`), regenerates the
+Python protocol bindings and stages them at
+`/opt/spectre/proto/gen/python/` (so the adapter's
+`[tool.uv.sources]` editable resolves at runtime), and the runtime
+stage extends the Microsoft base with apt-installed Python 3.12,
+`google-chrome-stable`, and a matching ChromeDriver. Both adapters
+land under `/opt/spectre/adapters/`:
 
 ```
-/opt/spectre/adapters/
-└── playwright/
-    ├── dist/             # compiled JS entry point at dist/index.js
-    ├── node_modules/     # production deps (playwright, @bufbuild/protobuf, …)
-    ├── driver.yaml       # transports[0].command = ["node", "dist/index.js"]
-    └── package.json
+/opt/spectre/
+├── adapters/
+│   ├── playwright/
+│   │   ├── dist/             # compiled JS entry point at dist/index.js
+│   │   ├── node_modules/     # production deps (playwright, @bufbuild/protobuf, …)
+│   │   ├── driver.yaml       # transports[0].command = ["node", "dist/index.js"]
+│   │   └── package.json
+│   └── seleniumbase/
+│       ├── .venv/            # uv-built virtualenv; shebangs pin /opt/spectre/...
+│       ├── src/              # spectre_seleniumbase package
+│       ├── driver.yaml       # transports[0].command = [".venv/bin/python", "-m", ...]
+│       ├── pyproject.toml
+│       └── uv.lock
+└── proto/gen/python/
+    └── spectre/driver/v1alpha1/   # editable source for spectre-driver-protocol
 ```
 
-The on-disk image weighs ~1.0 GB (pull is ~600 MB once the
-Microsoft base layer is cached). The manager's `--adapters-path`
-flag defaults to `/opt/spectre/adapters`; local development with
-`just op-run` overrides this to the workspace `adapters/` directory.
-SeleniumBase (PR17) and curl-impersonate (PR18) replicate this
-builder-stage pattern in their own stages.
+Chrome and Chromium coexist cleanly: Playwright launches Chromium
+via `PLAYWRIGHT_BROWSERS_PATH`; SeleniumBase launches
+`/usr/bin/google-chrome` via ChromeDriver. At any moment at most
+one runs (`MaxConcurrentReconciles=1` plus the DSL `driver:` field
+selects exactly one of `playwright` or `seleniumbase`).
+
+The on-disk image weighs ~1.9 GB (Microsoft base ~1.0 GB plus
+~80 MiB of Chrome runtime libs and ~250 MiB of the SeleniumBase
+venv; pulls are ~1.0 GB compressed once the Microsoft base layer
+is cached). The manager's `--adapters-path` flag defaults to
+`/opt/spectre/adapters`; local development with `just op-run`
+overrides this to the workspace `adapters/` directory.
+curl-impersonate (PR18) replicates this builder-stage pattern in
+its own stage.
 
 ## The ScrapeJob CRD
 
@@ -129,7 +156,7 @@ runs the reconciler suite (5 transition tests + 1 runner test), and
 prints coverage. First run takes ~2 minutes (binary downloads);
 cached runs complete in under 30 seconds.
 
-### In-cluster smoke (PR16: bundled image, kind)
+### In-cluster smoke (PR16 + PR17: bundled image, kind)
 
 ```bash
 # 1. Build the engine and operator images. just op-build-image
@@ -137,31 +164,36 @@ cached runs complete in under 30 seconds.
 just op-build-image
 
 # 2. Bring up a kind cluster, load both images, install the CRD,
-#    deploy the operator, apply hello-hackernews, poll for
-#    Completed, and assert rowsExtracted >= 1. The script exits
-#    non-zero on any failure with diagnostic context.
+#    deploy the operator, then apply BOTH bundled samples
+#    sequentially (hello-hackernews → seleniumbase-extract). The
+#    script polls each for Completed and asserts rowsExtracted >= 1
+#    per sample. It exits non-zero on any failure with diagnostic
+#    context.
 just op-smoke-kind
 # Equivalent to: bash core/control-plane/hack/smoke-kind.sh
 ```
 
-Expected output (against the bundled Playwright adapter):
+Expected output (PR17: both bundled adapters):
 
 ```
-NAME               PHASE       ROWS   AGE
-hello-hackernews   Pending     0      1s
-hello-hackernews   Running     0      2s
-hello-hackernews   Completed   30     12s
+NAME                    PHASE       ROWS   AGE
+hello-hackernews        Completed   30     14s
+seleniumbase-extract    Completed   2      11s
 ```
 
 `RowsExtracted` reflects the JSONL row count the engine emitted on
-stdout (one row per Hacker News story; the front page is ~30 at
-any given time). The rows themselves stream from the engine
-subprocess into the operator container's stdout and surface via
-`kubectl logs <operator-pod>` per ADR-0019 §6. The kind smoke is
-linux/amd64 only — Apple Silicon hosts cannot run kubeadm reliably
-under Rosetta amd64 emulation, so local kind smoke requires either
-a Linux host or a remote Linux runner; CI's `operator-smoke-kind`
-job exercises the same flow on every PR that touches the operator.
+stdout (Hacker News produces ~30 rows per front page; example.com
+produces 2 anchors — "More information…" and IANA contact). The
+rows themselves stream from the engine subprocess into the
+operator container's stdout and surface via
+`kubectl logs <operator-pod>` per ADR-0019 §6. Sequential
+execution matches `MaxConcurrentReconciles=1`; running both
+ScrapeJobs concurrently would contend for the single Pod. The
+kind smoke is linux/amd64 only — Apple Silicon hosts cannot run
+kubeadm reliably under Rosetta amd64 emulation, so local kind
+smoke requires either a Linux host or a remote Linux runner; CI's
+`operator-smoke-kind` job exercises the same flow on every PR
+that touches the operator.
 
 ### Host operator against a local cluster (PR15-style)
 
@@ -229,12 +261,11 @@ Six axes:
 
 These deferrals are intentional and have PR pointers:
 
-- **SeleniumBase and curl-impersonate bundling.** PR16 shipped the
-  Playwright adapter in the operator image; SeleniumBase needs
-  Google Chrome (not Chromium) and a uv-managed Python venv (PR17),
-  and curl-impersonate needs the native libcurl-impersonate library
-  (PR18). Each replicates the PR16 builder-stage pattern in its own
-  Dockerfile stage.
+- **curl-impersonate bundling.** PR16 + PR17 ship the Playwright
+  and SeleniumBase adapters in the operator image; curl-impersonate
+  is the last reference adapter still outside the bundle. It needs
+  the native `curl_chrome116` variant on PATH and replicates the
+  same builder-stage pattern in its own Dockerfile stage (PR18).
 - **Output sinks beyond stdout.** `s3://`, `pvc://`, `webhook://`,
   `kafka://` are valid `OutputSink` strings at the schema level but
   the reconciler rejects them with an explicit error. PR16+ adds
@@ -265,17 +296,14 @@ These deferrals are intentional and have PR pointers:
   [`internal/controller/scrapejob_controller.go`](../../core/control-plane/internal/controller/scrapejob_controller.go).**
   It is a ~130-line `switch` over phases; the `runner.JobRunner`
   call site at the Running case is what PR15 wired to a real engine.
-- **For PR17 (SeleniumBase bundling):** read PR16's
-  [`Dockerfile`](../../core/control-plane/Dockerfile) — the
-  `playwright-builder` stage is the pattern PR17's
-  `seleniumbase-builder` stage replicates with `uv`. SeleniumBase
-  drives Google Chrome (not Chromium), so the runtime base needs
-  Chrome installed; either install it on top of the Microsoft
-  Playwright base or pick a different base. Resources and volumes
-  in `config/manager/manager.yaml` carry over.
 - **For PR18 (curl-impersonate bundling):** the Go adapter compiles
   to a single binary (no browser), but it links the native
   libcurl-impersonate. The runtime needs the impersonate variant
   (`curl_chrome116`) on PATH — either via the published release
   tarball (the CI `python` job already documents the pinning) or
-  via apt where available.
+  via apt where available. PR16's `playwright-builder` and PR17's
+  `seleniumbase-builder` are the two builder-stage patterns to
+  replicate; the §3 / §5 invariants from ADR-0019 still hold and
+  no Go change is expected. curl-impersonate has no browser to
+  sandbox, so the `SPECTRE_SELENIUMBASE_CONTAINER`-style env-var
+  knob is not needed.

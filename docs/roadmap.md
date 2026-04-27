@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-27 (Phase 3 in progress; PR16 closes the end-to-end loop with the bundled Playwright adapter).
+> **Last updated:** 2026-04-27 (Phase 3 in progress; PR17 bundles the SeleniumBase adapter alongside Playwright in the operator image — both kind smokes green).
 
 ## Phase 0 — Foundation (current)
 
@@ -224,12 +224,25 @@ and the v1alpha2 escape hatches.
       `JobRunner` / envtest unchanged) both held. SeleniumBase and
       curl-impersonate replicate the builder-stage pattern in
       PR17 and PR18 respectively. (PR16.)
-- [ ] Operator image bundles the SeleniumBase adapter. Adds a
-      `seleniumbase-builder` stage that uses `uv` to install the
-      adapter; the runtime needs Google Chrome (not Chromium) so
-      either install Chrome on top of the Microsoft Playwright
-      base or pick a different base; manager pod spec resources /
-      volumes extend to cover the second adapter. (PR17.)
+- [x] Operator image bundles the SeleniumBase adapter. PR17 added
+      a `seleniumbase-builder` stage that uses `uv` (pinned 0.5.11)
+      to build the adapter's venv at the final runtime path so
+      shebangs land correctly without relocation; the runtime stage
+      extends the Microsoft Playwright base from PR16 with apt-
+      installed Python 3.12, `google-chrome-stable`, and a
+      ChromeDriver provisioned via SeleniumBase's own installer
+      (Chrome 147 / ChromeDriver 147 in lockstep, asserted at
+      build time). The only adapter source diff was a five-line
+      `_default_driver_factory` patch behind a
+      `SPECTRE_SELENIUMBASE_CONTAINER` env var that adds
+      `--no-sandbox --disable-dev-shm-usage` for the `restricted`
+      PodSecurityStandard. The §3 invariant
+      (subprocess-in-pod) and the §5 invariant (reconciler /
+      `JobRunner` / runner tests / envtest unchanged) both held;
+      zero Go changes. The kind smoke now runs both samples
+      sequentially (hello-hackernews → seleniumbase-extract);
+      both reach Completed. curl-impersonate replicates the
+      same pattern in PR18. (PR17.)
 - [ ] Operator image bundles the curl-impersonate adapter. Adds
       a `curl-impersonate-builder` stage; the runtime needs the
       impersonate variant binary (`curl_chrome116`) on PATH.
