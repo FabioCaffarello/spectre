@@ -109,3 +109,92 @@ which service points at which.
 This ADR records the contract every R2-and-later phase consumes;
 ADR-0022 specifies what consumers do once they have the endpoint
 string.
+
+## Port allocation
+
+Five fixed application ports plus the three stateful service
+ports introduced in R4. The application ports sit in the
+8090–8099 range; the stateful services keep the upstream
+ecosystem-standard ports.
+
+| Service                   | Port | Notes                                                                  |
+|---------------------------|------|------------------------------------------------------------------------|
+| control-plane (HTTP)      | 8080 | Kubernetes-controller idiom; serves `/healthz`, `/readyz`, `/metrics`. |
+| engine                    | 8090 | gRPC. Dialled by control-plane (R3.1) and conformance suite (R2.2).   |
+| playwright-adapter        | 8091 | gRPC. Dialled by engine.                                               |
+| seleniumbase-adapter      | 8092 | gRPC. Dialled by engine.                                               |
+| curl-impersonate-adapter  | 8093 | gRPC. Dialled by engine.                                               |
+| PostgreSQL (R4.2)         | 5432 | Upstream default. Control-plane job state.                             |
+| Kafka broker (R4.4)       | 9092 | Upstream default. Engine output topic.                                 |
+| Redis (R4.3)              | 6379 | Upstream default. Adapter session cache.                               |
+
+The application range starts at 8090, not 9090, on purpose. Kafka
+in R4.4 binds the ecosystem-standard 9092; placing adapters at
+9091 / 9092 / 9093 would force Kafka onto a non-default port,
+which in turn forces every external Kafka consumer (operator
+tooling, debug shells, downstream sinks) to pass an explicit
+bootstrap-server override. Holding the application ports below
+the Kafka range keeps Kafka's defaults intact and avoids cargo-
+culting a Kafka port into a refactor that has no Kafka-related
+reason to touch it.
+
+8080 for the control plane mirrors the Kubebuilder scaffold the
+control plane was generated from (ADR-0019 §6) and the broader
+Kubernetes-controller convention. The control plane does not
+expose a gRPC interface; its job is to reconcile `ScrapeJob`
+resources and dial the engine over gRPC. Its 8080 port carries
+HTTP-only traffic (probes, metrics) that the cluster scrapes.
+
+## Environment variable contract
+
+Each consumer reads the endpoints of the services it talks to
+from environment variables. Each producer reads the bind port
+of its own gRPC server from a separate variable. The two
+families do not overlap — a service that produces an endpoint
+does not read the same name a consumer of that endpoint reads.
+
+### Endpoints (read by consumers)
+
+| Variable                                | Read by                          | Default                                  |
+|-----------------------------------------|----------------------------------|------------------------------------------|
+| `SPECTRE_ENGINE_ENDPOINT`               | control-plane, conformance suite | `grpc://engine:8090`                     |
+| `SPECTRE_PLAYWRIGHT_ENDPOINT`           | engine                           | `grpc://playwright-adapter:8091`         |
+| `SPECTRE_SELENIUMBASE_ENDPOINT`         | engine                           | `grpc://seleniumbase-adapter:8092`       |
+| `SPECTRE_CURL_IMPERSONATE_ENDPOINT`     | engine                           | `grpc://curl-impersonate-adapter:8093`   |
+
+The defaults match the Compose stack the R6.2 PR introduces.
+The Helm chart in R7 templates the same names against the
+namespaced cluster DNS (`engine.<ns>.svc.cluster.local` and so
+on); the Helm values surface the namespace and the port for
+operators who need to override.
+
+### Bind ports (read by producers)
+
+| Variable                       | Read by                       | Default |
+|--------------------------------|-------------------------------|---------|
+| `SPECTRE_ENGINE_GRPC_PORT`     | engine                        | `8090`  |
+| `SPECTRE_ADAPTER_GRPC_PORT`    | each adapter (binary-scoped)  | per adapter (8091 / 8092 / 8093) |
+
+A single `SPECTRE_ADAPTER_GRPC_PORT` name covers all three
+adapters because each adapter binary is built and deployed
+separately; the variable's value differs per Pod / per Compose
+service. Sharing the variable name keeps the adapter source code
+identical (ADR-0020 §4 protocol-freeze invariant) and pushes the
+deployment-shape decision out to the platform configuration.
+
+### URI scheme
+
+The `grpc://` prefix is informational. Adapter and engine clients
+parse the scheme, host, and port, then dial via standard gRPC
+client APIs (Tonic on Rust, `grpcio` on Python, `@connectrpc/connect-node`
+on Node, `google.golang.org/grpc` on Go). The scheme reserves the
+right to add `grpcs://` later (mTLS, ADR-0022 §6) without
+changing the variable's name. v1alpha1 of the refactor accepts
+only `grpc://`; consumers that see anything else fail at startup.
+
+### What the contract does not include
+
+Endpoints for the stateful services (PostgreSQL, Kafka, Redis)
+are deferred to ADR-0023 (R4.1). This ADR is scoped to the gRPC
+service-to-service boundary the engine and adapters expose.
+
