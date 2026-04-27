@@ -73,6 +73,19 @@ spec:
         image: controller:latest
         name: manager
         ports: []
+        # PR17 §4.4: opt the SeleniumBase adapter into the
+        # container-friendly Chrome flags
+        # (`--no-sandbox --disable-dev-shm-usage`). Without this,
+        # Chrome's zygote refuses to launch its sandbox under the
+        # `restricted` PodSecurityStandard and Navigate fails with
+        # "Chrome failed to start: exited abnormally". The adapter's
+        # `_default_driver_factory` reads the env var and forwards
+        # the flags via SeleniumBase's `chromium_arg`. The Playwright
+        # adapter handles its own sandbox via the /dev/shm mount and
+        # ignores this knob.
+        env:
+          - name: SPECTRE_SELENIUMBASE_CONTAINER
+            value: "1"
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
@@ -91,16 +104,21 @@ spec:
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 10
-        # PR16 bumps these for Chromium under the bundled Playwright
-        # adapter. Limits are pod-level, shared across concurrent
-        # ScrapeJobs; the reconciler ships with controller-runtime's
-        # default MaxConcurrentReconciles=1 so concurrency is bounded
-        # to one job at a time anyway. Adjust upwards if you raise
+        # PR16 sized this Pod for Chromium under the bundled
+        # Playwright adapter; PR17 bumps the memory limit to 3 GiB
+        # so the SeleniumBase path (Python + Chrome with its
+        # renderer subprocess tree) has comfortable headroom on top
+        # of the resident manager + engine processes. At any moment
+        # at most one adapter runs (controller-runtime's default
+        # MaxConcurrentReconciles=1, plus the DSL `driver:` field
+        # selects exactly one of {Chromium, Chrome}); the limit is
+        # sized for whichever browser is heavier, not for both
+        # simultaneously. Adjust upwards if you raise
         # MaxConcurrentReconciles or run heavier sites.
         resources:
           limits:
             cpu: "2"
-            memory: 2Gi
+            memory: 3Gi
           requests:
             cpu: 200m
             memory: 512Mi
