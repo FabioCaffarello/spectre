@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
-	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -42,10 +41,11 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
-// stubRunnerSleep is the simulated work time PR14's StubRunner spends
-// in the Running phase. Long enough to make Pending → Running →
-// Completed transitions visible by hand in `kubectl get scrapejob -w`.
-const stubRunnerSleep = 5 * time.Second
+// defaultEnginePath is the path the operator image installs the
+// spectre engine binary at (see core/control-plane/Dockerfile's
+// multi-stage build copy). Local development overrides via the
+// --engine-binary flag below.
+const defaultEnginePath = "/usr/local/bin/spectre"
 
 var (
 	scheme   = runtime.NewScheme()
@@ -68,6 +68,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var enginePath string
+	var adaptersPath string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -86,6 +88,14 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&enginePath, "engine-binary", defaultEnginePath,
+		"Absolute path to the spectre engine binary the SubprocessRunner shells out to. "+
+			"Defaults to the path the operator image installs to.")
+	flag.StringVar(&adaptersPath, "adapters-path", "",
+		"Optional override for the engine's adapters search path. When empty, the "+
+			"engine resolves SPECTRE_ADAPTERS_PATH and its built-in default. Set this "+
+			"to the workspace adapters/ directory when running with `make run` from a "+
+			"developer checkout.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -185,11 +195,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// TODO(PR15): replace runner.StubRunner with runner.SubprocessRunner.
-	// The SubprocessRunner shells out to the spectre engine binary,
-	// captures JSONL output, and tracks row counts. See ADR-0019 §5 for
-	// the seam.
-	jobRunner := &runner.StubRunner{SleepDuration: stubRunnerSleep}
+	// SubprocessRunner shells out to the spectre engine binary the
+	// operator image bundles, captures JSONL on stdout, and reports
+	// the row count back to the reconciler. See ADR-0019 §5 for the
+	// JobRunner seam.
+	jobRunner := &runner.SubprocessRunner{
+		EnginePath:   enginePath,
+		AdaptersPath: adaptersPath,
+	}
 
 	if err := (&controller.ScrapeJobReconciler{
 		Client: mgr.GetClient(),
