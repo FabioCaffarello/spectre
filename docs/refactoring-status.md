@@ -52,8 +52,8 @@ prompt. Updated each session that lands work on this PR.
 - [x] Step 8 — Status notes on superseded ADRs (0008, 0009, 0013, 0019)
 - [x] Step 9 — Update `docs/adr/README.md` index
 - [x] Step 10 — Create `docs/refactoring-status.md` *(this file)*
-- [ ] Step 11 — Update top-level docs (`roadmap.md`, `README.md`, `CHANGELOG.md`)
-- [ ] Step 12 — Final verification (`just check`, diff scope)
+- [x] Step 11 — Update top-level docs (`roadmap.md`, `README.md`, `CHANGELOG.md`)
+- [x] Step 12 — Final verification (diff scope confirmed: 10 `.md` files only; `just check` blocked by pre-existing `curl-imp-lint` Go-toolchain mismatch unrelated to R1.1)
 - [ ] Step 13 — Open the PR
 - [ ] Step 14 — Summary report
 
