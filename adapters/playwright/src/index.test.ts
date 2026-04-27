@@ -7,9 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 import { CAPABILITY_NAMES, DRIVER_VERSION } from "./capabilities.js";
 import {
   ADAPTER_VERSION,
+  PORT_ENV_VAR,
   PROTOCOL_VERSION,
   identity,
-  resolveSocketPath,
+  resolvePort,
 } from "./index.js";
 import { InitializeRequestSchema } from "./proto/spectre/driver/v1alpha1/driver_pb.js";
 import { DriverError_Code } from "./proto/spectre/driver/v1alpha1/errors_pb.js";
@@ -30,29 +31,33 @@ describe("identity", () => {
   });
 });
 
-describe("resolveSocketPath", () => {
-  it("prefers --socket over the env var", () => {
-    expect(
-      resolveSocketPath(["--socket=/tmp/a.sock"], {
-        SPECTRE_DRIVER_SOCKET: "/tmp/b.sock",
-      }),
-    ).toBe("/tmp/a.sock");
+describe("resolvePort", () => {
+  it("reads SPECTRE_ADAPTER_GRPC_PORT", () => {
+    expect(resolvePort({ [PORT_ENV_VAR]: "9091" })).toBe(9091);
   });
 
-  it("falls back to SPECTRE_DRIVER_SOCKET", () => {
-    expect(
-      resolveSocketPath([], { SPECTRE_DRIVER_SOCKET: "/tmp/c.sock" }),
-    ).toBe("/tmp/c.sock");
+  it("accepts port 0 for kernel-assigned binding", () => {
+    expect(resolvePort({ [PORT_ENV_VAR]: "0" })).toBe(0);
   });
 
-  it("rejects relative paths", () => {
-    expect(() => resolveSocketPath(["--socket=relative.sock"], {})).toThrow(
-      /absolute/,
+  it("rejects a missing env var", () => {
+    expect(() => resolvePort({})).toThrow(new RegExp(PORT_ENV_VAR));
+  });
+
+  it("rejects an empty env var", () => {
+    expect(() => resolvePort({ [PORT_ENV_VAR]: "" })).toThrow(
+      new RegExp(PORT_ENV_VAR),
     );
   });
 
-  it("errors when no source is set", () => {
-    expect(() => resolveSocketPath([], {})).toThrow(/no socket path/);
+  it("rejects a non-integer value", () => {
+    expect(() => resolvePort({ [PORT_ENV_VAR]: "abc" })).toThrow(/port number/);
+  });
+
+  it("rejects an out-of-range port", () => {
+    expect(() => resolvePort({ [PORT_ENV_VAR]: "70000" })).toThrow(
+      /between 0 and 65535/,
+    );
   });
 });
 

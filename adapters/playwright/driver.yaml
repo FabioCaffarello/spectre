@@ -2,10 +2,6 @@ name: playwright
 version: 0.1.0-alpha.0
 protocol_version: spectre.driver.v1alpha1
 
-transports:
-  - kind: grpc-uds
-    command: ["node", "dist/index.js"]
-
 # Each capability lands once its RPC and the conformance tests for it
 # ship together. The conformance suite asserts byte-for-byte equality
 # between this list and the runtime `Capabilities.names` returned by
@@ -25,8 +21,14 @@ capabilities:
   - screenshot_full_page
   - screenshot_viewport
 
+# `runtime.command` is the spawn directive read by the conformance
+# harness in R2.2. The `transports:` block from the prior UDS-era
+# manifest is retired (ADR-0022 §5). When the Compose stack lands in
+# R6.2, service definitions there supersede the harness-spawn flow
+# and `runtime.command` becomes documentation only.
 runtime:
   node: ">=20"
+  command: ["node", "dist/index.js"]
   packages:
     - "playwright@>=1.49"
 

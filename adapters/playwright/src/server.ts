@@ -8,17 +8,23 @@
 // (Navigate / session lifecycle / error mapping), ADR-0010 (element
 // lifecycle and capability gating), and ADR-0011 (Screenshot scope
 // mapping, JPEG quality default, payload-size boundary, read-only
-// contract).
+// contract). R2.2 swaps the Unix-domain-socket transport for TCP
+// (ADR-0021 + ADR-0022); the wire-level service definitions in
+// proto/spectre/driver/v1alpha1 are unchanged.
 
 import { create } from "@bufbuild/protobuf";
 import { DurationSchema } from "@bufbuild/protobuf/wkt";
 import { type ConnectRouter } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { unlink } from "node:fs/promises";
 import * as http2 from "node:http2";
 import { chromium, type Locator, type Page } from "playwright";
+
+import {
+  Health,
+  HealthCheckResponseSchema,
+  HealthCheckResponse_ServingStatus,
+} from "./proto/grpc/health/v1/health_pb.js";
 
 import {
   CAPABILITY_NAMES,
@@ -591,14 +597,36 @@ export const createDriverService = (
   },
 });
 
+// ADR-0021 §6 makes the gRPC standard health check a non-negotiable
+// part of every adapter's surface. The conformance harness polls
+// `Health.Check` until it returns SERVING; production deployments
+// (R6.2 onward) wire the same endpoint into Compose / Kubernetes
+// readiness probes. The Playwright adapter is not a `@grpc/grpc-js`
+// server, so we register a manual implementation backed by the
+// vendored `proto/grpc/health/v1/health.proto` bindings rather than
+// relying on `@grpc/grpc-health-check`.
+const servingResponse = create(HealthCheckResponseSchema, {
+  status: HealthCheckResponse_ServingStatus.SERVING,
+});
+
 export const driverRoutes =
   (impl: DriverServiceImpl) =>
   (router: ConnectRouter): void => {
     router.service(Driver, impl);
+    router.service(Health, {
+      check: () => servingResponse,
+      // Watch is implemented as a single-shot stream that emits the
+      // current status and stays open. The harness never subscribes;
+      // production health probes use Check, which is enough.
+      async *watch() {
+        yield servingResponse;
+      },
+    });
   };
 
 export interface ServerHandle {
-  readonly socketPath: string;
+  readonly host: string;
+  readonly port: number;
   shutdown(): Promise<void>;
 }
 
@@ -607,15 +635,14 @@ const SHUTDOWN_DEADLINE_MS = 5_000;
 export interface StartServerOptions {
   browserFactory?: BrowserFactory;
   sessions?: SessionManager;
+  host?: string;
 }
 
 export async function startServer(
-  socketPath: string,
+  port: number,
   options: StartServerOptions = {},
 ): Promise<ServerHandle> {
-  if (existsSync(socketPath)) {
-    await unlink(socketPath);
-  }
+  const host = options.host ?? "0.0.0.0";
 
   const sessions =
     options.sessions ??
@@ -625,18 +652,27 @@ export async function startServer(
   const handler = connectNodeAdapter({ routes: driverRoutes(impl) });
   const server = http2.createServer(handler);
 
-  await new Promise<void>((resolve, reject) => {
+  const boundPort = await new Promise<number>((resolve, reject) => {
     const onError = (err: Error) => {
       server.removeListener("listening", onListening);
       reject(err);
     };
     const onListening = () => {
       server.removeListener("error", onError);
-      resolve();
+      const addr = server.address();
+      if (addr === null || typeof addr === "string") {
+        reject(
+          new Error(
+            `expected an AF_INET listener, got ${typeof addr === "string" ? addr : "null"}`,
+          ),
+        );
+        return;
+      }
+      resolve(addr.port);
     };
     server.once("error", onError);
     server.once("listening", onListening);
-    server.listen(socketPath);
+    server.listen(port, host);
   });
 
   let closed = false;
@@ -656,17 +692,14 @@ export async function startServer(
         resolve();
       });
     });
-    // Tear down any browsers/contexts before unlinking the socket.
-    // A leaked browser process would outlive the adapter — see
-    // ADR-0009, decision 2 (no eviction in PR4 means closeAll on
-    // shutdown is the only cleanup path).
+    // Tear down any browsers/contexts before exiting. A leaked
+    // browser process would outlive the adapter — see ADR-0009,
+    // decision 2 (no eviction in PR4 means closeAll on shutdown is
+    // the only cleanup path).
     await sessions.closeAll().catch((err: unknown) => {
       process.stderr.write(`session teardown error: ${String(err)}\n`);
     });
-    if (existsSync(socketPath)) {
-      await unlink(socketPath).catch(() => undefined);
-    }
   };
 
-  return { socketPath, shutdown };
+  return { host, port: boundPort, shutdown };
 }

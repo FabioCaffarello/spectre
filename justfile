@@ -350,13 +350,17 @@ pw-test:
 pw-build:
     cd adapters/playwright && pnpm build
 
-# Run the Playwright adapter against a Unix domain socket.
-# Pass --socket=<path> after `--`, or set SPECTRE_DRIVER_SOCKET. The
-# server prints `ready unix:<path>` on stdout once it accepts
-# connections; SIGTERM/Ctrl-C drains, unlinks the socket, and exits 0.
-# Defaults to /tmp/spectre-pw.sock for ad-hoc local testing.
-pw-run *ARGS='--socket=/tmp/spectre-pw.sock': pw-build
-    cd adapters/playwright && node dist/index.js {{ARGS}}
+# Run the Playwright adapter as a TCP gRPC service. Set
+# SPECTRE_ADAPTER_GRPC_PORT to the desired port (ADR-0021 §4 reserves
+# 9091 as the canonical default). The server registers the gRPC
+# standard health check; readiness is signalled by Health.Check
+# returning SERVING. SIGTERM/Ctrl-C drains and exits 0.
+#
+# This recipe survives R2.2 as a developer convenience but is
+# scheduled for retirement in R6.2 when the Compose stack becomes the
+# canonical local-dev path.
+pw-run PORT='9091': pw-build
+    cd adapters/playwright && SPECTRE_ADAPTER_GRPC_PORT={{PORT}} node dist/index.js
 
 # Install the Chromium browser Playwright drives. Idempotent: skips
 # when the binary at the expected version is already present. On
