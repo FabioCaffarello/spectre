@@ -96,3 +96,119 @@ architecture; ADR-0024 settles output sinks; ADR-0025 settles
 the Compose layout; ADR-0026 settles the Helm chart structure.
 This ADR commits to the architectural direction; subsequent ADRs
 fill in the specifics.
+
+## Considered Options
+
+Three architectural shapes were on the table once the cumulative
+drift was acknowledged. Each is documented honestly so a future
+reader can audit why the chosen direction was preferred.
+
+### Option A — Status quo (subprocess-in-pod)
+
+Keep the architecture PR14 through PR18 produced. The operator
+image bundles the engine plus all three adapter runtimes; the
+operator shells out to the engine; the engine spawns adapters as
+further subprocesses; output flows up the pipe chain. Continue
+the v1alpha2 follow-up plan that ADR-0019 sketched (an opt-in
+`Mode: Pod` field on `ScrapeJobSpec`).
+
+- Good, because it requires no refactor — the cumulative work of
+  PR14 through PR18 stays in place.
+- Good, because the local development story remains the lightest
+  possible: a single binary plus subprocess spawn.
+- Bad, because the misalignment with the project's stated
+  microservices positioning persists. Every README paragraph that
+  describes Spectre as a "microservices framework" remains
+  contradicted by the deployed shape.
+- Bad, because the bundled image at ~1.95 GB is not coherent
+  with a microservices narrative regardless of how the runtime
+  trees are nested. The size by itself signals monolith.
+- Bad, because the v1alpha2 escape hatches (`Mode: Pod`,
+  per-adapter Pods) remain hypothetical while the load-bearing
+  shape stays subprocess-in-pod.
+
+Rejected.
+
+### Option B — Partial microservices (engine as service, adapters as subprocess)
+
+Split the engine into its own service exposing gRPC over TCP, but
+keep adapters as subprocesses spawned by the engine inside the
+engine's own Pod. The control plane becomes a gRPC client of the
+engine; adapter discovery stays subprocess-based.
+
+- Good, because it preserves the lowest-friction adapter
+  development workflow. Authors of new adapters keep the existing
+  subprocess-launch contract from ADR-0008 and ADR-0019.
+- Good, because the refactor surface is smaller — the protocol
+  freeze (no proto changes) plus a single transport switch
+  on the control plane / engine boundary, with adapters
+  unchanged.
+- Bad, because the architectural story becomes mixed. Two
+  patterns coexist (service-per-component on one boundary,
+  subprocess-spawn on the other) with no semantic reason for the
+  asymmetry. The "what about a hybrid?" question becomes a
+  recurring review prompt rather than being answered once.
+- Bad, because the engine's bundled image still carries every
+  adapter runtime. Image-size and operational-complexity
+  benefits of microservices are deferred indefinitely.
+- Bad, because the no-legacy principle (strategy prompt §2.2)
+  is harder to honour. Subprocess-launching code in the engine
+  becomes a permanent feature rather than a transitional shim.
+
+Rejected by maintainer; documented here so the rejection is
+visible rather than silent.
+
+### Option C — Full microservices (chosen)
+
+Each of the engine, the control plane, and the three reference
+adapters becomes a standalone service with its own Dockerfile,
+exposing gRPC over TCP. The system is backed by stateful
+services (PostgreSQL, Kafka, Redis). Local development is
+`docker compose up`; production deployment is Helm-installed
+Kubernetes. The driver protocol v1alpha1 wire contract is
+preserved; only the transport address (UDS path → TCP host:port)
+and the discovery mechanism (subprocess spawn → service DNS)
+change.
+
+- Good, because the deployed shape matches the stated thesis.
+  Every README paragraph describing Spectre as microservices is
+  now consistent with the architecture.
+- Good, because each service scales independently. An adapter
+  under load adds replicas without affecting the engine; the
+  engine's request budget is independent of any single adapter.
+- Good, because the protocol's value as an architectural
+  primitive becomes verifiable. A community-authored adapter
+  ships as its own image and joins the topology without touching
+  any other service.
+- Good, because state is externalised into purpose-built
+  services. Pod restart no longer means lost in-flight work.
+- Bad, because operational complexity is the highest of the
+  three options. Six services plus three stateful dependencies
+  is a real distributed system, with the failure modes that
+  implies.
+- Bad, because Docker becomes a hard requirement for local
+  development. Contributors who cannot run Docker cannot work
+  locally on the project.
+- Bad, because the bundled-operator-image pattern from PR16
+  through PR18 is retired. Three PRs of work move from
+  "load-bearing infrastructure" to "historical artifact."
+
+Accepted.
+
+#### A note on "what about a hybrid that keeps the CLI?"
+
+A natural review prompt is whether the `spectre` CLI mode
+(ADR-0013) could survive as a third entry point alongside the
+operator and the Compose stack. The answer is no, for two
+linked reasons. First, after the refactor the engine binary
+exists only as a gRPC service; a CLI that wraps a service is a
+different shape from a CLI that wraps an in-process pipeline,
+and rebuilding it would mean writing a thin gRPC client that
+duplicates what the operator already does. Second, the no-
+legacy principle (strategy prompt §2.2) forbids three coexisting
+entry points whose responsibilities overlap. The operator (in
+Kubernetes) and Compose (locally) cover the user-facing surface
+the CLI used to occupy. Keeping `spectre run` as a third path
+would dilute the architecture without adding capability the
+other two cannot deliver. ADR-0013 is therefore retired in full
+rather than partially preserved.
