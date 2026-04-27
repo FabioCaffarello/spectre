@@ -287,6 +287,13 @@ Instead, it depends on a `JobRunner` interface, defined in
 reserved seam for `SubprocessRunner` (the real engine-invoking
 implementation that PR15 will introduce).
 
+> **Status update (PR15).** `SubprocessRunner` landed in PR15
+> without changes to the `JobRunner` signature, the reconciler
+> control flow, the envtest suite, or the runner unit tests for
+> `StubRunner`. The single in-tree edit to `internal/controller/`
+> was a one-line writer swap (`io.Discard` → `os.Stdout`) so JSONL
+> rows surface in `kubectl logs`. The §5 invariant held.
+
 ```go
 type JobRunner interface {
     // Run executes the DSL job and writes JSONL rows to writer.

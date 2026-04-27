@@ -14,21 +14,38 @@ execution lands in PR15.
 |------------------------------------|-------------------|-------|
 | kubebuilder scaffold               | shipped           | PR14  |
 | `ScrapeJob` CRD (v1alpha1)         | shipped           | PR14  |
-| State-machine reconciler           | shipped (stubbed) | PR14  |
+| State-machine reconciler           | shipped           | PR14  |
 | `JobRunner` interface              | shipped           | PR14  |
 | `StubRunner`                       | shipped           | PR14  |
-| `SubprocessRunner` (engine invoke) | not started       | PR15  |
+| `SubprocessRunner` (engine invoke) | shipped           | PR15  |
+| Operator image bundles engine      | shipped           | PR15  |
+| Operator image bundles adapters    | not started       | PR16  |
 | `ScrapeFleet` CRD                  | not started       | PR16+ |
 | `ScrapeSchedule` CRD               | not started       | PR16+ |
 | Helm chart                         | not started       | PR17+ |
 | Webhook validators                 | not started       | PR18+ |
 | Observability (metrics/traces)     | not started       | PR18+ |
 
-The reconciler in PR14 transitions phases on the right schedule but
-does not actually execute extractions. This is intentional —
-ADR-0019 §3 records why a sleep-based stub is the right scope for the
-kickoff PR, and ADR-0019 §5 records how the `JobRunner` interface
-makes PR15's drop-in real.
+PR14 shipped the reconciler with a sleep-based stub; PR15 wired
+`SubprocessRunner`, which shells out to the spectre engine binary
+the operator image bundles, captures JSONL on stdout, and reports
+`RowsExtracted` to the reconciler. The §5 invariant from ADR-0019
+held: the `JobRunner` signature, the reconciler control flow, and
+the envtest suite are byte-for-byte unchanged from PR14. The only
+in-tree edit to `internal/controller/` was a one-line writer swap
+(`io.Discard` → `os.Stdout`) so JSONL rows reach
+`kubectl logs <operator-pod>` per ADR-0019 §6.
+
+Adapter bundling is **not** part of the operator image yet:
+shipping Playwright + Chromium (~200 MB), SeleniumBase + Chrome,
+and curl-impersonate alongside the engine binary triples the
+attack surface and image size, so it has its own PR. PR15's
+operator image runs the engine subprocess but expects adapters to
+be either mounted into the Pod or resolved via
+`--adapters-path` (the local `op-run` recipe demonstrates the
+latter against the workspace `adapters/` directory). PR16 picks
+up adapter bundling and the in-cluster smoke against
+`hello-hackernews`.
 
 ## The ScrapeJob CRD
 
@@ -116,18 +133,23 @@ kubectl apply -f core/control-plane/config/samples/spectre_v1alpha1_scrapejob_he
 kubectl get scrapejob -w
 ```
 
-Expected output (timing matches the StubRunner's 5-second sleep):
+Expected output (PR15 onwards, against the workspace's spectre
+binary and Playwright adapter):
 
 ```
 NAME               PHASE       ROWS   AGE
 hello-hackernews   Pending     0      1s
 hello-hackernews   Running     0      2s
-hello-hackernews   Completed   0      7s
+hello-hackernews   Completed   30     12s
 ```
 
-`RowsExtracted: 0` is correct for PR14 — the StubRunner does not
-produce output. PR15 wires the real engine invocation and the column
-will reflect the actual row count.
+`RowsExtracted` reflects the JSONL row count the engine emitted on
+stdout (one row per Hacker News story; the front page is ~30 at
+any given time). The rows themselves stream into the operator
+process's stdout and surface via `kubectl logs <operator-pod>` per
+ADR-0019 §6. `op-run` runs the operator on the developer host, so
+"operator logs" here means the foreground terminal where the
+recipe is running.
 
 ### Tearing down
 
@@ -166,13 +188,16 @@ Six axes:
 
 These deferrals are intentional and have PR pointers:
 
-- **Real job execution.** `StubRunner` sleeps and returns `(0, nil)`.
-  PR15 ships `SubprocessRunner` that shells out to the spectre engine
-  binary, captures JSONL, and reports row counts. Grep
-  `core/control-plane/` for `// TODO(PR15)` to find the swap site.
+- **Adapter bundling in the operator image.** PR15 ships an
+  operator image that bundles only the engine binary; running real
+  extractions in-cluster requires Playwright + Chromium (or another
+  adapter) to be available either at the engine's
+  `--adapters-path` override or at the engine's default search
+  path. PR16 picks up adapter bundling and the in-cluster smoke
+  test against `hello-hackernews`.
 - **Output sinks beyond stdout.** `s3://`, `pvc://`, `webhook://`,
   `kafka://` are valid `OutputSink` strings at the schema level but
-  the reconciler rejects them with an explicit error. PR15+ adds
+  the reconciler rejects them with an explicit error. PR16+ adds
   per-sink support.
 - **Per-job resource isolation.** `Spec.Resources` is recorded but
   not enforced; v1alpha1's single-Pod execution model cannot impose
@@ -198,10 +223,11 @@ These deferrals are intentional and have PR pointers:
   ~2 minutes the first time.
 - **Read the reconciler at
   [`internal/controller/scrapejob_controller.go`](../../core/control-plane/internal/controller/scrapejob_controller.go).**
-  It is a 130-line `switch` over phases; the `// TODO(PR15)` marker
-  shows where PR15 lands.
-- **For PR15:** the seam is `JobRunner` in
-  [`internal/runner/runner.go`](../../core/control-plane/internal/runner/runner.go).
-  Drop a `SubprocessRunner` next to `StubRunner`; swap the
-  constructor in [`cmd/main.go`](../../core/control-plane/cmd/main.go);
-  the reconciler and tests stay frozen.
+  It is a ~130-line `switch` over phases; the `runner.JobRunner`
+  call site at the Running case is what PR15 wired to a real engine.
+- **For PR16:** read
+  [`internal/runner/subprocess.go`](../../core/control-plane/internal/runner/subprocess.go)
+  for the engine-invocation contract, then look at the operator
+  image's
+  [`Dockerfile`](../../core/control-plane/Dockerfile)
+  for the adapter-bundling extension point.
