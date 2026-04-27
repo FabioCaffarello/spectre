@@ -50,8 +50,8 @@ prompt. Updated each session that lands work on this PR.
 - [x] Step 5 — Conformance harness rewrite (`_allocate_free_port`, `_wait_for_health_serving`, `from_driver_yaml` reads `runtime.command`, demos take `--endpoint=host:port`)
 - [x] Step 6 — `docs/refactor-audit.md` R2.2 status note
 - [x] Step 7 — `KNOWN_BREAKAGE.md` created (engine ↔ adapter transport mismatch documented; R2.3 deletes the file)
-- [ ] Step 8 — `docs/refactoring-status.md` update (this commit)
-- [ ] Step 9 — Final verification (`just check`, three consecutive `just conf-test` runs, manual health probe per adapter)
+- [x] Step 8 — `docs/refactoring-status.md` and `CHANGELOG.md` updated
+- [x] Step 9 — Final verification: `just check` exits zero; `just conf-test` ran three consecutive times with 44 passed / 13 skipped (the 13 skips are environmental — `curl_chrome116` not on the local PATH per ADR-0016 §3, identical to the R2.1 baseline); manual `grpc.health.v1.Health.Check` against each adapter on its canonical port returned `status: SERVING` (1)
 - [ ] Step 10 — Open the PR
 - [ ] Step 11 — Summary report
 
