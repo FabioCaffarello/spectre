@@ -41,6 +41,7 @@ A decision moves through three states:
 | 0016  | [curl-impersonate adapter and third-runtime divergence](0016-curl-impersonate-adapter-and-third-runtime-divergence.md) | accepted |
 | 0017  | [curl-impersonate extraction and final capability divergence](0017-curl-impersonate-extraction-and-final-capability-divergence.md) | accepted |
 | 0018  | [Devcontainer and engine image (Phase 2.5 kickoff)](0018-devcontainer-and-engine-image.md) | accepted |
+| 0019  | [Control plane architecture and ScrapeJob CRD (Phase 3 kickoff)](0019-control-plane-architecture-and-scrapejob-crd.md) | accepted |
 
 ## When to write an ADR
 
