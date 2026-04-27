@@ -198,3 +198,161 @@ Endpoints for the stateful services (PostgreSQL, Kafka, Redis)
 are deferred to ADR-0023 (R4.1). This ADR is scoped to the gRPC
 service-to-service boundary the engine and adapters expose.
 
+## Healthcheck contract
+
+Every gRPC service in the topology — the engine and the three
+adapters — exposes the standard
+[gRPC Health Checking Protocol](https://github.com/grpc/grpc/blob/master/doc/health-checking.md):
+the `grpc.health.v1.Health/Check` unary RPC and the
+`grpc.health.v1.Health/Watch` streaming RPC, both registered
+under the empty service name (`""`) so a generic probe can
+verify the server is alive without knowing the application's
+service names.
+
+The protocol is defined upstream and supported across all four
+target languages (Rust via `tonic-health`, Node via
+`@grpc/grpc-js-health-check` or `@connectrpc/connect-node`'s
+built-in registry, Python via `grpcio-health-checking`, Go via
+`google.golang.org/grpc/health`). Choosing the standard means
+no protocol invention work in the refactor and uniform tooling
+across services.
+
+Operators consume the contract three ways:
+
+- **Compose `healthcheck:` blocks (R6.2).** Each adapter and
+  the engine ship a `grpc_health_probe` binary in their image
+  and declare a `healthcheck:` directive that exits zero on a
+  `SERVING` response. `depends_on:` blocks elsewhere in the
+  Compose file gate startup on the dependency reporting
+  healthy.
+- **Kubernetes readiness / liveness probes (R7.1).** The Helm
+  chart's Pod templates declare `readinessProbe.grpc.port`
+  pointing at each service's gRPC port. Kubernetes 1.24+
+  supports gRPC probes natively; earlier clusters fall back to
+  a `grpc_health_probe` `exec` probe.
+- **Engine startup dial (ADR-0022 §4).** When the engine dials
+  an adapter, it issues an initial `Health/Check` before
+  declaring the channel ready. A failed health check is a
+  startup failure, not a silent half-open state.
+
+Each service registers its own status, marks itself `SERVING`
+once initialisation is complete (e.g. the Playwright adapter
+once the Playwright runtime has imported), and can transition
+to `NOT_SERVING` during graceful shutdown so dependents see
+the state change before the process exits.
+
+## What this ADR does not decide
+
+Three concerns surface in adjacent reviews and are explicitly
+out of scope for v1alpha1 of the refactor.
+
+- **Mutual TLS and authentication.** The discovery contract is
+  agnostic to TLS. ADR-0022 §6 covers v1alpha1's trusted-
+  network posture and the v1alpha2 path. If TLS lands later,
+  the env-var values change from `grpc://` to `grpcs://`; no
+  discovery-shaped change is required.
+- **Service mesh integration.** Istio, Linkerd, Consul-Connect,
+  and similar meshes inject sidecars that subsume parts of the
+  discovery and transport stack. The current discovery model
+  is mesh-compatible (a sidecar can intercept the env-var
+  endpoint and route through mTLS / observability layers), but
+  no mesh-specific configuration ships in v1alpha1.
+- **Service registry adoption.** If the topology grows beyond
+  the five fixed services that v1alpha1 specifies — for
+  example, a community-authored adapter pool with dynamic
+  membership — a registry such as Consul or etcd becomes
+  appropriate. The refactor declines that complexity now and
+  reserves the right to revisit when the conditions arise.
+
+## Considered alternatives
+
+Three alternatives were on the table during the design pass.
+Each is documented honestly so a future reader can audit the
+choice.
+
+### Service registry (etcd, Consul, Eureka)
+
+A central registry where each service registers its endpoint at
+startup and consumers look up dependencies at runtime. The
+canonical microservices answer.
+
+- Good, because dynamic topologies — services scaled by an
+  external operator, services moving across nodes mid-flight,
+  community-contributed services with no a-priori build-time
+  knowledge — work without configuration churn.
+- Good, because health information centralises in one place;
+  an operator can audit which services are currently
+  registered.
+- Bad, because v1alpha1 has five fixed services. The
+  flexibility a registry provides recovers no value at this
+  scale. Kubernetes already provides DNS-based discovery as a
+  cluster primitive; layering a registry on top duplicates a
+  capability the platform offers.
+- Bad, because adopting a registry adds a fourth stateful
+  service alongside PostgreSQL, Kafka, and Redis. The Compose
+  stack would carry a registry container that exists only to
+  resolve five endpoints — a poor cost / value ratio.
+- Bad, because every service language has to acquire a
+  registry-client dependency. Cross-language adoption is
+  uneven, and the bootstrap problem (how does a service find
+  the registry?) reintroduces the exact env-var lookup the
+  registry was meant to replace.
+- Bad, because bringing a registry into a portfolio-grade
+  refactor risks signalling cargo-cult engineering — adopting
+  an enterprise pattern for the wrong scale.
+
+Not chosen.
+
+### Declarative configuration file (`services.yaml`)
+
+A repository-tracked YAML file enumerating service names,
+ports, and endpoints. Each service reads it at startup; the
+Helm chart and Compose file consume the same source.
+
+- Good, because the file becomes a single source of truth;
+  drift between Compose and Helm is impossible.
+- Good, because reviewers see the topology in one place,
+  diff-tracked.
+- Bad, because the file's value rises with topology size and
+  mutability. Five fixed services do not justify the
+  abstraction; the file would be a thin wrapper around the
+  same names env vars already carry.
+- Bad, because the file introduces a parser dependency in
+  every service. The Twelve-Factor pattern needs no parser
+  beyond the platform's own env-var handling.
+- Neutral, because the file becomes attractive at v1alpha2
+  scale. If endpoints turn dynamic (per-region adapter pools,
+  service replicas with distinct addresses) `services.yaml`
+  is the natural evolution. The refactor reserves that path.
+
+Not chosen for v1alpha1; documented as the v1alpha2 evolution
+candidate if the conditions develop.
+
+### Hardcoded constants
+
+Each consumer compiles its dependency endpoints as constants
+in source code.
+
+- Good, because nothing simpler exists.
+- Bad, because deployment shape becomes a source-tree concern.
+  Changing a port or a service name forces a recompile of every
+  consumer. Helm and Compose customisation is impossible
+  without source patching.
+- Bad, because the practice contradicts the Twelve-Factor
+  separation between code and configuration.
+
+Not chosen.
+
+## More Information
+
+- [ADR-0020 — Microservices architecture supersession](0020-microservices-architecture-supersession.md)
+- [ADR-0022 — TCP / gRPC transport](0022-tcp-grpc-transport.md) (companion document)
+- [ADR-0008 — Driver handshake and conformance harness](0008-driver-handshake-and-conformance-harness.md)
+  (the superseded UDS transport this ADR's discovery contract
+  replaces; see ADR-0022 §5 for the removal inventory)
+- gRPC Health Checking Protocol:
+  <https://github.com/grpc/grpc/blob/master/doc/health-checking.md>
+- The Twelve-Factor App, "Config":
+  <https://12factor.net/config>
+
+
