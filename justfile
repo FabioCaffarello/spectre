@@ -132,25 +132,57 @@ engine-run-hello *ARGS='': spectre-build pw-build
     core/engine/target/release/spectre run examples/hello-hackernews/job.yaml {{ARGS}}
 
 # ---------------------------------------------------------------------------
-# Go control plane (core/control-plane)
+# Go control plane / Kubernetes operator (core/control-plane)
 # ---------------------------------------------------------------------------
+# PR14 replaced the placeholder binary with a kubebuilder v4 scaffold.
+# The cp-* aggregates wrap the kubebuilder Makefile so top-level just
+# bootstrap/fmt/lint/test/build keep working; the op-* aliases below
+# are the discoverable surface for operator-specific workflows
+# (install/uninstall CRDs, run the manager locally). See ADR-0019.
 
-cp-bootstrap: proto-generate
+# The operator does not import the protocol bindings — it shells out to
+# the engine binary in PR15+, so cp-bootstrap drops the proto-generate
+# dependency the placeholder carried.
+cp-bootstrap:
     cd core/control-plane && go mod download
 
 cp-fmt:
     cd core/control-plane && gofmt -l -w .
     cd core/control-plane && goimports -l -w .
 
+# Use vanilla golangci-lint rather than the kubebuilder Makefile's
+# custom-gcl path: we have no plugins to add, and the custom build
+# step is fragile on paths containing spaces.
 cp-lint:
     cd core/control-plane && go vet ./...
     cd core/control-plane && golangci-lint run
 
+# Defer to the kubebuilder Makefile so envtest binaries are downloaded
+# and KUBEBUILDER_ASSETS is set automatically.
 cp-test:
-    cd core/control-plane && go test ./...
+    cd core/control-plane && make test
 
+# Defer to the kubebuilder Makefile; produces bin/manager.
 cp-build:
-    cd core/control-plane && go build -o bin/controller ./cmd/controller
+    cd core/control-plane && make build
+
+# Operator development: discoverable aliases over the kubebuilder
+# Makefile targets. op-test and op-build mirror cp-test and cp-build;
+# the install/uninstall/run trio operates against the current kubectl
+# context (the equivalent of `make install/uninstall/run` from the
+# kubebuilder convention).
+
+op-test: cp-test
+op-build: cp-build
+
+op-run:
+    cd core/control-plane && make run
+
+op-install-crds:
+    cd core/control-plane && make install
+
+op-uninstall-crds:
+    cd core/control-plane && make uninstall
 
 # ---------------------------------------------------------------------------
 # Go curl-impersonate adapter (adapters/curl-impersonate)
