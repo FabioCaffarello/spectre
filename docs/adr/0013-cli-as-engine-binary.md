@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0020
 date: 2026-04-26
 deciders: [Fabio Caffarello]
 ---
@@ -427,3 +427,26 @@ Rejected:
   (Windows deferral, UDS as transport),
   [ADR-0012 Engine DSL surface, planner architecture, and execution pipeline](0012-engine-dsl-and-execution-pipeline.md)
   (the engine pipeline the CLI consumes).
+
+## Update (R1.1, ADR-0020)
+
+This ADR is superseded by
+[ADR-0020](0020-microservices-architecture-supersession.md) in
+full. The `spectre` CLI (`spectre run`, `spectre validate`,
+`spectre version`), the engine binary's standalone execution
+mode, and the `cargo install spectre-engine` distribution path
+are all retired. After the refactor, the engine binary exists
+only as a gRPC service binary; the user-facing entry points are
+the Kubernetes operator (in production) and the `docker compose
+up` stack (locally). ADR-0002's CLI row, originally superseded
+by this ADR (Rust replaces Go), reverts to "no CLI" — there is
+no CLI binary in any language.
+
+The argument for retirement is in
+[ADR-0020](0020-microservices-architecture-supersession.md) §3
+(the "what about a hybrid that keeps the CLI?" sub-bullet) and
+§4 (the decision and its consequences). The refactor's no-legacy
+principle (recorded in the strategy prompt that governs every
+phase PR) forbids three coexisting entry points whose
+responsibilities overlap. The phase that lands the actual deletion
+of CLI source files is R3.

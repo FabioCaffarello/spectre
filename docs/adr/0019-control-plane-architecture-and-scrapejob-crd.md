@@ -518,3 +518,43 @@ the envtest suite.
   [ADR-0007 Protocol code generation](0007-protocol-code-generation.md),
   [ADR-0013 CLI as engine binary](0013-cli-as-engine-binary.md),
   [ADR-0018 Devcontainer and engine image](0018-devcontainer-and-engine-image.md).
+
+## Update (R1.1, ADR-0020)
+
+This ADR's decisions are partially superseded. Specifically:
+
+- §1 (kubebuilder over operator-sdk or controller-runtime
+  direct): preserved. The scaffold, the marker-driven CRD/RBAC
+  generation, and the controller-runtime / envtest pairing carry
+  forward.
+- §2 (`ScrapeJob` as the only CRD in PR14): preserved. The CRD
+  evolves to v1alpha2 in R3 with breaking-change semantics and
+  no conversion webhook (no production users to migrate);
+  `ScrapeFleet` and `ScrapeSchedule` remain deferred per the
+  original deferral rationale.
+- §3 (Adapter execution model — subprocess inside operator pod):
+  superseded by
+  [ADR-0020](0020-microservices-architecture-supersession.md).
+  The single-Pod, three-nested-process model is replaced by
+  service-per-component: the engine becomes a gRPC service the
+  control plane dials, and adapters become services the engine
+  dials. The bundled-operator-image pattern from PR16/PR17/PR18
+  is retired in R6.
+- §4 (`ScrapeJob` status as state machine, not condition
+  arbiter): preserved. The strictly monotonic `Phase`
+  progression carries forward into v1alpha2.
+- §5 (`JobRunner` interface boundary): preserved and validated
+  by the refactor. `EngineClientRunner` becomes the third
+  implementation against the same interface (after `StubRunner`
+  and the now-retired `SubprocessRunner`); the reconciler logic
+  and the envtest suite stay frozen across the swap, as they did
+  in PR15 / PR16.
+- §6 (`OutputSink` field accepts only `"stdout"` in PR14):
+  preserved as a CRD-schema commitment. The field's grammar
+  remains forward-compatible; the runtime grows S3, webhook, and
+  Kafka sinks under ADR-0024 in R5.
+
+The refactor's phase R3 contains the implementation work that
+deletes `SubprocessRunner` and lands `EngineClientRunner`. See
+[ADR-0020](0020-microservices-architecture-supersession.md) §5
+for the full phase sequence.

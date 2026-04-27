@@ -5,7 +5,7 @@ purpose — the maintainers will move milestones based on real
 progress, not a schedule the prompt forced into existence. The
 phases are listed in dependency order; each phase unblocks the next.
 
-> **Last updated:** 2026-04-27 (Phase 3 in progress; PR18 closes v1alpha1 adapter bundling — the operator image now ships engine + Playwright + SeleniumBase + curl-impersonate, all three kind smokes green).
+> **Last updated:** 2026-04-27 (Phase 3 in progress; PR18 closes v1alpha1 adapter bundling — the operator image now ships engine + Playwright + SeleniumBase + curl-impersonate, all three kind smokes green). **An architectural refactor (R1–R8) is now in progress; see [ADR-0020](adr/0020-microservices-architecture-supersession.md) and [`docs/refactoring-status.md`](refactoring-status.md). Phase 3's subprocess-in-pod execution model is superseded; `ScrapeFleet`, `ScrapeSchedule`, the Helm chart, and webhooks are deferred until the refactor completes.**
 
 ## Phase 0 — Foundation (current)
 
