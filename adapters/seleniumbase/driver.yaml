@@ -2,22 +2,6 @@ name: seleniumbase
 version: 0.1.0a0
 protocol_version: spectre.driver.v1alpha1
 
-transports:
-  - kind: grpc-uds
-    # Relative path to the uv-managed virtualenv. Mirrors the
-    # Playwright manifest's `["node", "dist/index.js"]` pattern:
-    # the launcher runs the command with cwd set to the adapter
-    # directory, so this resolves to
-    # `adapters/seleniumbase/.venv/bin/python`. Run
-    # `just sb-bootstrap` (or `uv sync --all-extras --dev`) once
-    # before the adapter is launched. Using the venv's python
-    # rather than PATH-resolved `python` keeps the adapter's
-    # dependencies (seleniumbase, grpcio) isolated from whatever
-    # interpreter happens to be on PATH; it also avoids the
-    # macOS gotcha where `python` is absent and only `python3`
-    # exists.
-    command: [".venv/bin/python", "-m", "spectre_seleniumbase.adapter"]
-
 # Each capability lands once its RPC and the conformance tests for it
 # ship together (ADR-0014 §1). The conformance suite asserts byte-for-
 # byte equality between this list and the runtime `Capabilities.names`
@@ -43,8 +27,21 @@ capabilities:
   - screenshot_element
   - screenshot_viewport
 
+# `runtime.command` is the spawn directive read by the conformance
+# harness in R2.2. The `transports:` block from the prior UDS-era
+# manifest is retired (ADR-0022 §5). When the Compose stack lands in
+# R6.2, service definitions there supersede the harness-spawn flow
+# and `runtime.command` becomes documentation only.
+#
+# Relative path to the uv-managed virtualenv. Mirrors the Playwright
+# manifest's `["node", "dist/index.js"]` pattern: the harness runs the
+# command with cwd set to the adapter directory, so this resolves to
+# `adapters/seleniumbase/.venv/bin/python`. Run `just sb-bootstrap`
+# (or `uv sync --all-extras --dev`) once before the adapter is
+# launched.
 runtime:
   python: ">=3.10"
+  command: [".venv/bin/python", "-m", "spectre_seleniumbase.adapter"]
   packages:
     - "seleniumbase>=4.32"
 

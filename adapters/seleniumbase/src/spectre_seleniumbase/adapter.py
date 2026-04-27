@@ -1,18 +1,19 @@
 """SeleniumBase driver adapter — entry point.
 
-Resolves a Unix domain socket path (CLI flag > env var > error),
-starts the gRPC service, prints a single readiness line on stdout,
-and shuts down cleanly on SIGTERM or SIGINT. See ADR-0008 for the
-full lifecycle contract and ADR-0014 for the SeleniumBase-specific
-decisions.
+Resolves a TCP port from the ``SPECTRE_ADAPTER_GRPC_PORT`` env var
+(ADR-0021 §4 — production default 9092 reserved for SeleniumBase,
+harness allocates a free port at test time), starts the gRPC service
+on ``0.0.0.0:<port>``, registers the gRPC standard health check
+(ADR-0021 §6), and shuts down cleanly on SIGTERM or SIGINT. R2.2
+retired the prior Unix-domain-socket transport; readiness is now
+signalled by ``Health.Check`` returning ``SERVING``. The wire-level
+driver protocol contract is unchanged — see ADR-0008 for the original
+handshake design and ADR-0022 for the TCP transport contract.
 """
 
 from __future__ import annotations
 
-import argparse
-import contextlib
 import os
-import pathlib
 import signal
 import sys
 import threading
@@ -20,6 +21,7 @@ from concurrent import futures
 from typing import Any
 
 import grpc
+from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from spectre.driver.v1alpha1 import driver_pb2_grpc
 
 from spectre_seleniumbase import PROTOCOL_VERSION, __version__
@@ -29,77 +31,74 @@ from spectre_seleniumbase.sessions import SessionManager
 SHUTDOWN_DEADLINE_S = 5.0
 MAX_WORKERS = 4
 
+PORT_ENV_VAR = "SPECTRE_ADAPTER_GRPC_PORT"
+
 
 def identity() -> str:
     """Return the adapter's build identity string."""
     return f"spectre-seleniumbase {__version__} (driver protocol {PROTOCOL_VERSION})"
 
 
-def resolve_socket_path(argv: list[str], env: dict[str, str]) -> pathlib.Path:
-    """Resolve the socket path from argv (``--socket=...``) or env.
+def resolve_port(env: dict[str, str]) -> int:
+    """Resolve the bind port from ``SPECTRE_ADAPTER_GRPC_PORT``.
 
-    CLI flag takes precedence; ``SPECTRE_DRIVER_SOCKET`` is the fallback.
-    Both inputs accept absolute filesystem paths only — relative paths
-    are rejected because macOS UDS paths must be ≤ 104 characters and
-    the harness anchors short paths under ``/tmp`` (ADR-0008).
+    The env var is required and must parse to an integer in the
+    valid TCP port range. The conformance harness sets it to a
+    free ephemeral port at start time; production deployments use
+    the canonical 9092 reserved by ADR-0021 §4.
     """
-    parser = argparse.ArgumentParser(
-        prog="spectre-seleniumbase",
-        description="Spectre SeleniumBase driver adapter (gRPC over UDS).",
-        add_help=True,
-    )
-    parser.add_argument(
-        "--socket",
-        type=str,
-        default=None,
-        help="absolute path to the Unix domain socket the adapter binds to",
-    )
-    args = parser.parse_args(argv)
-    candidate = args.socket or env.get("SPECTRE_DRIVER_SOCKET")
-    if not candidate:
+    raw = env.get(PORT_ENV_VAR, "")
+    if not raw:
         raise SystemExit(
-            "no socket path provided: pass --socket=<absolute-path> or set SPECTRE_DRIVER_SOCKET"
+            f"{PORT_ENV_VAR} is required: set it to the TCP port the adapter should bind"
         )
-    path = pathlib.Path(candidate)
-    if not path.is_absolute():
-        raise SystemExit(f"socket path must be absolute, got {candidate!r}")
-    return path
+    try:
+        port = int(raw)
+    except ValueError as err:
+        raise SystemExit(f"{PORT_ENV_VAR} must be a port number, got {raw!r}") from err
+    if not 0 <= port <= 65535:
+        raise SystemExit(f"{PORT_ENV_VAR} must be between 0 and 65535, got {port}")
+    return port
 
 
 def _create_server(
     sessions: SessionManager,
-    socket_path: pathlib.Path,
+    port: int,
 ) -> grpc.Server:
-    """Build a gRPC server bound to the given UDS path."""
+    """Build a gRPC server bound to ``0.0.0.0:<port>``.
+
+    Registers the v1alpha1 ``Driver`` service and the gRPC standard
+    health check. The health servicer reports ``SERVING`` for the
+    overall service ('') from process startup; the conformance
+    harness polls until that response arrives, and production
+    health probes consume the same endpoint.
+    """
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=MAX_WORKERS))
     driver_pb2_grpc.add_DriverServicer_to_server(DriverServicer(sessions), server)
-    server.add_insecure_port(f"unix:{socket_path}")
+
+    health_servicer = health.HealthServicer()
+    health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
+
+    server.add_insecure_port(f"0.0.0.0:{port}")
     return server
 
 
 def serve(
-    socket_path: pathlib.Path,
+    port: int,
     factory: Any | None = None,
 ) -> None:
-    """Start the gRPC server, signal readiness, and serve until SIGTERM/SIGINT.
+    """Start the gRPC server, register health, and serve until SIGTERM/SIGINT.
 
     ``factory`` is the WebDriver factory the session manager calls
     lazily on first ``Navigate``. The default starts a SeleniumBase
     Chrome driver in headless mode; tests inject a fake.
     """
-    if socket_path.exists():
-        socket_path.unlink()
-    socket_path.parent.mkdir(parents=True, exist_ok=True)
-
     sessions = SessionManager(factory=factory or _default_driver_factory)
-    server = _create_server(sessions, socket_path)
+    server = _create_server(sessions, port)
     server.start()
 
-    # Readiness line on stdout, identity on stderr — matches the
-    # Playwright adapter's contract (ADR-0008 §2).
-    sys.stdout.write(f"ready unix:{socket_path}\n")
-    sys.stdout.flush()
-    sys.stderr.write(f"{identity()} listening on unix:{socket_path}\n")
+    sys.stderr.write(f"{identity()} listening on 0.0.0.0:{port}\n")
     sys.stderr.flush()
 
     stop_event = threading.Event()
@@ -116,20 +115,21 @@ def serve(
 
     stop_event.wait()
 
-    # Stop accepting new connections, drain in-flight RPCs up to the
-    # deadline, then tear down browser sessions and unlink the socket.
     server.stop(SHUTDOWN_DEADLINE_S).wait()
     sessions.close_all()
-    with contextlib.suppress(FileNotFoundError):
-        socket_path.unlink()
 
 
 def main(argv: list[str] | None = None) -> None:
-    """CLI entry point. Parses argv, resolves the socket path, and serves."""
-    if argv is None:
-        argv = sys.argv[1:]
-    socket_path = resolve_socket_path(argv, dict(os.environ))
-    serve(socket_path)
+    """CLI entry point. Resolves the port and serves.
+
+    ``argv`` is accepted but ignored — the adapter reads its bind
+    port from the environment, not from CLI flags. The parameter is
+    retained so existing entry-point wrappers and tests do not need
+    a coupled signature change.
+    """
+    del argv
+    port = resolve_port(dict(os.environ))
+    serve(port)
 
 
 if __name__ == "__main__":

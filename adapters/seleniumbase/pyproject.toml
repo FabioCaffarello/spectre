@@ -30,6 +30,11 @@ dependencies = [
     # transitively; declaring it here keeps the adapter's direct
     # dependency surface explicit and matches the conformance pin.
     "grpcio>=1.60",
+    # Standard gRPC health checking. The adapter registers
+    # `grpc.health.v1.Health` as part of the R2.2 transport switch
+    # (ADR-0021 §6); the conformance harness polls it as the
+    # readiness signal.
+    "grpcio-health-checking>=1.60",
     # Pillow handles the PNG -> JPEG conversion in the Screenshot
     # handler — Selenium returns PNG bytes natively, the v1alpha1
     # protocol also accepts JPEG, and Pillow is the conventional
@@ -91,9 +96,11 @@ ignore_missing_imports = true
 follow_imports = "skip"
 
 # `grpcio` ships without bundled type stubs. Treat its public API as
-# Any-typed; the adapter wraps it so leakage is bounded.
+# Any-typed; the adapter wraps it so leakage is bounded. `grpc_health`
+# is the same story — it ships in `grpcio-health-checking` without
+# stubs.
 [[tool.mypy.overrides]]
-module = ["grpc", "grpc.*"]
+module = ["grpc", "grpc.*", "grpc_health", "grpc_health.*"]
 ignore_missing_imports = true
 
 # SeleniumBase and Selenium WebDriver do not ship type stubs in a

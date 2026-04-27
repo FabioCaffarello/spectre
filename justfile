@@ -393,16 +393,18 @@ sb-lint:
 sb-test:
     cd adapters/seleniumbase && uv run pytest
 
-# Run the SeleniumBase adapter against a Unix domain socket.
-# Pass --socket=<path> after `--`, or set SPECTRE_DRIVER_SOCKET. The
-# server prints `ready unix:<path>` on stdout once it accepts
-# connections; SIGTERM/Ctrl-C stops the server, tears down any
-# launched Chrome sessions, unlinks the socket, and exits 0.
-# Defaults to /tmp/spectre-sb.sock for ad-hoc local testing. See
-# ADR-0008.
-sb-run *ARGS='--socket=/tmp/spectre-sb.sock': sb-bootstrap
+# Run the SeleniumBase adapter as a TCP gRPC service. ADR-0021 §4
+# reserves 9092 as the canonical default port. Readiness is
+# signalled by the gRPC standard health check returning SERVING;
+# SIGTERM/Ctrl-C stops the server, tears down any launched Chrome
+# sessions, and exits 0.
+#
+# This recipe survives R2.2 as a developer convenience but is
+# scheduled for retirement in R6.2 when the Compose stack becomes
+# the canonical local-dev path.
+sb-run PORT='9092': sb-bootstrap
     cd adapters/seleniumbase && \
-    .venv/bin/python -m spectre_seleniumbase.adapter {{ARGS}}
+    SPECTRE_ADAPTER_GRPC_PORT={{PORT}} .venv/bin/python -m spectre_seleniumbase.adapter
 
 # Install ChromeDriver for SeleniumBase. Idempotent: SeleniumBase's
 # `install chromedriver` recipe matches the local Chrome version
