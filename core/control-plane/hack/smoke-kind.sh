@@ -77,6 +77,40 @@ smoke_one() {
         log "[${name}] FAIL: phase=${phase:-<empty>} (expected Completed)"
         log "[${name}] Operator pod describe"
         kubectl -n "${NAMESPACE}" describe pod -l control-plane=controller-manager || true
+        # When the SeleniumBase case fails, chromedriver collapses
+        # any underlying Chrome crash into "Chrome instance exited"
+        # — useless on its own. Run google-chrome directly inside
+        # the live operator Pod with the same flags the adapter
+        # forwards, capturing Chrome's actual stderr. The Pod is
+        # still running at this point because it's the operator
+        # itself, not a per-job child.
+        if [ "${name}" = "seleniumbase-extract" ]; then
+            log "[${name}] Direct Chrome diagnostic from inside the operator Pod"
+            local pod
+            pod="$(kubectl -n "${NAMESPACE}" get pod \
+                -l control-plane=controller-manager \
+                -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+            if [ -n "${pod}" ]; then
+                kubectl -n "${NAMESPACE}" exec "${pod}" -c manager -- \
+                    /bin/sh -c '
+                        set +e
+                        echo "--- env"
+                        echo "HOME=${HOME:-<unset>}"
+                        id
+                        echo "--- chrome direct"
+                        UD=$(mktemp -d -p /tmp chrome-diag-XXXXXX 2>/dev/null || echo /tmp/chrome-diag)
+                        google-chrome \
+                            --headless \
+                            --no-sandbox \
+                            --disable-dev-shm-usage \
+                            --disable-gpu \
+                            --disable-software-rasterizer \
+                            --user-data-dir="${UD}" \
+                            --dump-dom https://example.com 2>&1 | head -40
+                        echo "--- chrome exit=$?"
+                    ' || true
+            fi
+        fi
         return 1
     fi
 
