@@ -14,6 +14,15 @@ ENGINE_IMAGE ?= spectre-engine:dev
 # workflow step.
 PLAYWRIGHT_BASE_IMAGE ?= $(shell cat ../../adapters/playwright/.playwright-base-image)
 
+# curl-impersonate release tarball pin (PR18 §4.1). The pin file at
+# adapters/curl-impersonate/.curl-impersonate-version is one line:
+# "VERSION SHA256". The Dockerfile downloads the tarball, verifies the
+# SHA-256, and extracts the variant binaries onto /usr/local/bin/.
+# Bumping the version is a single-line change to the pin file.
+CURL_IMPERSONATE_PIN := $(shell grep -v '^\#' ../../adapters/curl-impersonate/.curl-impersonate-version | head -n 1)
+CURL_IMPERSONATE_VERSION ?= $(word 1,$(CURL_IMPERSONATE_PIN))
+CURL_IMPERSONATE_SHA256 ?= $(word 2,$(CURL_IMPERSONATE_PIN))
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -132,10 +141,15 @@ run: manifests generate fmt vet ## Run a controller from your host.
 docker-build: ## Build docker image with the manager. Requires the engine image identified by ENGINE_IMAGE to exist locally.
 	# Build context is the repository root (PR16 §6.3): the
 	# playwright-builder stage needs proto/ to regenerate TypeScript
-	# bindings and adapters/playwright/ for the adapter source.
+	# bindings and adapters/playwright/ for the adapter source. PR18
+	# extends the runtime stage with the curl-impersonate release
+	# tarball; CURL_IMPERSONATE_VERSION + CURL_IMPERSONATE_SHA256 come
+	# from adapters/curl-impersonate/.curl-impersonate-version.
 	$(CONTAINER_TOOL) build \
 		--build-arg ENGINE_IMAGE=$(ENGINE_IMAGE) \
 		--build-arg PLAYWRIGHT_BASE_IMAGE=$(PLAYWRIGHT_BASE_IMAGE) \
+		--build-arg CURL_IMPERSONATE_VERSION=$(CURL_IMPERSONATE_VERSION) \
+		--build-arg CURL_IMPERSONATE_SHA256=$(CURL_IMPERSONATE_SHA256) \
 		-t ${IMG} \
 		-f Dockerfile \
 		../..
@@ -157,7 +171,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name control-plane-builder
 	$(CONTAINER_TOOL) buildx use control-plane-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg ENGINE_IMAGE=$(ENGINE_IMAGE) --build-arg PLAYWRIGHT_BASE_IMAGE=$(PLAYWRIGHT_BASE_IMAGE) --tag ${IMG} -f Dockerfile.cross ../..
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg ENGINE_IMAGE=$(ENGINE_IMAGE) --build-arg PLAYWRIGHT_BASE_IMAGE=$(PLAYWRIGHT_BASE_IMAGE) --build-arg CURL_IMPERSONATE_VERSION=$(CURL_IMPERSONATE_VERSION) --build-arg CURL_IMPERSONATE_SHA256=$(CURL_IMPERSONATE_SHA256) --tag ${IMG} -f Dockerfile.cross ../..
 	- $(CONTAINER_TOOL) buildx rm control-plane-builder
 	rm Dockerfile.cross
 
