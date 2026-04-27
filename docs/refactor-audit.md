@@ -27,6 +27,17 @@
 
 ## R2.2 — adapter transport switch
 
+> **Status (R2.2 complete):** every adapter-side and conformance-harness
+> entry below was applied in PR R2.2. The `transports:` block is gone
+> from each `driver.yaml`; the three adapters bind TCP via
+> `SPECTRE_ADAPTER_GRPC_PORT` and register the gRPC standard health
+> check; the conformance harness allocates a free port and polls
+> `grpc.health.v1.Health.Check` until SERVING. A grep for `unix:`,
+> `--socket`, `SPECTRE_DRIVER_SOCKET`, or `resolveSocketPath` /
+> `resolve_socket_path` against `adapters/` and `tools/conformance/`
+> returns zero hits in source. Engine-side entries in the next section
+> remain pending and land in R2.3.
+
 ### adapters/playwright/
 
 | File | Lines | Change |

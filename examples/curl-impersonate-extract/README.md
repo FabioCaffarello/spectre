@@ -71,9 +71,12 @@ is one YAML edit away.)
    `hello-hackernews` and `seleniumbase-extract`; only the driver
    name differs.
 2. Engine launches the curl-impersonate adapter as a subprocess
-   (reading `adapters/curl-impersonate/driver.yaml`), waits for
-   the `ready unix:<path>` readiness line, and dials the socket
-   over gRPC.
+   (reading `adapters/curl-impersonate/driver.yaml`), polls the
+   gRPC standard health check until SERVING (ADR-0021 §6), and
+   dials the TCP listener over gRPC (ADR-0022). The engine-side
+   TCP dial lands in R2.3; until then the `spectre run` flow
+   against this example is broken — see `KNOWN_BREAKAGE.md` at
+   the repo root.
 3. Engine sends the RPC sequence. `Navigate` shells out to
    `curl_chrome116`, parses the response body via goquery
    (ADR-0017 §2), and caches the `*goquery.Document` on the
