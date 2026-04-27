@@ -81,14 +81,11 @@ def seleniumbase_adapter() -> Iterator[DriverHarness]:
     ``just conf-test`` depends on ``just sb-bootstrap`` so the venv is
     always present when the tests run there.
 
-    Unlike the Playwright fixture, this one does *not* call
-    ``DriverHarness.from_driver_yaml`` — the manifest's command is
-    ``["python", "-m", ...]`` and PATH-resolved ``python`` would
-    typically point at the conformance venv (which has no
-    seleniumbase install). The fixture instead substitutes the
-    adapter's own venv python so each adapter stays in its own
-    isolated environment, mirroring how the Playwright adapter uses
-    its own ``node`` runtime.
+    The harness substitutes the adapter's own venv python for the
+    PATH-resolved one declared in ``runtime.command`` so each adapter
+    stays in its own isolated environment, mirroring how the
+    Playwright adapter uses its own ``node`` runtime via
+    ``dist/index.js``.
     """
 
     if not SELENIUMBASE_VENV_PY.exists():

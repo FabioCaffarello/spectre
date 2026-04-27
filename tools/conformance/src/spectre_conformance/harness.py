@@ -1,42 +1,39 @@
-"""DriverHarness — start a driver subprocess and dial it over gRPC.
+"""DriverHarness — start a driver subprocess and dial it over TCP gRPC.
 
 Lifecycle:
 
-1. ``start()`` chooses a per-instance Unix domain socket path under
-   ``/tmp`` (short enough to fit macOS' 104-char UDS limit), unlinks
-   any prior file at that path, launches the driver subprocess with
-   the chosen path appended to argv as ``--socket=<path>`` and also
-   exported as ``SPECTRE_DRIVER_SOCKET``, then waits up to
-   ``ready_timeout_s`` seconds for the driver to write a single line
-   of the form ``ready unix:<path>`` to stdout. If stdout EOFs or the
-   timeout elapses, an AF_UNIX connect attempt is the fallback signal.
-   On failure the harness raises with the captured stderr/stdout tail.
-2. ``dial()`` returns a configured :class:`grpc.Channel` aimed at the
-   driver. The channel sets ``grpc.default_authority=localhost``
-   because Node's ``http2`` server, when bound to a UDS, requires the
-   ``:authority`` pseudo-header to be ``localhost`` — a known Node
-   constraint. See ADR-0008.
+1. ``start()`` allocates a free localhost TCP port via the standard
+   "bind 0, read back" pattern, exports it to the driver subprocess
+   as ``SPECTRE_ADAPTER_GRPC_PORT`` (ADR-0021 §4), launches the
+   driver with no extra CLI flags, and polls
+   ``grpc.health.v1.Health.Check`` until it responds ``SERVING``
+   within ``ready_timeout_s`` seconds (ADR-0021 §6). On failure the
+   harness raises with the captured stderr/stdout tail.
+2. ``dial()`` returns a configured :class:`grpc.Channel` aimed at
+   the driver's TCP endpoint. The channel sets
+   ``grpc.default_authority=localhost`` so Node's ``http2`` server
+   (the Playwright adapter) accepts the request — see ADR-0008 for
+   the original rationale and ADR-0022 for the TCP-era contract.
 3. ``stop()`` sends SIGTERM, waits up to ``shutdown_timeout_s``
-   seconds, and falls back to SIGKILL. The temporary directory
-   holding the socket is removed.
+   seconds, and falls back to SIGKILL.
 
 The class is a context manager: ``with DriverHarness(...) as h``.
 
-This harness is intentionally small. PR3 covers exactly one driver
-(Playwright); SeleniumBase and curl-impersonate will reuse it once
-their handshake landings exercise real evidence about what the
-harness should generalise.
+R2.2 retired the prior Unix-domain-socket transport. The
+constructor signature is preserved (``DriverHarness(command=...,
+cwd=...)``) so existing fixtures keep working; the
+``from_driver_yaml`` constructor reads ``runtime.command`` from the
+manifest now that the ``transports:`` block has been removed
+(ADR-0022 §5).
 """
 
 from __future__ import annotations
 
 import contextlib
 import os
-import shutil
 import signal
 import socket
 import subprocess
-import tempfile
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -46,27 +43,36 @@ from typing import IO
 
 import grpc
 import yaml
+from grpc_health.v1 import health_pb2, health_pb2_grpc
 
 DEFAULT_READY_TIMEOUT_S: float = 10.0
 DEFAULT_SHUTDOWN_TIMEOUT_S: float = 5.0
-READY_LINE_PREFIX = "ready unix:"
 DIAGNOSTIC_TAIL_LINES = 50
 
+# ADR-0008 §3 documents why the harness pins the default authority
+# to ``localhost``: Node's HTTP/2 server requires ``:authority`` for
+# every request, and Connect-Node's defaults derive from the bind
+# host. ADR-0022 carries the constraint forward — the same Node
+# adapter binds TCP now, but the requirement is unchanged.
 DEFAULT_AUTHORITY = "localhost"
 
+PORT_ENV_VAR = "SPECTRE_ADAPTER_GRPC_PORT"
 
-def _allocate_socket_path() -> Path:
-    """Return a fresh socket path under ``/tmp``.
 
-    macOS limits AF_UNIX paths to 104 characters. The default
-    ``tempfile.gettempdir()`` on macOS resolves to a long
-    ``/var/folders/...`` path that exceeds the limit when combined
-    with a per-test subdirectory. Anchoring under ``/tmp`` keeps the
-    path short.
+def _allocate_free_port() -> int:
+    """Bind a kernel-assigned ephemeral port and return its number.
+
+    The socket is closed before return; the kernel is unlikely to
+    re-issue the same port immediately, but a sufficiently busy
+    machine could race. The harness re-tries the bind in
+    ``start()`` if the driver subprocess fails its first listen
+    attempt — this helper alone does not retry.
     """
 
-    tmpdir = Path(tempfile.mkdtemp(prefix="spectre-conf-", dir="/tmp"))
-    return tmpdir / "d.sock"
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port: int = s.getsockname()[1]
+        return port
 
 
 @dataclass
@@ -93,14 +99,13 @@ class DriverHarness:
     command: Sequence[str]
     cwd: Path | None = None
     extra_env: dict[str, str] = field(default_factory=dict)
-    socket_path: Path = field(default_factory=_allocate_socket_path)
+    port: int = field(default_factory=_allocate_free_port)
     ready_timeout_s: float = DEFAULT_READY_TIMEOUT_S
     shutdown_timeout_s: float = DEFAULT_SHUTDOWN_TIMEOUT_S
 
     _process: subprocess.Popen[str] | None = field(default=None, init=False, repr=False)
     _stdout_lines: list[str] = field(default_factory=list, init=False, repr=False)
     _stderr_lines: list[str] = field(default_factory=list, init=False, repr=False)
-    _ready_event: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _stdout_thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _stderr_thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _channel: grpc.Channel | None = field(default=None, init=False, repr=False)
@@ -109,36 +114,34 @@ class DriverHarness:
     def from_driver_yaml(
         cls,
         manifest_path: Path,
-        *,
-        transport_kind: str = "grpc-uds",
         **kwargs: object,
     ) -> DriverHarness:
         """Construct a harness from a ``driver.yaml`` file.
 
-        Reads the first transport entry whose ``kind`` matches
-        ``transport_kind`` and uses its ``command`` list verbatim.
-        ``cwd`` defaults to the manifest's directory so any relative
-        paths inside the command (e.g. ``dist/index.js``) resolve
-        correctly.
+        Reads ``runtime.command`` from the manifest. The
+        pre-R2.2 ``transports:`` block has been retired (ADR-0022
+        §5); the spawn command lives in ``runtime.command`` until
+        R6.2's Compose stack supersedes the harness-spawn flow
+        entirely.
+
+        ``cwd`` defaults to the manifest's directory so any
+        relative paths inside the command (e.g.
+        ``dist/index.js``) resolve correctly.
         """
 
         manifest = yaml.safe_load(manifest_path.read_text())
-        transports = manifest.get("transports", [])
-        for transport in transports:
-            if transport.get("kind") == transport_kind:
-                command = list(transport.get("command", []))
-                if not command:
-                    raise ValueError(
-                        f"driver.yaml at {manifest_path} declares an empty command "
-                        f"for transport {transport_kind!r}"
-                    )
-                return cls(
-                    command=command,
-                    cwd=manifest_path.parent,
-                    **kwargs,  # type: ignore[arg-type]
-                )
-        raise ValueError(
-            f"driver.yaml at {manifest_path} has no transport of kind {transport_kind!r}"
+        runtime = manifest.get("runtime") or {}
+        command = list(runtime.get("command") or [])
+        if not command:
+            raise ValueError(
+                f"driver.yaml at {manifest_path} declares no runtime.command "
+                "(R2.2 retired the transports: block; the spawn directive lives "
+                "under runtime.command now)"
+            )
+        return cls(
+            command=command,
+            cwd=manifest_path.parent,
+            **kwargs,  # type: ignore[arg-type]
         )
 
     # ------------------------------------------------------------------
@@ -148,15 +151,14 @@ class DriverHarness:
         if self._process is not None:
             raise RuntimeError("DriverHarness.start() called twice")
 
-        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.socket_path.exists():
-            self.socket_path.unlink()
-
-        full_command = [*self.command, f"--socket={self.socket_path}"]
-        env = {**os.environ, **self.extra_env, "SPECTRE_DRIVER_SOCKET": str(self.socket_path)}
+        env = {
+            **os.environ,
+            **self.extra_env,
+            PORT_ENV_VAR: str(self.port),
+        }
 
         self._process = subprocess.Popen(  # noqa: S603 - command is caller-supplied
-            full_command,
+            list(self.command),
             cwd=str(self.cwd) if self.cwd else None,
             env=env,
             stdout=subprocess.PIPE,
@@ -169,21 +171,18 @@ class DriverHarness:
         assert self._process.stderr is not None
         self._stdout_thread = threading.Thread(
             target=self._pump,
-            args=(self._process.stdout, self._stdout_lines, self._on_stdout_line),
+            args=(self._process.stdout, self._stdout_lines),
             daemon=True,
         )
         self._stderr_thread = threading.Thread(
             target=self._pump,
-            args=(self._process.stderr, self._stderr_lines, None),
+            args=(self._process.stderr, self._stderr_lines),
             daemon=True,
         )
         self._stdout_thread.start()
         self._stderr_thread.start()
 
-        if not self._ready_event.wait(timeout=self.ready_timeout_s) and not self._socket_pingable():
-            self._fail(
-                f"driver did not signal readiness within {self.ready_timeout_s:.0f}s",
-            )
+        self._wait_for_health_serving(self.ready_timeout_s)
 
     def stop(self) -> None:
         if self._channel is not None:
@@ -207,10 +206,6 @@ class DriverHarness:
             if thread is not None:
                 thread.join(timeout=1.0)
 
-        parent = self.socket_path.parent
-        if parent.exists() and parent.name.startswith("spectre-conf-"):
-            shutil.rmtree(parent, ignore_errors=True)
-
         self._process = None
 
     def __enter__(self) -> DriverHarness:
@@ -233,11 +228,11 @@ class DriverHarness:
     # Channel
 
     def dial(self) -> grpc.Channel:
-        if not self._ready_event.is_set():
-            raise RuntimeError("dial() called before driver became ready")
+        if self._process is None:
+            raise RuntimeError("dial() called before start()")
         if self._channel is None:
             self._channel = grpc.insecure_channel(
-                f"unix:{self.socket_path}",
+                f"127.0.0.1:{self.port}",
                 options=[("grpc.default_authority", DEFAULT_AUTHORITY)],
             )
         return self._channel
@@ -250,39 +245,75 @@ class DriverHarness:
     def stdout_text(self) -> str:
         return "".join(self._stdout_lines)
 
+    @property
+    def endpoint(self) -> str:
+        """Return the dial endpoint string (host:port)."""
+        return f"127.0.0.1:{self.port}"
+
     # ------------------------------------------------------------------
     # Internals
 
-    def _on_stdout_line(self, line: str) -> None:
-        if self._ready_event.is_set():
-            return
-        if line.lstrip().startswith(READY_LINE_PREFIX):
-            self._ready_event.set()
-
-    def _pump(
-        self,
-        stream: IO[str],
-        sink: list[str],
-        on_line: object,
-    ) -> None:
+    def _pump(self, stream: IO[str], sink: list[str]) -> None:
         for line in stream:
             sink.append(line)
-            if on_line is not None:
-                callback = on_line
-                callback(line)  # type: ignore[operator]
 
-    def _socket_pingable(self) -> bool:
-        if not self.socket_path.exists():
-            return False
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(0.5)
-        try:
-            sock.connect(str(self.socket_path))
-            return True
-        except OSError:
-            return False
-        finally:
-            sock.close()
+    def _wait_for_health_serving(self, timeout_s: float) -> None:
+        """Poll grpc.health.v1.Health.Check until SERVING or timeout.
+
+        ADR-0021 §6 makes the health check the canonical readiness
+        signal. The poll uses a fresh insecure channel — the
+        production channel built by ``dial()`` is reserved for the
+        test's own RPCs. The retry interval is intentionally simple
+        (1 second); jitter and exponential back-off would only
+        matter if startup were measured in tens of seconds.
+        """
+
+        deadline = self._monotonic() + timeout_s
+        last_error: Exception | None = None
+        retry_interval_s = 0.1
+
+        with grpc.insecure_channel(
+            self.endpoint,
+            options=[("grpc.default_authority", DEFAULT_AUTHORITY)],
+        ) as channel:
+            stub = health_pb2_grpc.HealthStub(channel)
+            request = health_pb2.HealthCheckRequest(service="")
+            while self._monotonic() < deadline:
+                if self._process is None or self._process.poll() is not None:
+                    self._fail(
+                        "driver subprocess exited before reporting health",
+                    )
+                try:
+                    response = stub.Check(request, timeout=1.0)
+                except grpc.RpcError as err:  # pragma: no cover - depends on race
+                    last_error = err
+                    self._sleep(retry_interval_s)
+                    retry_interval_s = min(retry_interval_s * 2, 1.0)
+                    continue
+                if response.status == health_pb2.HealthCheckResponse.SERVING:
+                    return
+                # The driver is up but reports NOT_SERVING / UNKNOWN.
+                # Wait and retry — the protocol allows transitions.
+                self._sleep(retry_interval_s)
+
+        self._fail(
+            f"driver did not signal SERVING within {timeout_s:.0f}s"
+            + (f" (last error: {last_error})" if last_error else "")
+        )
+
+    @staticmethod
+    def _monotonic() -> float:
+        # Indirected so tests can override timing without touching
+        # the global ``time`` module.
+        import time
+
+        return time.monotonic()
+
+    @staticmethod
+    def _sleep(seconds: float) -> None:
+        import time
+
+        time.sleep(seconds)
 
     def _fail(self, message: str) -> None:
         stdout_tail = "".join(self._stdout_lines[-DIAGNOSTIC_TAIL_LINES:])

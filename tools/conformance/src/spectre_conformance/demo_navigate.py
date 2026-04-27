@@ -1,6 +1,6 @@
 """Manual ``Navigate`` demo against a running adapter.
 
-Connects to the Unix domain socket served by an already-running
+Connects to the TCP gRPC endpoint served by an already-running
 adapter (e.g. one started with ``just pw-run``), performs an
 ``Initialize`` to obtain a session id, then issues a ``Navigate``
 to the requested URL and prints the resulting ``NavigateResponse``.
@@ -9,12 +9,12 @@ Example::
 
     just pw-build
     just pw-install-browsers
-    just pw-run -- --socket=/tmp/spectre-demo.sock
+    just pw-run 19091
 
     # in a second terminal:
     uv --project tools/conformance run python -m \\
         spectre_conformance.demo_navigate \\
-        --socket=/tmp/spectre-demo.sock \\
+        --endpoint=127.0.0.1:19091 \\
         --url=https://example.com
 
 This script is for human verification, not automated tests. The
@@ -26,16 +26,15 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 import grpc
 from google.protobuf.duration_pb2 import Duration
 from spectre.driver.v1alpha1 import driver_pb2, driver_pb2_grpc, errors_pb2
 
 
-def _build_channel(socket_path: Path) -> grpc.Channel:
+def _build_channel(endpoint: str) -> grpc.Channel:
     return grpc.insecure_channel(
-        f"unix:{socket_path}",
+        endpoint,
         options=[("grpc.default_authority", "localhost")],
     )
 
@@ -44,7 +43,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Drive a single Navigate against a running adapter."
     )
-    parser.add_argument("--socket", required=True, type=Path, help="Adapter socket path.")
+    parser.add_argument(
+        "--endpoint",
+        required=True,
+        help="Adapter TCP endpoint, host:port (e.g. 127.0.0.1:9091).",
+    )
     parser.add_argument("--url", required=True, help="URL to navigate to.")
     parser.add_argument(
         "--timeout-ms",
@@ -54,11 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not args.socket.exists():
-        print(f"socket not found: {args.socket}", file=sys.stderr)
-        return 2
-
-    with _build_channel(args.socket) as channel:
+    with _build_channel(args.endpoint) as channel:
         stub = driver_pb2_grpc.DriverStub(channel)
 
         init = stub.Initialize(

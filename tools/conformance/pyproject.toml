@@ -18,6 +18,11 @@ dependencies = [
     # gRPC client used by the harness. The runtime is also a transitive
     # dep of spectre-driver-protocol; declared here for clarity.
     "grpcio>=1.60",
+    # Standard gRPC health checking. The harness polls
+    # `grpc.health.v1.Health.Check` until SERVING as the readiness
+    # signal (ADR-0021 §6); the same package is also a runtime dep
+    # of the SeleniumBase adapter.
+    "grpcio-health-checking>=1.60",
 ]
 
 [project.urls]
@@ -71,9 +76,10 @@ ignore_missing_imports = true
 follow_imports = "skip"
 
 # `grpcio` ships without bundled type stubs. Treat the public API as
-# Any-typed; the harness wraps it so leakage is bounded.
+# Any-typed; the harness wraps it so leakage is bounded. `grpc_health`
+# (from grpcio-health-checking) is the same story.
 [[tool.mypy.overrides]]
-module = ["grpc", "grpc.*"]
+module = ["grpc", "grpc.*", "grpc_health", "grpc_health.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
