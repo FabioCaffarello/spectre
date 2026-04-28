@@ -31,7 +31,7 @@ path = "src/bin/spectre.rs"
 # its `spectre.engine.v1alpha1.Engine` server (ADR-0021 §6).
 prost = "0.13"
 prost-types = "0.14"
-tonic = { version = "0.12", default-features = false, features = ["codegen", "prost", "transport"] }
+tonic = { version = "0.13", default-features = false, features = ["codegen", "prost", "transport"] }
 tonic-health = { version = "0.12", default-features = false }
 
 # Tokio runtime: async I/O, signal handling, timeouts, channels, and
