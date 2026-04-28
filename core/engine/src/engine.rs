@@ -2,46 +2,54 @@
 
 //! Top-level Engine API.
 //!
-//! [`Engine::run_job`] is the orchestrator: parse → plan → launch
-//! driver → dial → execute → shutdown. Public entry point used by the
-//! `spectre` binary at `src/bin/spectre.rs` (ADR-0013).
-
-use std::path::{Path, PathBuf};
+//! [`Engine::run_plan_with_sink`] is the orchestrator: resolve
+//! driver → dial adapter → execute → write rows. The engine no longer
+//! spawns adapters as subprocesses; per ADR-0020 §3 they are
+//! long-running services dialed over TCP. Adapter discovery flows
+//! through [`AdapterRegistry`](crate::registry::AdapterRegistry).
+//!
+//! The engine is stateless across calls in v1alpha1; PostgreSQL-backed
+//! state lands in R4.2.
 
 use tracing::{debug, info};
 
 use crate::client::Client;
-use crate::dsl::{Job, OutputConfig, OutputFormat, resolve_output_path};
+use crate::dsl::Job;
 use crate::error::EngineError;
 use crate::executor::Executor;
-use crate::launcher::{
-    DEFAULT_READY_TIMEOUT, DriverHandle, launch as launch_driver, load_declared_capabilities,
-    manifest_path_for, resolve_adapters_path,
-};
-use crate::output::{JsonlFileSink, OutputSink, StdoutSink};
-use crate::plan::{Plan, plan as plan_job, validate_capabilities};
+use crate::output::OutputSink;
+use crate::plan::{Plan, plan as plan_job};
+use crate::registry::AdapterRegistry;
 
-/// Top-level engine. Hold one per concurrent job; the engine is
-/// inexpensive — it carries only configuration.
+/// Top-level engine. Hold one per process; cheap to clone (it
+/// carries the registry by value, which is itself a small `HashMap`).
 #[derive(Debug, Clone)]
 pub struct Engine {
-    adapters_path: PathBuf,
+    registry: AdapterRegistry,
 }
 
 impl Engine {
-    /// Construct an engine that resolves adapters via
-    /// [`resolve_adapters_path`].
+    /// Construct an engine reading adapter endpoints from the
+    /// process environment via [`AdapterRegistry::from_env`].
     #[must_use]
-    pub fn new(adapters_path_override: Option<&Path>) -> Self {
+    pub fn from_env() -> Self {
         Self {
-            adapters_path: resolve_adapters_path(adapters_path_override),
+            registry: AdapterRegistry::from_env(),
         }
     }
 
-    /// Path the engine resolves adapters from.
+    /// Construct an engine wrapping the supplied registry. Intended
+    /// for tests and embedded use; production callers use
+    /// [`Self::from_env`].
     #[must_use]
-    pub fn adapters_path(&self) -> &Path {
-        &self.adapters_path
+    pub fn with_registry(registry: AdapterRegistry) -> Self {
+        Self { registry }
+    }
+
+    /// The registry the engine uses for driver discovery.
+    #[must_use]
+    pub fn registry(&self) -> &AdapterRegistry {
+        &self.registry
     }
 
     /// Parse `yaml` and return the validated [`Job`] without running
@@ -60,73 +68,35 @@ impl Engine {
         plan_job(job)
     }
 
-    /// Parse, plan, and check the plan's required capabilities against
-    /// the driver's declared list. Returns the validated [`Plan`]
-    /// without launching anything.
+    /// Run a pre-built [`Plan`] with the supplied output sink.
+    /// Resolves the plan's `driver` against the registry, dials the
+    /// adapter over TCP, and drives the executor against `sink`.
+    /// Returns the total number of rows written.
     ///
-    /// Used by `spectre validate` to surface configuration errors
-    /// (unknown driver, malformed YAML, missing capability) without
-    /// paying for a subprocess launch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError::Job`] on parse/validation failure,
-    /// [`EngineError::Launcher`] if the driver manifest cannot be
-    /// read or parsed, and [`EngineError::Plan`] if the plan's
-    /// required capabilities are not a subset of the driver's
-    /// declared list.
-    pub fn validate_only(&self, yaml: &str) -> Result<Plan, EngineError> {
-        let job = Self::parse_job(yaml)?;
-        let plan = Self::plan_job(&job);
-        let manifest = manifest_path_for(&self.adapters_path, &plan.driver);
-        let declared = load_declared_capabilities(&manifest)?;
-        validate_capabilities(&plan, &declared)?;
-        Ok(plan)
-    }
-
-    /// Run a job from YAML bytes. Resolves the output path against
-    /// `job_dir` (the directory containing the job file). Returns the
-    /// total number of rows written.
+    /// This is the canonical entry point used by the gRPC server's
+    /// `RunJob` handler (see [`crate::server`]).
     ///
     /// # Errors
     ///
-    /// Surfaces every variant of [`EngineError`] depending on what
-    /// fails: parse, plan, launcher, transport, capability, driver,
-    /// output, or I/O.
-    pub async fn run_job(&self, yaml: &str, job_dir: &Path) -> Result<usize, EngineError> {
-        let job = Self::parse_job(yaml)?;
-        let plan = Self::plan_job(&job);
-        self.run_plan(plan, job_dir).await
-    }
-
-    /// Run a pre-built [`Plan`]. Use this when the caller has already
-    /// parsed the job and wants to mutate the plan (e.g. to override
-    /// the output path) before execution.
-    ///
-    /// # Errors
-    ///
-    /// Same surface as [`Engine::run_job`].
-    pub async fn run_plan(&self, plan: Plan, job_dir: &Path) -> Result<usize, EngineError> {
-        info!(driver = %plan.driver, steps = plan.steps.len(), "running plan");
+    /// Returns every variant of [`EngineError`] depending on what
+    /// fails: capability validation, transport dial, driver-side
+    /// error, output, or I/O. Specifically returns
+    /// [`EngineError::UnknownDriver`] when the plan's driver is not
+    /// registered.
+    pub async fn run_plan_with_sink(
+        &self,
+        plan: &Plan,
+        sink: &mut dyn OutputSink,
+    ) -> Result<usize, EngineError> {
+        let endpoint = self.registry.resolve(&plan.driver)?;
+        info!(
+            driver = %plan.driver,
+            endpoint = %endpoint,
+            steps = plan.steps.len(),
+            "running plan"
+        );
         debug!(?plan, "compiled plan");
-
-        let mut sink = make_sink(&plan.output, job_dir)?;
-
-        let handle: DriverHandle =
-            launch_driver(&plan.driver, &self.adapters_path, DEFAULT_READY_TIMEOUT).await?;
-        let client = Client::dial(&handle.socket_path().to_string_lossy()).await?;
-
-        let outcome = Executor::run(&plan, &client, sink.as_mut()).await;
-        handle.shutdown().await;
-        outcome
-    }
-}
-
-fn make_sink(output: &OutputConfig, job_dir: &Path) -> Result<Box<dyn OutputSink>, EngineError> {
-    let OutputFormat::Jsonl = output.format;
-    if let Some(path) = resolve_output_path(&output.path, job_dir) {
-        Ok(Box::new(JsonlFileSink::create(&path)?))
-    } else {
-        Ok(Box::new(StdoutSink::new()))
+        let client = Client::dial(endpoint).await?;
+        Executor::run(plan, &client, sink).await
     }
 }
