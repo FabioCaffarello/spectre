@@ -68,7 +68,8 @@ use crate::dsl::Job;
 use crate::engine::Engine;
 use crate::engine_proto::engine_server::{Engine as EngineService, EngineServer};
 use crate::engine_proto::{
-    Completed, Failed, Row, RunJobRequest, RunJobResponse, run_job_response,
+    Completed, Failed, Row, RunJobRequest, RunJobResponse, S3SinkConfig, WebhookSinkConfig,
+    run_job_response,
 };
 use crate::error::EngineError;
 use crate::kafka::KafkaProducer;
@@ -157,7 +158,8 @@ impl EngineService for EngineServiceImpl {
             job_id,
             output_sink_kind,
             kafka_topic,
-            ..
+            s3: s3_config,
+            webhook: webhook_config,
         } = request.into_inner();
         // Empty defaults to "stdout" so clients that predate R4.2
         // (notably the engine's own integration tests and any
@@ -219,21 +221,27 @@ impl EngineService for EngineServiceImpl {
         let engine = Arc::clone(&self.engine);
         let pool = self.db.pool.clone();
         let kafka = self.kafka.clone();
+        let s3 = self.s3.clone();
+        let webhook = Arc::clone(&self.webhook);
         let driver = plan.driver.clone();
         let (response_tx, response_rx) =
             mpsc::unbounded_channel::<Result<RunJobResponse, Status>>();
 
-        tokio::spawn(stream_run_job(
+        tokio::spawn(stream_run_job(StreamRunJobArgs {
             engine,
             pool,
             kafka,
+            s3,
+            webhook,
             plan,
             job_uuid,
             driver,
             output_sink_kind,
             kafka_topic,
+            s3_config,
+            webhook_config,
             response_tx,
-        ));
+        }));
 
         Ok(Response::new(Box::pin(UnboundedReceiverStream::new(
             response_rx,
@@ -241,27 +249,56 @@ impl EngineService for EngineServiceImpl {
     }
 }
 
-/// Drives one `RunJob` to completion: spawns the executor on a child
-/// task, drains rows off the executor's channel (persisting and
-/// publishing as the sink demands, forwarding to gRPC), then writes
-/// the terminal `mark_completed` / `mark_failed` UPDATE and emits
-/// the matching gRPC event.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-async fn stream_run_job(
+/// Argument bundle for [`stream_run_job`]. Replaces an
+/// 11-argument function signature now that R5.1 has added S3 +
+/// webhook plumbing alongside the existing Kafka path. ADR-0019 §5
+/// R5.1 addendum records the analogous decision for the
+/// reconciler-side `JobRunner.Run`.
+struct StreamRunJobArgs {
     engine: Arc<Engine>,
     pool: sqlx::PgPool,
     kafka: Option<Arc<KafkaProducer>>,
+    s3: Option<Arc<S3Uploader>>,
+    webhook: Arc<WebhookClient>,
     plan: crate::plan::Plan,
     job_uuid: Uuid,
     driver: String,
     output_sink_kind: String,
     kafka_topic: String,
+    s3_config: Option<S3SinkConfig>,
+    webhook_config: Option<WebhookSinkConfig>,
     response_tx: mpsc::UnboundedSender<Result<RunJobResponse, Status>>,
-) {
-    // Pre-flight kafka admission: short-circuit before touching the
-    // executor when the sink is kafka but the producer is missing
-    // or the topic is empty. Yields the terminal Failed event,
-    // writes `mark_failed`, returns.
+}
+
+/// Drives one `RunJob` to completion: spawns the executor on a child
+/// task, drains rows off the executor's channel (persisting and
+/// publishing as the sink demands, forwarding to gRPC), then writes
+/// the terminal `mark_completed` / `mark_failed` UPDATE and emits
+/// the matching gRPC event.
+#[allow(clippy::too_many_lines)]
+async fn stream_run_job(args: StreamRunJobArgs) {
+    let StreamRunJobArgs {
+        engine,
+        pool,
+        kafka,
+        s3,
+        webhook,
+        plan,
+        job_uuid,
+        driver,
+        output_sink_kind,
+        kafka_topic,
+        s3_config,
+        webhook_config,
+        response_tx,
+    } = args;
+
+    // Pre-flight admission: short-circuit before touching the
+    // executor when the sink is kafka/s3/webhook but the
+    // engine-level state is missing (kafka, s3) or the per-job
+    // fields are invalid (kafka topic, s3 bucket/key, webhook
+    // URL). Yields the terminal Failed event, writes
+    // `mark_failed`, returns.
     if output_sink_kind == "kafka" {
         if kafka.is_none() {
             terminate_with_failure(
@@ -286,6 +323,49 @@ async fn stream_run_job(
             .await;
             return;
         }
+    } else if output_sink_kind == "s3" {
+        if s3.is_none() {
+            terminate_with_failure(
+                &pool,
+                job_uuid,
+                "S3_UNAVAILABLE",
+                "s3 uploader is not available; set SPECTRE_S3_ENDPOINT (or rely on \
+                 the AWS default credential chain) and restart engine to enable \
+                 OutputSink.S3 jobs",
+                &response_tx,
+            )
+            .await;
+            return;
+        }
+        let s3_cfg = s3_config.as_ref();
+        let bucket = s3_cfg.map(|c| c.bucket.as_str()).unwrap_or_default();
+        let key = s3_cfg.map(|c| c.key.as_str()).unwrap_or_default();
+        if bucket.trim().is_empty() || key.trim().is_empty() {
+            terminate_with_failure(
+                &pool,
+                job_uuid,
+                "S3_FIELD_REQUIRED",
+                "s3 bucket and key must be non-empty; set \
+                 ScrapeJob.spec.outputSink.s3.bucket and .key",
+                &response_tx,
+            )
+            .await;
+            return;
+        }
+    } else if output_sink_kind == "webhook" {
+        let webhook_cfg = webhook_config.as_ref();
+        let url = webhook_cfg.map(|c| c.url.as_str()).unwrap_or_default();
+        if url.trim().is_empty() {
+            terminate_with_failure(
+                &pool,
+                job_uuid,
+                "WEBHOOK_FIELD_REQUIRED",
+                "webhook url is empty; set ScrapeJob.spec.outputSink.webhook.url",
+                &response_tx,
+            )
+            .await;
+            return;
+        }
     }
 
     let (row_tx, mut row_rx) = mpsc::unbounded_channel::<serde_json::Value>();
@@ -300,8 +380,33 @@ async fn stream_run_job(
 
     let persist_rows = output_sink_kind == "stdout";
     let publish_kafka = output_sink_kind == "kafka";
+    let buffer_s3 = output_sink_kind == "s3";
+    let publish_webhook = output_sink_kind == "webhook";
     let mut row_index: i64 = 0;
-    let mut kafka_publish_error: Option<String> = None;
+    // Tagged sink-error: (error_code, error_message). Any per-row
+    // sink failure short-circuits the drain loop; the terminal
+    // event maps the code into the gRPC `Failed` payload.
+    let mut sink_publish_error: Option<(String, String)> = None;
+
+    // S3 in-memory buffer (per ADR-0024 §3). One JSONL line per
+    // row, single PutObject at end. Empty-result jobs upload an
+    // empty object to preserve the presence-or-absence signal.
+    let mut s3_buffer: Vec<u8> = Vec::new();
+
+    // Per-job webhook session (per ADR-0024 §4). Only constructed
+    // when the sink is webhook; an early validation error here
+    // surfaces as WEBHOOK_FIELD_REQUIRED before the loop runs.
+    let mut webhook_session = if publish_webhook {
+        match webhook_session_for(&webhook, webhook_config.as_ref(), job_uuid, &driver) {
+            Ok(sess) => Some(sess),
+            Err((code, msg)) => {
+                terminate_with_failure(&pool, job_uuid, &code, &msg, &response_tx).await;
+                return;
+            }
+        }
+    } else {
+        None
+    };
 
     while let Some(value) = row_rx.recv().await {
         if persist_rows {
@@ -323,7 +428,7 @@ async fn stream_run_job(
             }
         };
 
-        if publish_kafka && kafka_publish_error.is_none() {
+        if publish_kafka && sink_publish_error.is_none() {
             // `kafka` is `Some` here: the pre-flight check above
             // returned for the `None` case. Publishes are awaited
             // sequentially per row — librdkafka's internal queue +
@@ -348,7 +453,31 @@ async fn stream_run_job(
                         error = %e,
                         "kafka publish failed; aborting drain",
                     );
-                    kafka_publish_error = Some(e.to_string());
+                    sink_publish_error =
+                        Some(("KAFKA_PUBLISH_FAILED".to_owned(), e.to_string()));
+                }
+            }
+        }
+
+        if buffer_s3 && sink_publish_error.is_none() {
+            // Append the row to the in-memory JSONL buffer. The
+            // single PutObject runs after the executor finishes
+            // — see end-of-function block. ADR-0024 §3.
+            s3_buffer.extend_from_slice(json_line.as_bytes());
+            s3_buffer.push(b'\n');
+        }
+
+        if publish_webhook && sink_publish_error.is_none() {
+            if let Some(sess) = webhook_session.as_mut() {
+                if let Err(e) = sess.push_row(json_line.clone()).await {
+                    warn!(
+                        job_id = %job_uuid,
+                        row_index,
+                        error = %e,
+                        "webhook publish failed; aborting drain",
+                    );
+                    sink_publish_error =
+                        Some(("WEBHOOK_POST_FAILED".to_owned(), e.to_string()));
                 }
             }
         }
@@ -356,8 +485,8 @@ async fn stream_run_job(
         // Forward the row to the gRPC stream regardless of sink so
         // the control plane can mirror it into operator stdout for
         // `kubectl logs` (ADR-0019 §6). Stops forwarding after the
-        // first kafka error so the client sees the failure quickly.
-        if kafka_publish_error.is_none() {
+        // first sink error so the client sees the failure quickly.
+        if sink_publish_error.is_none() {
             // `is_err()` (client dropped) is acknowledged but not
             // acted on: we keep draining so the executor doesn't
             // block and so remaining rows still persist to
@@ -383,11 +512,61 @@ async fn stream_run_job(
         }
     };
 
-    // Kafka publish failure overrides a successful executor outcome
+    // After the executor finishes successfully and no per-row sink
+    // error fired, do the end-of-job sink work: S3 PutObject or
+    // webhook session finalise. Surface failures the same way
+    // per-row failures surface (override successful outcome with
+    // `S3_UPLOAD_FAILED` / `WEBHOOK_POST_FAILED`).
+    if sink_publish_error.is_none() && outcome.is_ok() {
+        if buffer_s3 {
+            if let (Some(uploader), Some(cfg)) = (s3.as_ref(), s3_config.as_ref()) {
+                let key = crate::s3::render_key(&cfg.key, job_uuid);
+                let endpoint_label = uploader.endpoint_label().to_owned();
+                if let Err(e) =
+                    uploader.upload_jsonl(&cfg.bucket, &key, s3_buffer.clone()).await
+                {
+                    warn!(
+                        job_id = %job_uuid,
+                        bucket = %cfg.bucket,
+                        key = %key,
+                        endpoint = %endpoint_label,
+                        error = %e,
+                        "s3 upload failed",
+                    );
+                    sink_publish_error =
+                        Some(("S3_UPLOAD_FAILED".to_owned(), e.to_string()));
+                } else {
+                    info!(
+                        job_id = %job_uuid,
+                        bucket = %cfg.bucket,
+                        key = %key,
+                        bytes = s3_buffer.len(),
+                        "s3 upload ok",
+                    );
+                }
+            }
+        }
+
+        if publish_webhook {
+            if let Some(sess) = webhook_session.as_mut() {
+                if let Err(e) = sess.finalise().await {
+                    warn!(
+                        job_id = %job_uuid,
+                        error = %e,
+                        "webhook finalise failed",
+                    );
+                    sink_publish_error =
+                        Some(("WEBHOOK_POST_FAILED".to_owned(), e.to_string()));
+                }
+            }
+        }
+    }
+
+    // Sink-publish failure overrides a successful executor outcome
     // — the executor finished but the destination state is
-    // incomplete, so the job did not "succeed" in the §3 sense.
-    let final_outcome = if let Some(message) = kafka_publish_error {
-        Err(EngineError::Output(format!("kafka publish: {message}")))
+    // incomplete, so the job did not "succeed" in the §3 / §4 sense.
+    let final_outcome = if let Some((code, message)) = sink_publish_error {
+        Err(EngineError::SinkPublish { code, message })
     } else {
         outcome
     };
@@ -400,6 +579,28 @@ async fn stream_run_job(
     {
         error!(job_id = %job_uuid, "client closed RunJob stream before terminal event");
     }
+}
+
+/// Build a per-job webhook session from the gRPC config message.
+/// Returns the validated session on success, or a (code, message)
+/// pair the dispatch path uses to call [`terminate_with_failure`].
+fn webhook_session_for<'c>(
+    client: &'c WebhookClient,
+    cfg: Option<&WebhookSinkConfig>,
+    job_uuid: Uuid,
+    driver: &str,
+) -> Result<crate::webhook::WebhookSession<'c>, (String, String)> {
+    let Some(cfg) = cfg else {
+        return Err((
+            "WEBHOOK_FIELD_REQUIRED".to_owned(),
+            "webhook config missing on RunJobRequest".to_owned(),
+        ));
+    };
+    let parsed = crate::webhook::WebhookConfig::parse(&cfg.url, &cfg.method, cfg.batch_size)
+        .map_err(|e| ("WEBHOOK_FIELD_REQUIRED".to_owned(), e.to_string()))?;
+    client
+        .session(parsed, &job_uuid.to_string(), driver)
+        .map_err(|e| ("WEBHOOK_POST_FAILED".to_owned(), e.to_string()))
 }
 
 /// Persist the terminal state (`mark_completed` or `mark_failed`)
@@ -517,17 +718,20 @@ impl OutputSink for ChannelSink {
 
 fn error_code(err: &EngineError) -> String {
     match err {
-        EngineError::Job(_) => "JOB",
-        EngineError::Plan(_) => "PLAN",
-        EngineError::Transport(_) => "TRANSPORT",
-        EngineError::Driver { .. } => "DRIVER",
-        EngineError::CapabilityMissing { .. } => "CAPABILITY_MISSING",
-        EngineError::UnknownDriver(_) => "UNKNOWN_DRIVER",
-        EngineError::Output(_) => "OUTPUT",
-        EngineError::Io(_) => "IO",
-        EngineError::Internal(_) => "INTERNAL",
+        EngineError::Job(_) => "JOB".to_owned(),
+        EngineError::Plan(_) => "PLAN".to_owned(),
+        EngineError::Transport(_) => "TRANSPORT".to_owned(),
+        EngineError::Driver { .. } => "DRIVER".to_owned(),
+        EngineError::CapabilityMissing { .. } => "CAPABILITY_MISSING".to_owned(),
+        EngineError::UnknownDriver(_) => "UNKNOWN_DRIVER".to_owned(),
+        EngineError::Output(_) => "OUTPUT".to_owned(),
+        EngineError::Io(_) => "IO".to_owned(),
+        EngineError::Internal(_) => "INTERNAL".to_owned(),
+        // The sink-publish variant carries its own canonical code
+        // (KAFKA_PUBLISH_FAILED / S3_UPLOAD_FAILED /
+        // WEBHOOK_POST_FAILED). ADR-0023 §3 + ADR-0024 §3 / §4.
+        EngineError::SinkPublish { code, .. } => code.clone(),
     }
-    .to_owned()
 }
 
 #[cfg(test)]
@@ -572,10 +776,31 @@ mod tests {
             },
             EngineError::Output("o".into()),
             EngineError::Internal("i".into()),
+            EngineError::SinkPublish {
+                code: "KAFKA_PUBLISH_FAILED".into(),
+                message: "broker unreachable".into(),
+            },
         ];
         for c in cases {
             let code = error_code(c);
             assert!(!code.is_empty(), "missing code for {c:?}");
         }
+    }
+
+    #[test]
+    fn sink_publish_error_code_is_canonical_string() {
+        // Per ADR-0023 §3 + ADR-0024 §3 / §4, the SinkPublish
+        // variant's `code` field IS the gRPC `Failed.error_code`
+        // — error_code returns it verbatim.
+        let s3 = EngineError::SinkPublish {
+            code: "S3_UPLOAD_FAILED".into(),
+            message: "AccessDenied".into(),
+        };
+        assert_eq!(error_code(&s3), "S3_UPLOAD_FAILED");
+        let webhook = EngineError::SinkPublish {
+            code: "WEBHOOK_POST_FAILED".into(),
+            message: "503: bad gateway".into(),
+        };
+        assert_eq!(error_code(&webhook), "WEBHOOK_POST_FAILED");
     }
 }
