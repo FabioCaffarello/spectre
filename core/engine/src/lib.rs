@@ -59,6 +59,7 @@ pub mod executor;
 pub mod launcher;
 pub mod output;
 pub mod plan;
+pub mod registry;
 
 mod engine;
 

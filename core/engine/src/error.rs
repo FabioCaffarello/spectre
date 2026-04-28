@@ -59,6 +59,13 @@ pub enum EngineError {
         missing: Vec<String>,
     },
 
+    /// The DSL referenced a driver name not registered in the
+    /// engine's [`AdapterRegistry`](crate::registry::AdapterRegistry).
+    /// In v1alpha1 the registered names are `playwright`,
+    /// `seleniumbase`, and `curl-impersonate`.
+    #[error("unknown driver: {0}")]
+    UnknownDriver(String),
+
     /// Writing a row to the configured output sink failed.
     #[error("output error: {0}")]
     Output(String),
