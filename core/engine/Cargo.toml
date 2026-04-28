@@ -73,7 +73,7 @@ tracing = "0.1"
 # SIGTERM signalling. tokio::process::Child does not expose a SIGTERM
 # helper portably; nix's narrow `signal` feature gives us the kill(2)
 # wrapper without pulling the rest of the crate. See ADR-0012 §4.
-nix = { version = "0.29", default-features = false, features = ["signal"] }
+nix = { version = "0.31", default-features = false, features = ["signal"] }
 
 [build-dependencies]
 # tonic-build invokes prost-build at compile time to write the
