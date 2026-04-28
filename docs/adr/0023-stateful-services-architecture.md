@@ -99,13 +99,12 @@ library matrix lives in §8; the rationale for not using
 is plain PostgreSQL, no vendor extensions; v1alpha1 pins the
 Compose stack and the Helm subchart to PostgreSQL 16.
 
-Alternatives evaluated: **MySQL** (less-ergonomic JSON storage
-than JSONB; thinner Kubernetes operator ecosystem); **SQLite**
-(single-file embedded — multi-writer scenario across separate
-Pods does not match its design); **CockroachDB** (geo-
-distribution complexity for a v1alpha1 single-cluster
-deployment); **DynamoDB / managed cloud DBs** (excludes self-
-hosted deployments, which §10 keeps as a first-class shape).
+Alternatives evaluated: **MySQL** (less-ergonomic JSON than
+JSONB; thinner K8s operator ecosystem); **SQLite** (multi-
+writer scenario across separate Pods is not its design);
+**CockroachDB** (geo-distribution complexity for a single-
+cluster deployment); **DynamoDB / managed cloud DBs**
+(excludes self-hosted deployments, which §10 keeps first-class).
 
 ## §3 — Kafka
 
@@ -119,62 +118,54 @@ implemented (R4.4)". This section records the producer
 contract R4.4 implements.
 
 Topics follow the pattern `spectre.rows.<workspace>`. v1alpha1
-has one workspace, named `default`, so the canonical topic is
+has one workspace named `default`, so the canonical topic is
 `spectre.rows.default`. Per-job topics were rejected: job
 cardinality is unbounded, Kafka topics carry per-topic broker
 metadata overhead, and runtime topic creation complicates the
 producer's authorisation model. The workspace component is
 reserved for v1alpha2 multi-tenancy.
 
-Each topic uses 8 partitions by default (tunable per
-environment via Helm values). The partition key is the job's
-UUID. Two consequences: all rows for one job land on one
-partition, so a downstream consumer that orders by `(partition,
-offset)` sees the job's rows in extraction order; and work
-spreads roughly evenly across partitions for many concurrent
-jobs.
+Each topic uses 8 partitions by default (tunable via Helm
+values). The partition key is the job's UUID. All rows for one
+job land on one partition, so a downstream consumer that
+orders by `(partition, offset)` sees the job's rows in
+extraction order; work spreads roughly evenly across partitions
+for many concurrent jobs.
 
 One Kafka message per row. The body is the JSONL row exactly
-as the engine would have written to stdout. Headers carry the
-metadata downstream consumers need to route or filter without
-parsing the body:
+as the engine would have written to stdout. Headers carry
+metadata for routing and filtering without parsing the body:
+`job_id` (UUID matching `jobs.id`), `row_index` (monotonic per
+job), `driver` (`playwright` / `seleniumbase` /
+`curl-impersonate`), `timestamp` (ISO-8601).
 
-- `job_id` — UUID matching `jobs.id` (§2)
-- `row_index` — monotonic counter per job
-- `driver` — `playwright` / `seleniumbase` / `curl-impersonate`
-- `timestamp` — ISO-8601 row-emission time
-
-The engine uses `rdkafka` (see §8). Brokers compatible with the
-Apache Kafka 0.11+ wire protocol all work. R7.1's production
-path defaults to a Strimzi or Bitnami Kafka deployment; R6.2's
-Compose stack uses Redpanda single-node — wire-compatible with
-Kafka, single binary, no ZooKeeper dependency. The producer
+The engine uses `rdkafka` (see §8). Brokers compatible with
+the Apache Kafka 0.11+ wire protocol all work. R7.1's
+production path defaults to a Strimzi or Bitnami Kafka
+deployment; R6.2's Compose stack uses Redpanda single-node —
+wire-compatible, single binary, no ZooKeeper. The producer
 code does not branch on broker implementation.
 
 Alternatives evaluated: **RabbitMQ** (queue-shaped semantics
 delete on consume; Kafka's offset model is the right shape for
-replayable row streaming); **NATS JetStream** (thinner cross-
-language client ecosystem; weaker partition semantics);
-**Apache Pulsar** (BookKeeper / ZooKeeper add complexity;
-Kafka's mindshare wins for a polyglot consumer story).
+replayable streaming); **NATS JetStream** (thinner cross-
+language ecosystem; weaker partition semantics); **Apache
+Pulsar** (BookKeeper / ZooKeeper add complexity).
 
 R4.4 wires the producer and removes the admission-time
 rejection from the v1alpha2 reconciler. R5.1 (S3 + Webhook)
-does not consume this topic — those sinks have their own
-destinations — but shares the v1alpha2 discriminated-union
-shape R3.2 committed.
+shares the discriminated-union shape from R3.2 but routes to
+its own destinations.
 
 ## §4 — Redis
 
-Each adapter — Playwright, SeleniumBase, curl-impersonate —
-maintains a session table internally: a session_id (UUID) maps
-to a browser context or HTTP client object holding cookies,
-navigation history, and a generation counter used for stable-
-node tracking under ADR-0010 §3. R4.3 externalises the
-*metadata* layer to Redis. The runtime objects stay process-
-local; the index that lets the adapter find them, and the
-metadata a future replacement adapter would need to know about
-their existence, lives in Redis.
+Each adapter maintains a session table internally: a
+session_id (UUID) maps to a browser context or HTTP client
+object holding cookies, navigation history, and a generation
+counter used for stable-node tracking under ADR-0010 §3. R4.3
+externalises the *metadata* layer to Redis. Runtime objects
+stay process-local; the index that lets the adapter find them
+lives in Redis.
 
 Two keys per session, namespaced by adapter:
 
@@ -182,40 +173,37 @@ Two keys per session, namespaced by adapter:
   creation timestamp, current URL, cookie-jar path, generation
   counter, stable-node map summary.
 - `session:<adapter>:<session_id>:ref` — last-access
-  timestamp; used as the LRU-eviction signal.
+  timestamp; LRU-eviction signal.
 
-The `<adapter>` component matches the `driver` value in §3
-Kafka headers and the `jobs.driver` column in §2. The
-`<session_id>` is the same UUID returned on `Initialize` and
-carried on every subsequent RPC.
+`<adapter>` matches the `driver` value in §3 Kafka headers and
+the `jobs.driver` column in §2. `<session_id>` is the same UUID
+returned on `Initialize` and carried on every subsequent RPC.
 
-The metadata key carries a 1-hour idle TTL. Each session-bound
-RPC refreshes the TTL via `EXPIRE` on both keys. A session
-unused for an hour falls out of Redis; the adapter invalidates
-the in-memory runtime on its next eviction sweep. The default
-is configurable per environment via Helm values; clients must
-not assume a session_id stays live after an hour of inactivity.
+The metadata key carries a 1-hour idle TTL, refreshed on each
+session-bound RPC via `EXPIRE` on both keys. A session unused
+for an hour falls out of Redis; the adapter invalidates the
+in-memory runtime on its next eviction sweep. The default is
+configurable per environment via Helm values.
 
-Writes are PUT-style overwrites — the full session-metadata
-document is rewritten atomically on each update via `SET`. No
-field-level updates, no Redis transactions. The atomic boundary
-is one document. The `:ref` key is updated separately; the two
-keys can momentarily disagree but `:ref` is an eviction hint,
-not a correctness input, and the cost of `MULTI/EXEC` outweighs
-the benefit.
+Writes are PUT-style overwrites — the full document is
+rewritten atomically on each update via `SET`. No field-level
+updates, no Redis transactions. The `:ref` key is updated
+separately; the two keys can momentarily disagree but `:ref`
+is an eviction hint, not a correctness input, and the cost of
+`MULTI/EXEC` outweighs the benefit.
 
 Three adapters in three languages each pick their ecosystem's
-production-tested client (full library matrix in §8):
-`ioredis` (Playwright), `redis-py` (SeleniumBase),
-`go-redis/v9` (curl-impersonate). Engine and control plane do
-not connect to Redis.
+production-tested client (full matrix in §8): `ioredis`
+(Playwright), `redis-py` (SeleniumBase), `go-redis/v9`
+(curl-impersonate). Engine and control plane do not connect to
+Redis.
 
 Alternatives evaluated: **Postgres session table** (per-RPC
-metadata writes are sub-millisecond; Postgres's parser /
-planner overhead makes it the wrong tool for that load);
-**adapter-local file storage** (survives in-place restart, not
-reschedule; hides the choice §5 articulates); **in-memory only**
-(today's behaviour — every restart loses every session).
+sub-millisecond metadata writes; Postgres's parser/planner is
+the wrong tool); **adapter-local file storage** (survives in-
+place restart, not reschedule; hides the §5 choice);
+**in-memory only** (today's behaviour — every restart loses
+every session).
 
 ## §5 — The session externalization problem
 
@@ -376,57 +364,40 @@ in R8.1's documentation refresh.
 
 ## §7 — Network topology
 
-The post-R4 topology has eight long-lived services on the
-network: control-plane, engine, three adapters, Postgres,
-Redis, and (when an operator runs it) Kafka.
+The post-R4 topology has eight long-lived services: control-
+plane, engine, three adapters, Postgres, Redis, and (when an
+operator runs it) Kafka.
 
 ```
-┌──────────────────┐       ┌──────────────────┐
-│  control-plane   │──gRPC─▶│      engine      │
-└──────────────────┘       └──────────────────┘
-         │ pgx/v5                  │       │
-         │                  sqlx   │       │ rdkafka
-         ▼                         │       ▼
-┌──────────────────┐                │ ┌──────────────────┐
-│    PostgreSQL    │◀───────────────┘ │      Kafka       │
-│  (jobs, rows)    │                  │ (spectre.rows.*) │
-└──────────────────┘                  └──────────────────┘
-                                       (when run by operator)
-
-┌──────────────────┐  gRPC  ┌──────────────────┐
-│      engine      │───────▶│   adapter Pod    │
-│                  │        │ (3× per topology)│
-└──────────────────┘        └──────────────────┘
-                                     │ ioredis / redis-py / go-redis
-                                     ▼
-                            ┌──────────────────┐
-                            │      Redis       │
-                            │  (session:*)     │
-                            └──────────────────┘
+control-plane ──gRPC──▶ engine ──gRPC──▶ adapter (3×)
+      │                  │  │                │
+      │ pgx/v5     sqlx   │  │ rdkafka        │ ioredis / redis-py / go-redis
+      ▼                   │  ▼                ▼
+  PostgreSQL  ◀───────────┘  Kafka          Redis
+  (jobs,                     (spectre.       (session:*)
+   job_rows)                  rows.*,
+                              optional)
 ```
 
 Six connection patterns: **engine → Postgres** (read/write,
-one row per admission, status mutations, optional `job_rows`
-appends); **engine → Kafka** (write only, one shared producer);
-**engine → adapters** (the pre-R4 path, gRPC+TCP via ADR-0022,
+one row per admission + status mutations + optional `job_rows`
+appends); **engine → Kafka** (write only, shared producer);
+**engine → adapters** (pre-R4 path, gRPC+TCP via ADR-0022,
 discovery via ADR-0021 §5, unchanged); **adapters → Redis**
-(read/write per RPC); **control plane → Postgres** (read only,
-populates `Status` from queries); **control plane → engine**
-(the pre-R4 path; ADR-0019 §5's `EngineClientRunner`
-preserved).
+(read/write per RPC); **control plane → Postgres** (read only);
+**control plane → engine** (pre-R4 path; ADR-0019 §5's
+`EngineClientRunner` preserved).
 
 Two non-connections: **adapters do not connect to Postgres**
 (job state is the engine's concern; adapters do not know which
-job they serve), and **adapters do not connect to Kafka**
+job they serve) and **adapters do not connect to Kafka**
 (output streaming is the engine's concern). The adapter surface
 to the rest of the system is exactly what the Driver Protocol
-carries — the §1 frame "the protocol does not change" stays
-intact.
+carries — the §1 frame stays intact.
 
 The control plane gains the Postgres dial as a *new*
-dependency, not a replacement for the engine dial. The two
-paths coexist: the engine dial drives execution, the Postgres
-dial serves status reads.
+dependency, not a replacement: the engine dial drives
+execution, the Postgres dial serves status reads.
 
 ## §8 — Library choices and pinning
 
@@ -559,18 +530,15 @@ writes for Kafka jobs (coverage gap) or duplicate R4.2's work.
 Lowest existing-user impact: no production user exercises
 `OutputSink.Kafka` today (R3.2's reconciler rejects it).
 
-Cross-ADR seams: **ADR-0010** (element lifecycle) preserved —
-metadata moves to Redis, `Initialize`-to-`Close` contract
-byte-for-byte identical from the client's view. **ADR-0017**
-(13 / 12 / 6 capability invariant) preserved — Kafka / S3 /
-Webhook are *engine* capabilities (sink choices), not *driver-
-protocol* capabilities, so the conformance suite sees no
-change. **ADR-0019 §6** (control plane reads stdout) evolves —
-control plane reads stdout when sink is `Stdout`; for Kafka /
-S3 / Webhook the output flows to the sink directly. **ADR-0021
-§5** (env-var convention) extended with the three URL env vars
-(see §12). No existing ADR is superseded; R4 is purely additive
-at the architectural layer.
+Cross-ADR seams: **ADR-0010** preserved — metadata moves to
+Redis, `Initialize`-to-`Close` contract byte-for-byte
+identical. **ADR-0017** preserved — 13 / 12 / 6 invariant
+holds because Kafka / S3 / Webhook are *engine* capabilities,
+not *driver-protocol* capabilities. **ADR-0019 §6** evolves —
+control plane reads stdout when sink is `Stdout`; for the
+other variants output flows directly to the sink. **ADR-0021
+§5** extended with the three URL env vars (§12). No existing
+ADR is superseded; R4 is purely additive.
 
 ## §12 — Configuration via env vars
 
@@ -606,41 +574,39 @@ acceptable for local-dev throwaway values, not for production.
 ## §13 — Migrations and schema evolution
 
 Migrations live in `core/engine/migrations/` as versioned SQL
-files: `<timestamp>_<name>.sql`. R4.2 lands the first migration
-— `<timestamp>_initial_schema.sql` containing the §2 schema —
-and every subsequent schema change adds a new file. Timestamps
-are immutable once committed; reordering or renaming after
-merge is forbidden. sqlx records applied migrations in a
+files (`<timestamp>_<name>.sql`). R4.2 lands the first
+(`<timestamp>_initial_schema.sql` containing §2's schema);
+every subsequent schema change adds a new file. Timestamps are
+immutable once committed; reordering or renaming after merge
+is forbidden. sqlx records applied migrations in a
 `_sqlx_migrations` table keyed on filename, so a migration the
 engine has already applied does not run again.
 
-The engine runs migrations at startup, before serving traffic.
-Sequence: connect to Postgres using `SPECTRE_POSTGRES_URL`,
-apply any new files in timestamp order, register the gRPC
-service, start serving. If migrations fail (broken SQL,
-conflicting state, permission error) the engine exits non-zero
-— under Helm a Pod crash loop, under Compose a non-zero exit.
-The operator rolls back the deployment (or fixes the migration
-in a follow-up PR).
+The engine runs migrations at startup, before serving traffic:
+connect using `SPECTRE_POSTGRES_URL`, apply any new files in
+timestamp order, register the gRPC service, start serving. If
+migrations fail (broken SQL, conflicting state, permission
+error) the engine exits non-zero — under Helm a Pod crash
+loop, under Compose a non-zero exit. The operator rolls back
+the deployment or fixes the migration in a follow-up PR.
 
-The "engine runs migrations at startup" choice was made over
-"separate Kubernetes Job runs migrations, engine waits". The
-embedded model gives one artifact, one deployment topology, one
-log stream; slow migrations delay engine readiness, which for
-v1alpha1's small schema is not a concern. A future migration
-large enough to make the embedded model painful is itself an
-architectural signal worth a dedicated ADR; the choice is
-reversible without retroactive ADR-0023 changes.
+The embedded model was chosen over "separate Kubernetes Job
+runs migrations, engine waits": one artifact, one deployment
+topology, one log stream. Slow migrations delay engine
+readiness, which for v1alpha1's small schema is not a concern.
+A future migration large enough to make the embedded model
+painful is itself an architectural signal worth a dedicated
+ADR; the choice is reversible without retroactive ADR-0023
+changes.
 
-sqlx migrations are forward-only. There is no "down" migration
-script; rolling back a bad migration is a new forward migration
-that reverses the change, not an inverse script. The discipline
-matches production reality (where "down" against live data is
-rarely the right action) and keeps the migration manifest
-simple. Idempotency at the SQL level is the migration author's
-responsibility — `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF
-NOT EXISTS`, equivalent guards — so a migration is safe to re-
-apply on a partially-migrated database.
+sqlx migrations are forward-only — no "down" scripts. Rolling
+back a bad migration is a new forward migration that reverses
+the change. The discipline matches production reality (where
+"down" against live data is rarely the right action). SQL-level
+idempotency (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT
+EXISTS`, equivalent guards) is the migration author's
+responsibility, so a migration is safe to re-apply on a
+partially-migrated database.
 
 The schema's wire-level version is the latest applied
 migration's timestamp. There is no semver on the schema —
