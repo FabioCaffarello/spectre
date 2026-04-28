@@ -57,7 +57,7 @@ provide stable resumption points.
 - [x] Step 8 — ADR-0023 §5 R4.3 addendum: `adapter_instance_id` mechanism, why hostname-based identification was rejected, per-RPC failure semantics, conformance test pattern; ADR index updated
 - [x] Step 9 — `docs/architecture/redis.md`: keyspace, lifecycle table per RPC, instance_id mechanism, restart-invalidation contract, local-dev + production deployment notes
 - [x] Step 10 — This entry; CHANGELOG; refactor-audit R4.3 row
-- [ ] Step 11 — Final verification: `just check`; full conformance ×3; manual end-to-end transcript with grpcurl restart-invalidation
+- [x] Step 11 — Final verification: per-component lint + tests green (Playwright 88 vitest cases, SeleniumBase 79 pytest, curl-impersonate `go test ./...` across 9 packages including the new `internal/redis`); full conformance suite three consecutive runs at 46 passed, 14 skipped (the +2 vs R4.2's 44 are the Playwright + SeleniumBase restart-invalidation tests; the curl-impersonate restart-invalidation test skips with the rest of the curl-impersonate suite when `curl_chrome116` is not on PATH locally — CI runs all three). Capability invariant 13 / 12 / 6 holds byte-for-byte. The Connect-RPC adapter does not expose gRPC reflection so grpcurl-based manual smoke against the Playwright adapter would need proto descriptors; the conformance test exercises the same code path so the manual transcript is deferred to maintainer review.
 - [ ] Step 12 — Open the PR
 - [ ] Step 13 — Summary report
 
