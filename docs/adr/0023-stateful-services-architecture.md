@@ -505,3 +505,82 @@ choice if real users run longer-lived sessions whose restart
 cost is operationally significant; v1alpha1 commits to the
 honest contract.
 
+## §6 — Required vs optional
+
+The three stateful services do not all carry the same
+deployment commitment. Two are required everywhere; one is
+required only when a workload exercises it. The commitment is
+the same in development (Compose) and in production (Helm).
+
+| Service   | Production | Dev (Compose) | Rationale |
+|-----------|------------|---------------|-----------|
+| Postgres  | REQUIRED   | REQUIRED      | Job state is always persisted. There is no in-memory mode. |
+| Kafka     | OPTIONAL   | INCLUDED      | Required only when a ScrapeJob selects `OutputSink.Kafka`. Admission rejects new Kafka sinks if the broker is unavailable. |
+| Redis     | REQUIRED   | REQUIRED      | Session metadata is always written. Defines the restart-invalidation contract from §5. |
+
+### Postgres always
+
+Engine startup validates the Postgres dial: it opens the
+connection pool, runs migrations (§13), and only then registers
+the gRPC service. A startup-time Postgres outage is a startup-
+time engine failure — visible to `kubectl get pod` as a crash
+loop and to `docker compose up` as the container exiting non-
+zero. There is no "engine without Postgres" mode. A reader
+debugging a deployment sees one binary cause for "engine not
+serving"; an operator does not have to weigh "is this a
+Postgres-side issue or a config-side issue" against any toggle.
+
+### Kafka admission-gated
+
+Engine startup validates the Kafka producer dial, but the
+failure semantics are softer than Postgres'. If the broker is
+reachable, the engine logs "kafka producer ready" and accepts
+admission of new ScrapeJobs with `OutputSink.Kafka`. If the
+broker is unreachable, the engine logs a warning, marks the
+Kafka admission gate disabled, and *continues to start*. New
+ScrapeJobs with `OutputSink.Kafka` are rejected at admission
+with the same "kafka not available" message R3.2's reconciler
+returned for "kafka not yet implemented" — semantically
+distinct, surfaceably similar to the operator. ScrapeJobs in
+flight with current sinks (Stdout, S3, Webhook) continue
+unaffected.
+
+The architectural distinction is that Kafka is a *consumer-
+chosen* dependency. Postgres and Redis are the architecture's
+own state store; an operator does not opt out of them by
+configuration. Kafka is a destination, selected per-job by the
+v1alpha2 schema; an operator who never runs Kafka-sinked jobs
+genuinely does not need Kafka at all. The deployment matrix
+respects that distinction.
+
+### Redis always
+
+Adapter startup validates the Redis dial. Same model as
+Postgres for the engine — a startup-time Redis outage is a
+startup-time adapter failure. There is no "adapter without
+Redis" mode, and the rationale is the §5 contract. The restart-
+invalidation contract requires that Redis be the index of which
+sessions exist; an adapter running without Redis would have to
+either invent a different index (file storage, in-memory only)
+or break the contract. Both options are worse than the simple
+"adapter requires Redis" rule, and ADR-0023 commits the simple
+rule.
+
+### No "lite mode"
+
+The combined effect is that Spectre runs the full stack or
+does not run. There is no minimal-dependency variant for
+testing or for resource-constrained deployments. The conformance
+suite (R6.2 / Compose) and the production deployment (R7.1 /
+Helm) both pull Postgres + Redis (and optionally Kafka) into
+the topology. The R8.1 documentation refresh records this
+explicitly so a reader who arrives at the docs without reading
+this ADR understands the deployment shape.
+
+The single-mode commitment trades a deployment-shape constraint
+for an operational-clarity gain. An operator who has the stack
+running has the same stack every other operator has. A
+contributor reading the codebase does not have to thread "what
+if Postgres is unavailable" through every code path. The
+trade-off is recorded honestly.
+
