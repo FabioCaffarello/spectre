@@ -73,47 +73,71 @@ use crate::engine_proto::{
 use crate::error::EngineError;
 use crate::kafka::KafkaProducer;
 use crate::output::OutputSink;
+use crate::s3::S3Uploader;
+use crate::webhook::WebhookClient;
 
 /// Reusable factory for the fully-configured tonic service stack.
 /// Wraps the engine in an `Arc` (so the streaming task can hold it
 /// independently) and exposes the resulting `EngineServer` value.
 ///
-/// `kafka` is the (optional) shared `KafkaProducer`. `None` when
-/// the engine started without a reachable broker; jobs whose
-/// `output_sink_kind = 'kafka'` then fail fast with
-/// `KAFKA_UNAVAILABLE` (ADR-0023 §3 R4.4 addendum).
+/// - `kafka` is the (optional) shared `KafkaProducer`. `None` when
+///   the engine started without a reachable broker; jobs whose
+///   `output_sink_kind = 'kafka'` then fail fast with
+///   `KAFKA_UNAVAILABLE` (ADR-0023 §3 R4.4 addendum).
+/// - `s3` is the (optional) shared [`S3Uploader`]. `None` when the
+///   engine started without `SPECTRE_S3_*` env (BYO-credentials
+///   mode is INFO-level) or with an unparseable env; S3-sinked
+///   jobs against `None` fail fast with `S3_UNAVAILABLE`
+///   (ADR-0024 §5).
+/// - `webhook` is the (always present) [`WebhookClient`]. The
+///   client has no engine-level state; per-job admission happens
+///   at the executor (ADR-0024 §5).
 #[must_use]
 pub fn engine_server(
     engine: Engine,
     db: Database,
     kafka: Option<Arc<KafkaProducer>>,
+    s3: Option<Arc<S3Uploader>>,
+    webhook: Arc<WebhookClient>,
 ) -> EngineServer<EngineServiceImpl> {
-    EngineServer::new(EngineServiceImpl::new(engine, db, kafka))
+    EngineServer::new(EngineServiceImpl::new(engine, db, kafka, s3, webhook))
 }
 
 /// Implementation of `spectre.engine.v1alpha1.Engine`. Holds an
 /// [`Engine`] (cheap to clone — it carries an [`AdapterRegistry`]
 /// of strings), a [`Database`] handle (cheap to clone — wraps a
-/// reference-counted `PgPool`), and an optional shared
-/// [`KafkaProducer`]; all are shared with the streaming task
-/// spawned per `RunJob`.
+/// reference-counted `PgPool`), an optional shared
+/// [`KafkaProducer`], an optional shared [`S3Uploader`], and the
+/// always-present [`WebhookClient`]; all are shared with the
+/// streaming task spawned per `RunJob`.
 pub struct EngineServiceImpl {
     engine: Arc<Engine>,
     db: Database,
     kafka: Option<Arc<KafkaProducer>>,
+    s3: Option<Arc<S3Uploader>>,
+    webhook: Arc<WebhookClient>,
 }
 
 impl EngineServiceImpl {
     /// Construct a service implementation wrapping `engine`,
     /// holding a [`Database`] handle for ADR-0023 §2 persistence,
-    /// and an optional [`KafkaProducer`] for ADR-0023 §3
-    /// `OutputSink.Kafka` jobs.
+    /// the optional sink-level state ([`KafkaProducer`],
+    /// [`S3Uploader`]) for ADR-0023 §3 + ADR-0024 §3, and the
+    /// always-present [`WebhookClient`] for ADR-0024 §4.
     #[must_use]
-    pub fn new(engine: Engine, db: Database, kafka: Option<Arc<KafkaProducer>>) -> Self {
+    pub fn new(
+        engine: Engine,
+        db: Database,
+        kafka: Option<Arc<KafkaProducer>>,
+        s3: Option<Arc<S3Uploader>>,
+        webhook: Arc<WebhookClient>,
+    ) -> Self {
         Self {
             engine: Arc::new(engine),
             db,
             kafka,
+            s3,
+            webhook,
         }
     }
 }
