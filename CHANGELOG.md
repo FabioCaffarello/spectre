@@ -71,9 +71,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (R6.2) and Helm (R7.1) renderings will inject the service-
   network address. Plain-text gRPC for v1alpha1 per ADR-0022 §6;
   TLS / mTLS deferred to v1alpha2.
+- `ScrapeJob` CRD evolved to `spectre.io/v1alpha2` (R3.2). New
+  fields:
+  - `spec.engineRef` (optional, CEL-validated): per-job engine
+    selection via Kubernetes Service reference (rendered as
+    `<name>.<namespace>.svc.cluster.local:<port>`) or direct
+    host:port endpoint. Nil falls back to the operator's
+    startup-time `SPECTRE_ENGINE_ENDPOINT` configuration.
+  - `spec.outputSink` (required, CEL-validated): discriminated
+    union over `stdout`, `kafka`, `s3`, `webhook` variants. R3.2
+    wires only `stdout` end-to-end; the other three variants are
+    schema-only — the reconciler rejects them at the
+    `Pending → Running` boundary with explicit "not yet
+    implemented (R4.4 / R5.1)" errors. Schema-ahead-of-
+    functionality is intentional and documented in
+    `config/samples/spectre_v1alpha2_scrapejob_kafka_NOT_YET_IMPLEMENTED.yaml`.
+  - `status.resolvedEngineEndpoint`: records the host:port the
+    operator actually dialed (debug aid for `EngineRef`
+    resolution).
+  CEL `XValidation` rules (stable in Kubernetes 1.25+) enforce
+  the discriminated-union shapes at admission, removing the
+  operational overhead of custom validating webhooks.
+- `core/control-plane/config/samples/spectre_v1alpha2_*.yaml`
+  (R3.2): five samples covering Service `EngineRef` for the
+  three reference adapters, an `EngineRef.Endpoint` variant for
+  ad-hoc local testing, and one schema-only Kafka sample
+  (`_kafka_NOT_YET_IMPLEMENTED.yaml`) documenting the schema-
+  ahead-of-functionality gap.
 
 ### Changed
 
+- ADR-0019 (control plane and ScrapeJob CRD) gains an "Update
+  (R3.2)" addendum recording v1alpha2 as the only registered
+  version: §1, §2, §4 carry forward unchanged; §3 (subprocess
+  execution model) was already superseded by ADR-0020 in R1.1;
+  §5 (JobRunner interface) preserved through a construction-
+  site refactor (per-Reconcile runner construction via a
+  `RunnerFactory` closure) — the interface signature is byte-
+  for-byte unchanged; §6 (OutputSink stdout-only commitment)
+  honoured at the runtime level (the discriminated union now
+  carries Kafka / S3 / Webhook field shapes, but the reconciler
+  rejects them at admission until R4.4 / R5.1 wire them).
 - ADR-0008 (UDS transport), ADR-0009 (session lifecycle),
   ADR-0019 (subprocess-in-pod) carry "Update (R1.1, ADR-0020)"
   notes recording per-section supersession. ADR-0019 §5
@@ -135,6 +173,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **BREAKING**: `core/control-plane/api/v1alpha1/` (R3.2) — the
+  ScrapeJob CRD's first version. Per master strategy §3.3, the
+  v1alpha1 → v1alpha2 migration is a breaking change without a
+  conversion webhook (no production users to migrate); v1alpha1
+  ScrapeJob CRs in clusters on upgrade are orphaned. Upgrade
+  procedure: `kubectl delete scrapejob --all` → install v1alpha2
+  CRD → apply v1alpha2 CRs (see
+  `docs/architecture/control-plane.md` and the ADR-0019 R3.2
+  addendum). The retired surface includes
+  `api/v1alpha1/{groupversion_info.go,scrapejob_types.go,
+  zz_generated.deepcopy.go}`, the
+  `config/samples/spectre_v1alpha1_scrapejob_*.yaml` set, and
+  the v1alpha1 entry from `core/control-plane/PROJECT`.
 - The Unix-domain-socket transport across all three reference
   adapters and the conformance harness (R2.2). No fallback path
   survives — strategy prompt §2.2 forbids "temporary" legacy

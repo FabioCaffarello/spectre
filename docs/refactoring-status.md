@@ -9,7 +9,7 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-28
-Current phase: **R3.2 — `ScrapeJob` CRD v1alpha2 (breaking change, no conversion webhook) (in progress)**
+Current phase: **R4.1 — ADR-0023 stateful services architecture**
 Next PR: **R4.1 — ADR-0023 stateful services architecture**
 
 ## Phases
@@ -24,8 +24,8 @@ for the per-phase ADR deltas.
 - [x] **R2.2 — Adapter transport switch (UDS → TCP, all three adapters)** *(merged 2026-04-27, PR #29)*
 - [x] **R2.3 — Engine transport + gRPC server (UDS client → TCP client)** *(merged 2026-04-27, PR #30)*
 - [x] **R3.1 — `EngineClientRunner` replaces `SubprocessRunner`** *(merged 2026-04-27)*
-- [ ] **R3.2 — `ScrapeJob` CRD v1alpha2 (breaking change, no conversion webhook)** *(in progress)*
-- [ ] R4.1 — ADR-0023 stateful services architecture
+- [x] **R3.2 — `ScrapeJob` CRD v1alpha2 (breaking change, no conversion webhook)** *(complete on merge of this PR, 2026-04-28)*
+- [ ] **R4.1 — ADR-0023 stateful services architecture** *(next)*
 - [ ] R4.2 — PostgreSQL for control-plane job state
 - [ ] R4.3 — Redis for adapter session cache
 - [ ] R4.4 — Kafka producer (engine → topic)
@@ -42,18 +42,18 @@ for the per-phase ADR deltas.
 The R3.2 PR's per-step checklist mirrors Section 7 of the phase
 prompt. Updated each session that lands work on this PR.
 
-- [ ] Step 1 — Inventory: confirm R3.1 merged, v1alpha1 types/reconciler reviewed, six decisions in Section 4 cross-checked
-- [ ] Step 2 — Close R3.1 loose ends in status docs (this entry)
-- [ ] Step 3 — Create v1alpha2 API: `api/v1alpha2/{groupversion_info.go,scrapejob_types.go,zz_generated.deepcopy.go}` with EngineRef + OutputSink discriminated unions; `make manifests` + `make generate`
-- [ ] Step 4 — CEL validation rules emitted in CRD YAML under `x-kubernetes-validations`
-- [ ] Step 5 — Reconciler updated for v1alpha2: EngineRef resolution, OutputSink enforcement, `ResolvedEngineEndpoint` status, per-reconcile `EngineClientRunner` construction
-- [ ] Step 6 — Reconciler tests updated: EngineRef resolution forms, OutputSink variants, `ResolvedEngineEndpoint` populated
-- [ ] Step 7 — `cmd/main.go` passes `DefaultEngineEndpoint` instead of `Runner`; flag preserved as fallback
-- [ ] Step 8 — Sample manifests rewritten under `_v1alpha2_*.yaml`; `_kafka_NOT_YET_IMPLEMENTED.yaml` documents the schema-ahead-of-functionality gap
-- [ ] Step 9 — `api/v1alpha1/` deleted; `PROJECT` and `config/crd/kustomization.yaml` updated
-- [ ] Step 10 — `docs/architecture/control-plane.md` rewritten for v1alpha2 with sink-status table and CEL explanation
-- [ ] Step 11 — ADR-0019 R3.2 addendum recording v1alpha2 as the only registered version
-- [ ] Step 12 — `docs/refactor-audit.md` R3.2 ticked; CHANGELOG Unreleased entry; this checklist
+- [x] Step 1 — Inventory: confirm R3.1 merged, v1alpha1 types/reconciler reviewed, six decisions in Section 4 cross-checked
+- [x] Step 2 — Close R3.1 loose ends in status docs
+- [x] Step 3 — Create v1alpha2 API: `api/v1alpha2/{groupversion_info.go,scrapejob_types.go,zz_generated.deepcopy.go}` with EngineRef + OutputSink discriminated unions; `make manifests` + `make generate`
+- [x] Step 4 — CEL validation rules emitted in CRD YAML under `x-kubernetes-validations`
+- [x] Step 5 — Reconciler updated for v1alpha2: EngineRef resolution, OutputSink enforcement, `ResolvedEngineEndpoint` status, per-reconcile `EngineClientRunner` construction
+- [x] Step 6 — Reconciler tests updated: EngineRef resolution forms, OutputSink variants, `ResolvedEngineEndpoint` populated
+- [x] Step 7 — `cmd/main.go` passes `DefaultEngineEndpoint` instead of `Runner`; flag preserved as fallback
+- [x] Step 8 — Sample manifests rewritten under `_v1alpha2_*.yaml`; `_kafka_NOT_YET_IMPLEMENTED.yaml` documents the schema-ahead-of-functionality gap
+- [x] Step 9 — `api/v1alpha1/` deleted; `PROJECT` and `config/crd/kustomization.yaml` updated
+- [x] Step 10 — `docs/architecture/control-plane.md` rewritten for v1alpha2 with sink-status table and CEL explanation
+- [x] Step 11 — ADR-0019 R3.2 addendum recording v1alpha2 as the only registered version
+- [x] Step 12 — `docs/refactor-audit.md` R3.2 ticked; CHANGELOG Unreleased entry; this checklist
 - [ ] Step 13 — Final verification: `just check`, `just conf-test` (×3), `make test`, `make build`, manual end-to-end with sample manifest, CEL admission demo
 - [ ] Step 14 — Open the PR
 - [ ] Step 15 — Summary report
