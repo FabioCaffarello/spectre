@@ -19,6 +19,12 @@ memory/
 .env.local
 .env.*.local
 
+# Per-developer Compose overrides (ADR-0023 §9 / R4.2). The base
+# stack in docker-compose.yml is committed; per-developer tweaks
+# (port remaps, volume mounts) live in compose.override.yml so
+# `docker compose up` picks them up without polluting source.
+compose.override.yml
+
 # Rust
 target/
 **/*.rs.bk

@@ -34,6 +34,32 @@ build: engine-build cp-build curl-imp-build pw-build
 check: lint test
 
 # ---------------------------------------------------------------------------
+# Compose stack (R4.2 — see ADR-0023 §9)
+# ---------------------------------------------------------------------------
+# v1alpha1's local-dev path runs application services as native
+# binaries (`just engine-run`, `just pw-run`, `just op-run`) and the
+# stateful services in Compose. R4.2 ships Postgres only; R4.3 adds
+# Redis, R4.4 adds Kafka (Redpanda), R6.2 moves the application
+# services into Compose too.
+
+# Bring up the Compose stack in the background.
+compose-up:
+    docker compose up -d
+
+# Stop the stack; preserve volumes.
+compose-down:
+    docker compose down
+
+# Tail the stack logs.
+compose-logs:
+    docker compose logs -f
+
+# Full reset: stop, drop volumes, restart. Useful when the schema
+# advances and you want a clean migration apply.
+compose-reset:
+    docker compose down -v && docker compose up -d
+
+# ---------------------------------------------------------------------------
 # Repository hygiene
 # ---------------------------------------------------------------------------
 
