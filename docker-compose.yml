@@ -1,23 +1,25 @@
 # Spectre — local-development Compose stack.
 #
-# R4.2 lands the first slice: a single PostgreSQL service, the
-# durable store ADR-0023 §2 commits to. R4.3 will add Redis,
-# R4.4 will add Kafka (Redpanda), R6.2 will move engine /
-# adapters / control plane into Compose services here. For now
-# the application services still run as native binaries via the
+# R4.2 lands the first slice: PostgreSQL for engine job state and
+# control-plane reads (ADR-0023 §2). R4.3 adds Redis for adapter
+# session metadata externalisation (ADR-0023 §4 + §5). R4.4 will
+# add Kafka (Redpanda), R6.2 will move engine / adapters /
+# control plane into Compose services here. For now the
+# application services still run as native binaries via the
 # `just engine-run` / `just pw-run` / `just op-run` recipes; the
-# binaries connect to this Postgres on localhost:5432.
+# binaries connect to Postgres on localhost:5432 and Redis on
+# localhost:6379.
 #
 # Usage:
 #   docker compose up -d        # start
 #   docker compose ps           # health
-#   docker compose down         # stop, keep volume
-#   docker compose down -v      # stop, drop volume (full reset)
+#   docker compose down         # stop, keep volumes
+#   docker compose down -v      # stop, drop volumes (full reset)
 #
 # DEV-ONLY: the credentials below are visible in source control.
-# Production deployments populate `SPECTRE_POSTGRES_URL` from
-# Kubernetes Secrets per ADR-0023 §10 / §12. Do not reuse this
-# password anywhere persistent.
+# Production deployments populate `SPECTRE_POSTGRES_URL` and
+# `SPECTRE_REDIS_URL` from Kubernetes Secrets per ADR-0023 §10 /
+# §12. Do not reuse these values anywhere persistent.
 
 services:
   postgres:
@@ -38,5 +40,33 @@ services:
       timeout: 3s
       retries: 5
 
+  # Redis — adapter session metadata cache (ADR-0023 §4).
+  # AOF persistence keeps session metadata across `docker compose
+  # down` for dev convenience; production behaves the same when
+  # the Bitnami chart's persistence is enabled (ADR-0023 §10).
+  # `allkeys-lru` caps memory at 256 MiB and evicts cold keys so
+  # an extended local-dev session can't grow unbounded.
+  redis:
+    image: redis:7-alpine
+    container_name: spectre-redis
+    restart: unless-stopped
+    command:
+      [
+        "redis-server",
+        "--appendonly", "yes",
+        "--maxmemory", "256mb",
+        "--maxmemory-policy", "allkeys-lru",
+      ]
+    ports:
+      - "6379:6379"
+    volumes:
+      - spectre_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
 volumes:
   spectre_postgres_data:
+  spectre_redis_data:
