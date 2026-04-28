@@ -767,3 +767,53 @@ version bumps over the project's life are normal-course
 maintenance; library *replacements* require revisiting this
 section.
 
+## §9 — Compose stack composition
+
+R6.2 lands the local Compose stack. ADR-0025 will record the
+full stack design; this section commits the stateful-service
+slice of it so R4.2 / R4.3 / R4.4 can rely on a known shape
+when their integration tests run against it.
+
+Three image choices, picked for footprint and operational
+parity with what the Helm chart will run in production:
+
+- **Postgres**: `postgres:16-alpine`. Roughly 80 MB
+  compressed, ~250 MB resident. PostgreSQL 16 is the version
+  the schema (§2) is tested against and the version the
+  Helm chart's Bitnami subchart targets by default (§10).
+  Alpine base keeps the image small; the Postgres binary is
+  upstream-built so behaviour matches the Bitnami / vanilla
+  Postgres images operators run elsewhere.
+- **Kafka**: `redpandadata/redpanda:latest` (single-node
+  configuration). Roughly 150 MB compressed, ~250 MB
+  resident under load. Wire-protocol compatible with Apache
+  Kafka 0.11+ — the producer code does not branch on broker
+  identity — and ships as a single Go binary with no
+  ZooKeeper dependency. The choice trades the dev-loop
+  startup cost (a full Kafka + ZooKeeper pair would take
+  20-30 seconds to be admission-ready) for a few seconds of
+  Redpanda startup. Production deployments use real Kafka
+  (or Strimzi-managed Kafka, or Bitnami-managed Kafka — see
+  §10); the Compose-stack convenience does not leak into the
+  production model.
+- **Redis**: `redis:7-alpine`. Roughly 30 MB compressed,
+  ~10 MB resident at startup. The official Redis image on
+  Alpine; nothing exotic.
+
+Total stateful overhead in the dev stack: roughly 260 MB
+compressed image weight, under 600 MB resident at idle. R6.3's
+devcontainer (Docker-in-Docker) is sized accordingly.
+
+Service names in the Compose `services:` block follow the
+discovery convention from ADR-0021 §5: `postgres`, `kafka`
+(the Redpanda container exposes itself as `kafka` so consumer
+code reading `SPECTRE_KAFKA_BROKERS=kafka:9092` resolves the
+right service), `redis`. Application services connect via
+`postgres:5432`, `kafka:9092`, `redis:6379` — no extra
+configuration, no port-forward dance.
+
+The stack composition is recorded here so R4.2 / R4.3 / R4.4's
+integration tests have a stable target. R6.2 implements the
+`docker-compose.yml`; R8.1's documentation refresh will narrate
+the stack from the operator's perspective.
+
