@@ -23,6 +23,11 @@ dependencies = [
     # signal (ADR-0021 §6); the same package is also a runtime dep
     # of the SeleniumBase adapter.
     "grpcio-health-checking>=1.60",
+    # Redis client used by the R4.3 restart-invalidation conformance
+    # test to inspect adapter session state directly. The test
+    # harness dials the same Redis the adapter writes to and asserts
+    # on the keyspace shape per ADR-0023 §4.
+    "redis>=5.0",
 ]
 
 [project.urls]
@@ -81,6 +86,16 @@ follow_imports = "skip"
 [[tool.mypy.overrides]]
 module = ["grpc", "grpc.*", "grpc_health", "grpc_health.*"]
 ignore_missing_imports = true
+
+# redis-py: the bundled stubs surface every command as
+# ``Awaitable[Any] | Any`` to accommodate the asyncio variant,
+# which means the sync code path looks awaitable to mypy. Treat
+# the boundary as Any-typed; the conformance test only does
+# direct GET / DEL verification.
+[[tool.mypy.overrides]]
+module = ["redis", "redis.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
