@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO jobs (id, dsl, driver, status, started_at, output_sink_kind)\n        VALUES ($1, $2, $3, 'running', NOW(), $4)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d725879fecb539affb4c54a803f83573c8577542b8ba7bbab4b1c33becc215e1"
+}

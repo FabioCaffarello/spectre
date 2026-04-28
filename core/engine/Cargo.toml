@@ -77,6 +77,27 @@ url = "2"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
+# Postgres persistence (R4.2 — ADR-0023 §2). The engine writes one
+# row to `jobs` per RunJob and (for stdout-sinked jobs) one row to
+# `job_rows` per extracted row. Compile-time-checked queries via
+# `query!()` macros per ADR-0023 §8; the offline cache lives at
+# core/engine/.sqlx/ so the Dockerfile (and CI) can build without a
+# running Postgres.
+#
+# `default-features = false` is critical: the default feature set
+# pulls `runtime-tokio-native-tls` which would link system OpenSSL.
+# `runtime-tokio-rustls` brings rustls 0.23, which does not conflict
+# with the tonic 0.13 stack above (tonic 0.13's transport feature is
+# rustls-free in our configuration).
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "json",
+    "macros",
+    "migrate",
+] }
+
 [build-dependencies]
 # tonic-build invokes prost-build at compile time to write the
 # generated code into Cargo's OUT_DIR. See `build.rs`. The version
