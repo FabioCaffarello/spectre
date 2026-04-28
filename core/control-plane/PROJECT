@@ -18,4 +18,13 @@ resources:
   kind: ScrapeJob
   path: github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: spectre.io
+  group: spectre
+  kind: ScrapeJob
+  path: github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha2
+  version: v1alpha2
 version: "3"
