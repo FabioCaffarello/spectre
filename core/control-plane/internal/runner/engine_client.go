@@ -70,14 +70,17 @@ var _ JobRunner = (*EngineClientRunner)(nil)
 //
 // R4.2: jobID and outputSinkKind are forwarded verbatim into the
 // gRPC RunJobRequest so the engine can write the matching `jobs`
-// row (ADR-0023 §2). The empty-uuid case sends an empty job_id
-// string; the engine then generates a fresh UUID — kept so
-// hand-written gRPC clients without UID provenance still work.
+// row (ADR-0023 §2). R4.4 adds kafkaTopic, also forwarded verbatim;
+// the engine ignores it for non-kafka sinks. The empty-uuid case
+// sends an empty job_id string; the engine then generates a fresh
+// UUID — kept so hand-written gRPC clients without UID provenance
+// still work.
 func (r *EngineClientRunner) Run(
 	ctx context.Context,
 	jobID uuid.UUID,
 	jobDSL string,
 	outputSinkKind string,
+	kafkaTopic string,
 	writer io.Writer,
 ) (int64, error) {
 	if r.EngineEndpoint == "" {
@@ -105,6 +108,7 @@ func (r *EngineClientRunner) Run(
 		JobDsl:         jobDSL,
 		JobId:          jobIDStr,
 		OutputSinkKind: outputSinkKind,
+		KafkaTopic:     kafkaTopic,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("engine client runner: open RunJob: %w", err)

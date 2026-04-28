@@ -1,12 +1,12 @@
 ## Sample ScrapeJob CRs, one per reference adapter, plus an
 ## EngineRef.Endpoint variant for ad-hoc local testing and a
-## schema-only Kafka sample documenting R3.2's
-## schema-ahead-of-functionality pattern.
+## functional Kafka sample (R4.4 wired the producer end-to-end —
+## ADR-0023 §3 R4.4 addendum).
 ## Apply individually: kubectl apply -f spectre_v1alpha2_scrapejob_hello-hackernews.yaml
 resources:
 - spectre_v1alpha2_scrapejob_hello-hackernews.yaml
 - spectre_v1alpha2_scrapejob_endpoint.yaml
 - spectre_v1alpha2_scrapejob_seleniumbase.yaml
 - spectre_v1alpha2_scrapejob_curl-impersonate.yaml
-- spectre_v1alpha2_scrapejob_kafka_NOT_YET_IMPLEMENTED.yaml
+- spectre_v1alpha2_scrapejob_kafka.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

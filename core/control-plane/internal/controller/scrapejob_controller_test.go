@@ -83,6 +83,7 @@ func (e *errorRunner) Run(
 	_ uuid.UUID,
 	_ string,
 	_ string,
+	_ string,
 	_ io.Writer,
 ) (int64, error) {
 	return 0, e.err
@@ -226,9 +227,9 @@ func TestIdempotencyOnCompleted(t *testing.T) {
 	}
 }
 
-// Output sink enforcement — Kafka/S3/Webhook variants are
-// schema-only in v1alpha2 and the reconciler rejects them at
-// Pending → Running. Stdout is the accepted variant.
+// Output sink enforcement — Stdout (R3.2) and Kafka (R4.4) are
+// runtime-implemented; S3 and Webhook remain schema-only and the
+// reconciler rejects them at Pending → Running.
 
 func TestValidateOutputSink_StdoutAccepted(t *testing.T) {
 	if err := validateOutputSink(spectrev1alpha2.OutputSink{Stdout: &spectrev1alpha2.StdoutSink{}}); err != nil {
@@ -236,15 +237,26 @@ func TestValidateOutputSink_StdoutAccepted(t *testing.T) {
 	}
 }
 
-func TestValidateOutputSink_KafkaRejected(t *testing.T) {
+// TestValidateOutputSink_KafkaAccepted (R4.4): the engine ships
+// an rdkafka producer and the reconciler forwards the topic via
+// the engine's RunJobRequest.kafka_topic field. R3.2's Kafka
+// rejection is gone; admission gating is engine-side per
+// ADR-0023 §3 R4.4 addendum.
+func TestValidateOutputSink_KafkaAccepted(t *testing.T) {
 	err := validateOutputSink(spectrev1alpha2.OutputSink{
-		Kafka: &spectrev1alpha2.KafkaSink{Brokers: []string{"localhost:9092"}, Topic: "rows"},
+		Kafka: &spectrev1alpha2.KafkaSink{Brokers: []string{"localhost:9092"}, Topic: "spectre.rows.default"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "kafka") {
-		t.Fatalf("validateOutputSink(Kafka) = %v, want kafka-rejection error", err)
+	if err != nil {
+		t.Fatalf("validateOutputSink(Kafka) = %v, want nil (R4.4 unblocks)", err)
 	}
-	if !strings.Contains(err.Error(), "R4.4") {
-		t.Fatalf("validateOutputSink(Kafka) error %q should reference R4.4", err)
+}
+
+func TestValidateOutputSink_KafkaRejectsEmptyTopic(t *testing.T) {
+	err := validateOutputSink(spectrev1alpha2.OutputSink{
+		Kafka: &spectrev1alpha2.KafkaSink{Brokers: []string{"localhost:9092"}, Topic: ""},
+	})
+	if err == nil || !strings.Contains(err.Error(), "topic") {
+		t.Fatalf("validateOutputSink(Kafka, empty topic) = %v, want topic-required error", err)
 	}
 }
 
@@ -387,14 +399,16 @@ func TestStatusResolvedEngineEndpoint_DefaultFallback(t *testing.T) {
 }
 
 // TestFailedOnUnsupportedSink covers the full reconciler path for a
-// schema-only sink (Kafka here): the spec passes apiserver
+// schema-only sink (S3 here, post-R4.4): the spec passes apiserver
 // admission (CEL allows exactly-one-of), but the reconciler rejects
 // it at Pending → Running with a Failed terminal phase. End-to-end
 // coverage of validateOutputSink integrated with the reconciler.
+// Kafka is no longer the example — R4.4 wired it; S3 and Webhook
+// are the remaining schema-only sinks until R5.1.
 func TestFailedOnUnsupportedSink(t *testing.T) {
 	spec := validSpec()
 	spec.OutputSink = spectrev1alpha2.OutputSink{
-		Kafka: &spectrev1alpha2.KafkaSink{Brokers: []string{"kafka:9092"}, Topic: "rows"},
+		S3: &spectrev1alpha2.S3Sink{Bucket: "b", Key: "k"},
 	}
 	job := createScrapeJob(t, spec)
 	r := reconcilerFor(stubRunnerForTests())
@@ -405,11 +419,37 @@ func TestFailedOnUnsupportedSink(t *testing.T) {
 	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseFailed {
 		t.Fatalf("Phase = %q, want Failed", got.Status.Phase)
 	}
-	if !strings.Contains(got.Status.Error, "kafka") || !strings.Contains(got.Status.Error, "R4.4") {
-		t.Fatalf("Error = %q, want kafka/R4.4 substring", got.Status.Error)
+	if !strings.Contains(got.Status.Error, "s3") || !strings.Contains(got.Status.Error, "R5.1") {
+		t.Fatalf("Error = %q, want s3/R5.1 substring", got.Status.Error)
 	}
 	if got.Status.CompletedAt == nil {
 		t.Fatalf("CompletedAt = nil, want non-nil for terminal phase")
+	}
+}
+
+// TestRunningTransition_KafkaSinkAccepted (R4.4): a ScrapeJob with
+// the Kafka sink reaches Running phase (was Failed pre-R4.4 with
+// "kafka output sink not yet implemented"). The runner is stubbed
+// because envtest does not dial a real engine; the test exercises
+// admission acceptance, not engine kafka publishing — that lives
+// in `core/engine/tests/kafka_integration.rs` and the conformance
+// `test_kafka_sink.py`.
+func TestRunningTransition_KafkaSinkAccepted(t *testing.T) {
+	spec := validSpec()
+	spec.OutputSink = spectrev1alpha2.OutputSink{
+		Kafka: &spectrev1alpha2.KafkaSink{
+			Brokers: []string{"kafka:9092"},
+			Topic:   "spectre.rows.default",
+		},
+	}
+	job := createScrapeJob(t, spec)
+	r := reconcilerFor(stubRunnerForTests())
+
+	_ = reconcileOnce(t, r, job)    // → Pending
+	got := reconcileOnce(t, r, job) // Pending → Running (R4.4 unblocks)
+
+	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseRunning {
+		t.Fatalf("Phase = %q, want Running (R4.4 unblocks Kafka admission)", got.Status.Phase)
 	}
 }
 

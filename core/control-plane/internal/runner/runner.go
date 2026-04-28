@@ -40,7 +40,8 @@ import (
 // The reconciler does not discriminate between failure modes for
 // v1alpha1; any non-nil error transitions the ScrapeJob to Failed.
 //
-// R4.2 evolves the signature with two new parameters:
+// R4.2 evolved the signature with `jobID` and `outputSinkKind`.
+// R4.4 evolves it again with `kafkaTopic`:
 //
 //   - jobID — the Kubernetes UID of the ScrapeJob, used as the
 //     `jobs.id` UUID in the engine's Postgres write path
@@ -49,16 +50,23 @@ import (
 //   - outputSinkKind — one of "stdout" / "kafka" / "s3" / "webhook"
 //     derived from `Spec.OutputSink`. The engine writes this to
 //     `jobs.output_sink_kind` and gates `job_rows` appends on it.
+//   - kafkaTopic — the topic name from `Spec.OutputSink.Kafka.Topic`
+//     when the sink is Kafka; empty for every other variant. The
+//     engine consumes this only when `outputSinkKind = "kafka"`
+//     (ADR-0023 §3 R4.4 addendum); runner implementations forward
+//     verbatim. An empty topic with `outputSinkKind = "kafka"`
+//     fails the job at the engine with `KAFKA_TOPIC_REQUIRED`.
 //
 // The R3.1 vindication of the abstraction holds in spirit — "run a
 // job, write output, return rows/error" is preserved. ADR-0019 §5's
-// R4.2 addendum documents the evolution.
+// R4.2 / R4.4 addenda document the evolutions.
 type JobRunner interface {
 	Run(
 		ctx context.Context,
 		jobID uuid.UUID,
 		jobDSL string,
 		outputSinkKind string,
+		kafkaTopic string,
 		writer io.Writer,
 	) (int64, error)
 }
@@ -83,6 +91,7 @@ type StubRunner struct {
 func (r *StubRunner) Run(
 	ctx context.Context,
 	_ uuid.UUID,
+	_ string,
 	_ string,
 	_ string,
 	_ io.Writer,
