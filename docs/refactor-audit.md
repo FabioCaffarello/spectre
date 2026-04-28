@@ -257,6 +257,58 @@ the implementation tracks ADR-0023.
 > recipes added to the justfile. Helm subchart wiring belongs
 > to R7.1 and is not in scope here.
 
+> **Status (R4.4 complete — Phase R4 CLOSED):** Kafka producer
+> integrates end-to-end. The engine ships an `rdkafka` 0.36
+> producer (`cmake-build + ssl-vendored + tokio` features —
+> first clean build adds 10–15 min for the OpenSSL compile,
+> cached thereafter) constructed at startup via
+> `KafkaProducer::from_env`; the `Option<Arc<KafkaProducer>>`
+> threads through `EngineServiceImpl` so an unreachable broker
+> at startup logs a warning and continues serving stdout-sinked
+> jobs while kafka-sinked jobs fail fast with `error_code =
+> "KAFKA_UNAVAILABLE"` (or `"KAFKA_TOPIC_REQUIRED"` for an
+> empty topic) at job-start time — equivalent UX to admission
+> rejection without a custom validating webhook (ADR-0023 §3
+> R4.4 addendum). `engine.proto` evolves non-breakingly with
+> `kafka_topic` field (number 4); the v1alpha2 reconciler's
+> `validateOutputSink` accepts the Kafka branch (R3.2 admission
+> rejection lifted) and forwards the topic via the evolved
+> `JobRunner.Run` signature (`kafkaTopic string` — ADR-0019 §5
+> R4.4 addendum); `outputSinkKafkaTopic` helper extracts the
+> field. Per-row publish: partition-keyed by job UUID so all
+> rows for one job land on a single partition in extraction
+> order, headers carry `job_id` / `row_index` / `driver` /
+> `timestamp` (ISO-8601). Producer config:
+> `acks=all` + `enable.idempotence=true` +
+> `compression.type=snappy` + `linger.ms=10`. Delivery
+> semantics: **at-least-once**; consumer-side idempotency on
+> `(job_id, row_index)` is the documented user responsibility.
+> Compose stack gains **Apache Kafka 3.7.1 KRaft** mode (single
+> broker + controller, dual-listener
+> `PLAINTEXT://kafka:9092` + `HOST://localhost:9092`,
+> production parity with R7.1's Strimzi-managed Apache Kafka)
+> and **Redpanda Console** at <http://localhost:8080> as the
+> topic / offset / message-browser UI. The original §3
+> Redpanda single-binary mention is superseded by the addendum.
+> `.env.example` carries `SPECTRE_KAFKA_BROKERS`; justfile
+> recipes `engine-kafka-test`, `kafka-console`, `kafka-topics`,
+> `kafka-consume <topic>`. The `_NOT_YET_IMPLEMENTED` Kafka
+> sample manifest is renamed to a functional example. The
+> conformance suite gains
+> `tools/conformance/tests/test_kafka_sink.py` — one
+> engine-level E2E test (the kafka path is engine behaviour,
+> not driver-level capability) that spawns the engine + the
+> Playwright adapter, submits a `RunJob` with the kafka sink,
+> drains the topic via `confluent_kafka.Consumer`, and asserts
+> row count + partition keys + headers; `confluent-kafka>=2.5`
+> added to conformance deps; `buf.gen.engine.yaml` extended
+> with Python plugins so the test imports the engine bindings.
+> Full conformance suite at 47 passed, 14 skipped (vs R4.3's
+> 46 passed, 14 skipped — the +1 is `test_kafka_sink`). The
+> 13 / 12 / 6 capability invariant holds byte-for-byte. **Phase
+> R4 closes with this PR — the full Postgres + Redis + Kafka
+> stateful-services architecture from ADR-0023 is operational.**
+
 > **Status (R4.3 complete):** Redis integrates end-to-end across
 > all three reference adapters. Each adapter externalises session
 > metadata to Redis under `session:<adapter>:<session_id>` per

@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-28
-Current phase: **R4.3 — Redis for adapter session cache (complete on merge of this PR, 2026-04-28)**
-Next PR: **R4.4 — Kafka producer (engine → topic)**
+Current phase: **R4.4 — Kafka producer (engine → topic) (complete on merge of this PR, 2026-04-28)** — closes Phase R4
+Next PR: **R5.1 — ADR-0024 output sinks (S3 + webhook)**
 
 ## Phases
 
@@ -27,9 +27,9 @@ for the per-phase ADR deltas.
 - [x] **R3.2 — `ScrapeJob` CRD v1alpha2 (breaking change, no conversion webhook)** *(merged 2026-04-28)*
 - [x] **R4.1 — ADR-0023 stateful services architecture** *(merged 2026-04-28)*
 - [x] **R4.2 — PostgreSQL integration end-to-end** *(merged 2026-04-28, PR #61)*
-- [x] **R4.3 — Redis for adapter session cache** *(complete on merge of this PR, 2026-04-28)*
-- [ ] **R4.4 — Kafka producer (engine → topic)** *(next)*
-- [ ] R5.1 — ADR-0024 output sinks (S3 + webhook + Kafka)
+- [x] **R4.3 — Redis for adapter session cache** *(merged 2026-04-28)*
+- [x] **R4.4 — Kafka producer (engine → topic)** *(complete on merge of this PR, 2026-04-28 — closes Phase R4)*
+- [ ] **R5.1 — ADR-0024 output sinks (S3 + webhook)** *(next)*
 - [ ] R6.1 — Per-service Dockerfiles (engine, control plane, three adapters)
 - [ ] R6.2 — ADR-0025 Compose stack (six services + three stateful deps)
 - [ ] R6.3 — Devcontainer with Docker-in-Docker
@@ -37,29 +37,31 @@ for the per-phase ADR deltas.
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R4.3)
+## Current PR checklist (R4.4)
 
-The R4.3 PR's per-step checklist mirrors Section 7 of the phase
-prompt. R4.3 externalises adapter session metadata to Redis
-across all three reference adapters (Playwright, SeleniumBase,
-curl-impersonate) and materialises the §5 restart-invalidation
-contract via the `adapter_instance_id` mechanism. The most
-operationally risky PR of the refactor; per-adapter commits
-provide stable resumption points.
+The R4.4 PR's per-step checklist mirrors Section 7 of the phase
+prompt. R4.4 wires the engine's `rdkafka` producer end-to-end,
+unblocks the v1alpha2 reconciler's Kafka admission rejection, and
+extends the Compose stack with Apache Kafka KRaft + Redpanda
+Console. Closes Phase R4 — the full ADR-0023 stateful-services
+architecture (Postgres + Redis + Kafka) is operational.
 
-- [x] Step 1 — Inventory: R4.2 merge confirmed; ADR-0023 §4/§5 + ADR-0010 read; per-adapter session managers + conformance harness mapped
-- [x] Step 2 — Compose stack extension: `redis:7-alpine` service with AOF + LRU eviction; `.env.example` extended with `SPECTRE_REDIS_URL` and the testing-only `SPECTRE_ADAPTER_INSTANCE_ID` knob (committed pre-step-3)
-- [x] Step 3 — Playwright adapter: `ioredis` + `ioredis-mock` deps; `redis.ts` wrapper; `SessionManager` accepts `RedisClient` + `instanceId`; `register` writes Redis, `validate` reads + refreshes TTL, `closeSession` best-effort deletes; `server.ts` gates non-Initialize RPCs on validate, throws `ConnectError(Code.Unavailable)` on instance mismatch / Redis errors; `index.ts` resolves env, PINGs Redis, exits non-zero on failure; 88 vitest cases green
-- [x] Step 4 — SeleniumBase adapter: `redis>=5.0` + `fakeredis>=2.0` (dev) deps; `redis_client.py` mirrors the TS shape; `SessionManager` mirrors the lifecycle integration; `server.py` gates each RPC via `_gate_session` and aborts with `grpc.StatusCode.UNAVAILABLE` on mismatch / Redis errors; `adapter.py` resolves env, PINGs Redis, exits non-zero on failure; 79 pytest cases green; mypy + ruff green
-- [x] Step 5 — curl-impersonate adapter: `go-redis/v9` + `redismock/v9` + `miniredis/v2` (test) deps; `internal/redis/redis.go` mirrors the TS / Python shape; `Manager` accepts `*redis.Client` + `instanceID`; `Validate` returns typed kinds; gRPC handlers use `gateSession` and return `status.Error(codes.Unavailable, ...)` on mismatch / Redis errors; `cmd/adapter/main.go` resolves env, PINGs Redis, exits non-zero on failure; all `go test ./...` green
-- [x] Step 6 — Conformance harness: `DriverHarness.instance_id_override` exports `SPECTRE_ADAPTER_INSTANCE_ID` into the spawned subprocess; `redis>=5.0` added to conformance deps for test-side verification; existing 56-test suite still passes (44 passed, 13 skipped — env-gated; unchanged from R4.2)
-- [x] Step 7 — Restart-invalidation conformance test: `tools/conformance/tests/test_session_restart_invalidation.py` with three tests (one per adapter) following Section 4.4 parallel-instances pattern; full suite three consecutive runs at 46 passed, 14 skipped (curl-impersonate test skips with the rest of the curl-impersonate suite when `curl_chrome116` is not on PATH locally)
-- [x] Step 8 — ADR-0023 §5 R4.3 addendum: `adapter_instance_id` mechanism, why hostname-based identification was rejected, per-RPC failure semantics, conformance test pattern; ADR index updated
-- [x] Step 9 — `docs/architecture/redis.md`: keyspace, lifecycle table per RPC, instance_id mechanism, restart-invalidation contract, local-dev + production deployment notes
-- [x] Step 10 — This entry; CHANGELOG; refactor-audit R4.3 row
-- [x] Step 11 — Final verification: per-component lint + tests green (Playwright 88 vitest cases, SeleniumBase 79 pytest, curl-impersonate `go test ./...` across 9 packages including the new `internal/redis`); full conformance suite three consecutive runs at 46 passed, 14 skipped (the +2 vs R4.2's 44 are the Playwright + SeleniumBase restart-invalidation tests; the curl-impersonate restart-invalidation test skips with the rest of the curl-impersonate suite when `curl_chrome116` is not on PATH locally — CI runs all three). Capability invariant 13 / 12 / 6 holds byte-for-byte. The Connect-RPC adapter does not expose gRPC reflection so grpcurl-based manual smoke against the Playwright adapter would need proto descriptors; the conformance test exercises the same code path so the manual transcript is deferred to maintainer review.
-- [x] Step 12 — Open the PR (#62)
-- [x] Step 13 — Summary report
+- [x] Step 1 — Inventory: R4.3 merge confirmed; ADR-0023 §3 / §6 + ADR-0019 read; reconciler's R3.2 `validateOutputSink` and engine `server.rs` mapped; runner / engine_client `JobRunner` shape understood
+- [x] Step 2 — `core/engine/Cargo.toml` adds `rdkafka 0.36` with `cmake-build + ssl-vendored + tokio` features; comment block documents the build-time / TLS-stack trade-offs; `chrono` added for ISO-8601 header timestamps; first clean build pays ~10–15 min for OpenSSL compile (cached thereafter)
+- [x] Step 3 — `core/engine/src/kafka/{mod.rs,config.rs,producer.rs}`: `KafkaConfig::from_env` reads `SPECTRE_KAFKA_BROKERS` + `SPECTRE_KAFKA_LINGER_MS`; `KafkaProducer::from_env` builds the `FutureProducer` with `acks=all` + `enable.idempotence=true` + `compression.type=snappy` + `linger.ms` and validates broker reachability via `fetch_metadata` (5s timeout); `publish_row` formats §3 headers (`job_id`, `row_index`, `driver`, `timestamp`) and partition-keys by `job_id`; `lib.rs` exports the module
+- [x] Step 4 — `bin/spectre.rs` calls `KafkaProducer::from_env` after Postgres init; on success threads `Some(Arc<KafkaProducer>)`, on failure logs warning + threads `None`; ADR-0023 §6 admission-gating realised
+- [x] Step 5 — Engine `server.rs` `RunJob` dispatches on `output_sink_kind`: pre-flight check fails fast with `KAFKA_UNAVAILABLE` / `KAFKA_TOPIC_REQUIRED`; per-row publishes via `publish_row`; kafka publish error overrides executor outcome with terminal `Failed`. `engine.proto` adds `kafka_topic` field (number 4, non-breaking); `proto-generate` regenerates Rust + Go + Python bindings; control-plane `JobRunner.Run` signature evolves with `kafkaTopic string`; `EngineClientRunner` forwards it via `RunJobRequest.KafkaTopic`
+- [x] Step 6 — `core/engine/tests/kafka_integration.rs`: `#[ignore]` E2E tests (`cargo test --test kafka_integration -- --ignored`) against `SPECTRE_KAFKA_BROKERS`, mirroring R4.2's `db_integration.rs` pattern; round-trips payload + headers and asserts partition-key colocation; both green against the Compose broker. `engine-kafka-test` justfile recipe added
+- [x] Step 7 — Reconciler `validateOutputSink` accepts the Kafka branch (rejects empty topic for defence-in-depth); `outputSinkKafkaTopic` helper extracts the topic and the reconciler forwards it to the runner; envtest gains `TestValidateOutputSink_KafkaAccepted`, `TestValidateOutputSink_KafkaRejectsEmptyTopic`, and `TestRunningTransition_KafkaSinkAccepted`; the previous `TestFailedOnUnsupportedSink` switches its example sink from Kafka to S3; `make test` green
+- [x] Step 8 — `git mv` `spectre_v1alpha2_scrapejob_kafka_NOT_YET_IMPLEMENTED.yaml` → `spectre_v1alpha2_scrapejob_kafka.yaml`; manifest content updated to a working example; `kustomization.yaml` updated
+- [x] Step 9 — `docker-compose.yml` extended with `kafka` (`apache/kafka:3.7.1` KRaft, single broker + controller, 8 partitions default, dual-listener `PLAINTEXT://kafka:9092` for compose-internal + `HOST://localhost:9092` for native binaries) and `kafka-console` (`docker.redpanda.com/redpandadata/console:latest` at <http://localhost:8080>); `.env.example` carries `SPECTRE_KAFKA_BROKERS`; justfile recipes `kafka-console`, `kafka-topics`, `kafka-consume <topic>`; all four services healthy in `docker compose ps`
+- [x] Step 10 — `tools/conformance/tests/test_kafka_sink.py`: one engine-level E2E test (kafka behaviour is engine-level, not driver-level — driver is incidental) that spawns the release `spectre` binary as a subprocess, the Playwright adapter via `DriverHarness`, submits a `RunJob` with `output_sink_kind="kafka"` against `/elements`, drains the topic via `confluent_kafka.Consumer`, asserts row count + partition keys = job UUID + headers (`job_id`, `row_index`, `driver=playwright`, `timestamp`); `confluent-kafka>=2.5` added to conformance deps; `buf.gen.engine.yaml` extended with the Python plugins so the test can import the engine bindings; full conformance suite at 47 passed, 14 skipped (vs R4.3's 46 passed, 14 skipped — the +1 is `test_kafka_sink`)
+- [x] Step 11 — ADR-0023 §3 R4.4 addendum: KRaft + Redpanda Console choice (superseding the original §3 Redpanda single-binary mention); fail-fast admission gating pattern; producer-config rationale; at-least-once delivery semantics + consumer-side idempotency on `(job_id, row_index)`; engine.proto field 4 evolution; build-time cost note; conformance test pattern reference
+- [x] Step 12 — `docs/architecture/kafka.md`: producer lifecycle, configuration table, topic / partitioning / headers contract, delivery semantics, admission-gating UX, Postgres + Kafka coexistence, local-dev stack with justfile recipes, production-deployment cross-reference to R7.1 / Strimzi
+- [x] Step 13 — This entry; CHANGELOG `Unreleased` Kafka block; refactor-audit R4.4 row + Phase R4 CLOSED note; README quick-start mention of Kafka
+- [x] Step 14 — Final verification: engine clippy + cargo fmt --check + 52 unit tests green; control-plane `make test` green (envtest 85.6 %, runner 81.6 %); conformance ruff + mypy + 3× pytest runs at 47 passed / 14 skipped (skips are curl-impersonate when `curl_chrome116` is not on PATH locally — CI runs all three). 13 / 12 / 6 capability invariant holds byte-for-byte (no driver.yaml or capability touches in this PR). Engine kafka integration tests green against the local Compose broker (2 tests round-trip payload + headers and verify partition-key colocation). Manual transcript: `docker compose ps` shows postgres / redis / kafka / kafka-console all healthy; `just kafka-topics` lists the conformance topics; `kafka-console-consumer.sh --property print.headers=true` shows three messages per kafka job with `job_id=<UUID>`, `row_index=0/1/2`, `driver=playwright`, `timestamp=ISO-8601` headers and `{"text":"first|second|third"}` bodies; Postgres `jobs` table shows kafka jobs at `status=completed, rows_extracted=3` and `job_rows` count = 0 for kafka jobs (ADR-0023 §2 contract verified)
+- [ ] Step 15 — Open the PR
+- [ ] Step 16 — Summary report
 
 ## Surfaced decisions
 

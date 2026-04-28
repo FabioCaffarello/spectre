@@ -157,6 +157,132 @@ rejection from the v1alpha2 reconciler. R5.1 (S3 + Webhook)
 shares the discriminated-union shape from R3.2 but routes to
 its own destinations.
 
+### Update (R4.4) — Kafka producer integration
+
+R4.4 implements the Kafka producer end-to-end. Three things
+that were left open in §3 above settle here.
+
+**Broker choice.** Compose runs **Apache Kafka 3.7.1 in KRaft
+mode** (`apache/kafka:3.7.1`), single-broker single-controller.
+KRaft eliminates the ZooKeeper service §9 would have otherwise
+required and matches R7.1's Helm chart, which the maintainer
+plans to wire against Strimzi-managed Apache Kafka. The
+original §3 mention of Redpanda single-binary as a likely
+choice is superseded; production parity (KRaft + Apache Kafka
+API) ranks higher than dev-image footprint. Footprint cost is
+~480 MB of Compose images (Kafka ~400 MB + Console ~80 MB)
+versus ~150 MB for a Redpanda single-binary; acceptable for a
+laptop-scale dev stack and unconditionally correct against the
+production target.
+
+**Observability UI.** **Redpanda Console** (now spelt
+`docker.redpanda.com/redpandadata/console:latest`) at
+<http://localhost:8080> serves topic browsing, consumer-offset
+inspection, and message preview. Despite the name, the Console
+is a generic Kafka-API client UI — it works against any Kafka-
+compatible broker (Apache Kafka, Redpanda, MSK). The
+maintainer chose it as "the best Kafka UI" rather than a tie
+to a Redpanda backend.
+
+**Admission gating.** ADR-0023 §6 commits Kafka as OPTIONAL.
+The implementation pattern is **fail-fast at job-start**, not
+a custom admission webhook:
+
+- Engine startup calls `KafkaProducer::from_env`. The producer
+  builder validates broker reachability via `fetch_metadata`
+  with a 5-second timeout.
+- On success: `EngineServiceImpl` holds `Some(Arc<KafkaProducer>)`
+  and accepts kafka-sinked jobs.
+- On failure: the engine logs a warning with the resolution
+  hint (_"set SPECTRE_KAFKA_BROKERS and restart engine"_),
+  threads `None` through, and continues serving stdout-sinked
+  jobs normally.
+- A subsequent `RunJob` with `output_sink_kind = "kafka"`
+  yields a terminal `Failed` event with `error_code =
+  "KAFKA_UNAVAILABLE"` immediately, before any executor runs.
+  The same pre-flight check rejects empty `kafka_topic` with
+  `error_code = "KAFKA_TOPIC_REQUIRED"`.
+
+User experience: a ScrapeJob with the Kafka sink fails
+immediately at job-start time with a clear error message. The
+UX is equivalent to admission rejection without the
+implementation cost of TLS-wired ValidatingAdmissionWebhook
+plumbing. v1alpha2 may revisit if real production deployments
+need apiserver-time rejection (preventing the CR from being
+created at all when Kafka is down).
+
+**Producer configuration.** `KafkaProducer::from_config` sets
+the producer for correctness over throughput:
+
+- `acks=all` — full ISR acknowledgment for durability
+- `enable.idempotence=true` — librdkafka idempotent producer,
+  no duplicate writes from intra-session retries
+- `compression.type=snappy` — moderate compression, low CPU
+- `linger.ms=10` — small batch window for low-latency dev
+  (tunable via `SPECTRE_KAFKA_LINGER_MS`)
+- `message.timeout.ms=30000` — matches `DELIVERY_TIMEOUT`
+
+**Delivery semantics.** **At-least-once.** The idempotent
+producer flag prevents duplicate writes from intra-session
+retries (network blip, leader failover). Inter-session
+duplicates are possible: an engine crash mid-job leaves
+partial Kafka state that re-driving the job duplicates.
+Consumer-side idempotency (`(job_id, row_index)` is the
+deduplication key) is the documented user responsibility.
+v1alpha2 may add Kafka transactions (exactly-once-semantics)
+if real workloads demand.
+
+**Topic / message contract.** Per the original §3:
+
+- Topic name from `ScrapeJob.Spec.OutputSink.Kafka.Topic`,
+  forwarded to the engine via `RunJobRequest.kafka_topic`
+  (engine.proto field 4 added in R4.4, non-breaking).
+- Partition key: the job UUID. All rows for one job land on
+  one partition (in-order delivery within a job).
+- Headers: `job_id` (UUID string), `row_index` (i64 string),
+  `driver` (`playwright` / `seleniumbase` / `curl-impersonate`),
+  `timestamp` (ISO-8601). Encoded as UTF-8 bytes per Kafka
+  convention.
+
+**Postgres + Kafka coexistence.** Kafka-sinked jobs write to
+the `jobs` table at status `'running'` / terminal as for every
+sink (so a Postgres reader can answer "where did the output
+go?"). They do **not** write to `job_rows` per §2 — Kafka is
+the data destination, the audit trail lives in Kafka itself.
+
+**Build-time cost.** The engine's `rdkafka` dependency uses
+the `cmake-build` + `ssl-vendored` + `tokio` features. The
+first clean build adds 10-15 minutes for the OpenSSL compile
+that ships alongside librdkafka; cached thereafter via Cargo's
+build cache. The maintainer accepted the cost for forward
+compatibility — v1alpha2 SASL/mTLS support against the broker
+will not require feature-flag churn. `rdkafka` uses OpenSSL
+via librdkafka, *deliberately* a separate TLS stack from the
+rustls 0.23 sqlx pulls in; the two coexist without conflict
+because they are different libraries (C vs Rust-native).
+
+**Conformance test.** `tools/conformance/tests/test_kafka_sink.py`
+exercises the engine-level E2E (control plane → engine →
+Playwright adapter → engine → Kafka). The driver is incidental
+to the kafka-sink-being-tested; one test covers the path for
+all three adapters because the engine sits between adapter and
+kafka. The test spawns a real engine subprocess + Playwright
+adapter, submits a `RunJob` with `output_sink_kind="kafka"` to
+the engine's gRPC port, drains the topic with a
+`confluent_kafka.Consumer`, and asserts row count + partition
+keys + headers.
+
+**Reference materials.**
+
+- rdkafka 0.36: <https://github.com/fede1024/rust-rdkafka>
+- librdkafka producer config:
+  <https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md>
+- Apache Kafka KRaft mode:
+  <https://kafka.apache.org/documentation/#kraft>
+- Redpanda Console:
+  <https://docs.redpanda.com/current/manage/console/>
+- `docs/architecture/kafka.md` — engine-level Kafka guide
+
 ## §4 — Redis
 
 Each adapter maintains a session table internally: a
