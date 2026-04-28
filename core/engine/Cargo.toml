@@ -29,10 +29,24 @@ path = "src/bin/spectre.rs"
 # crate see the same protobuf types. R2.3 added `tonic-health` for
 # the standard health-check service the engine registers alongside
 # its `spectre.engine.v1alpha1.Engine` server (ADR-0021 §6).
-prost = "0.14"
-prost-types = "0.14"
-tonic = { version = "0.13", default-features = false, features = ["codegen", "prost", "transport"] }
-tonic-health = { version = "0.12", default-features = false }
+#
+# The four-crate stack (prost / prost-types / tonic / tonic-health)
+# plus the build-time tonic-build below must move in lock-step.
+# tonic 0.13.x depends on `prost ^0.13`, so prost 0.14 cannot land
+# alongside it without a `tonic-prost` integration crate (introduced
+# in tonic 0.14). Dependabot's split bumps in PRs #34 (prost 0.14)
+# and #44 (tonic 0.13) merged independently and produced a diamond
+# dependency that broke the generated code. Until the project
+# migrates to tonic 0.14 + tonic-prost, all four crates stay on
+# the 0.13 line.
+prost = "0.13"
+prost-types = "0.13"
+# tonic 0.13 split the `Server::add_service` builder out into the
+# `router` feature (axum-backed). The default feature set bundles
+# router/transport/codegen/prost; pulling those in by name keeps the
+# binary's `Server::builder().add_service(...)` chain compiling.
+tonic = { version = "0.13", default-features = false, features = ["codegen", "prost", "router", "transport"] }
+tonic-health = { version = "0.13", default-features = false }
 
 # Tokio runtime: async I/O, signal handling, timeouts, channels, and
 # the multi-threaded scheduler the engine binary uses. The `process`
@@ -65,8 +79,11 @@ uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 # tonic-build invokes prost-build at compile time to write the
-# generated code into Cargo's OUT_DIR. See `build.rs`.
-tonic-build = { version = "0.12", default-features = false, features = ["prost"] }
+# generated code into Cargo's OUT_DIR. See `build.rs`. The version
+# tracks the runtime tonic crate (both at 0.13.x); tonic-build 0.13
+# generates code against the prost 0.13 trait shape that the runtime
+# tonic 0.13 expects.
+tonic-build = { version = "0.13", default-features = false, features = ["prost"] }
 
 [dev-dependencies]
 # tempfile is used by output-sink unit tests to allocate a
