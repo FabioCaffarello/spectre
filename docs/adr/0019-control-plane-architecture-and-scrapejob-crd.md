@@ -670,3 +670,68 @@ refactor reinforces the original §5 claim. Future runner
 substitutions (e.g. a streaming-status variant if `ScrapeFleet`
 needs aggregated row counts) can land without touching the
 reconciler control flow.
+
+## Update (R4.2)
+
+R4.2 lands PostgreSQL as the durable store underneath
+`Status.Phase` (ADR-0023 §2). Two of this ADR's sections take
+addenda; the others are unchanged.
+
+- **§5** (`JobRunner` interface boundary): the signature
+  evolves. The R3.1 vindication of the abstraction holds *in
+  spirit* — "run a job, write output, return rows/error" is
+  preserved — but the parameter list grows by two:
+
+  ```go
+  type JobRunner interface {
+      Run(
+          ctx context.Context,
+          jobID uuid.UUID,
+          jobDSL string,
+          outputSinkKind string,
+          writer io.Writer,
+      ) (int64, error)
+  }
+  ```
+
+  The new parameters are forwarded into the engine's
+  `RunJobRequest`. `jobID` is `ScrapeJob.UID` (a
+  Kubernetes-issued RFC 4122 UUID) reused as the engine's
+  `jobs.id` PRIMARY KEY so a Postgres reader correlates rows
+  back to the CR by name without a separate identifier.
+  `outputSinkKind` is one of `"stdout" | "kafka" | "s3" |
+  "webhook"` derived from `Spec.OutputSink`; the engine writes
+  it to `jobs.output_sink_kind` and gates `job_rows` appends
+  on equality with `"stdout"` per ADR-0023 §2.
+
+  The R3.1 addendum recorded the interface as "byte-for-byte
+  unchanged through three implementations". R4.2 breaks the
+  byte-for-byte property but preserves the conceptual seam.
+  StubRunner and EngineClientRunner evolved in lockstep; no
+  tests were quarantined; the reconciler's invocation pattern
+  updated to compute `jobID` from `ScrapeJob.UID` and
+  `outputSinkKind` from `Spec.OutputSink` via a small helper
+  paralleling `validateOutputSink`.
+
+  The pattern §5 establishes holds: interface changes that
+  preserve the abstraction are acceptable; changes that break
+  the abstraction would require a new ADR. R4.2's evolution is
+  driven by architectural needs (Postgres correlation,
+  sink-aware behaviour), not by an alternative architecture.
+
+- **§4** (state machine): the Running phase gains a new
+  pre-runner step. Before invoking `JobRunner.Run`, the
+  reconciler queries `jobs` by `ScrapeJob.UID`. A persisted
+  `completed` or `failed` row syncs `Status.Phase` (and
+  `RowsExtracted` / `Error` / `CompletedAt`) without
+  re-running. `ErrJobNotFound` falls through to the runner.
+  Other Postgres errors mark the ScrapeJob `Failed` with the
+  underlying error wrapped as `"postgres: restart recovery
+  failed: ..."`. The state machine itself is unchanged
+  (Pending → Running → Completed | Failed); the transition
+  source merely gains a Postgres input alongside the runner's.
+
+The §1 / §2 / §3 / §6 sections are unchanged at R4.2. The
+operator's startup-time Postgres dial is documented in
+ADR-0023 §6 / §12 — the operator refuses to start without
+`SPECTRE_POSTGRES_URL`.

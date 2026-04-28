@@ -41,7 +41,7 @@ A decision moves through three states:
 | 0016  | [curl-impersonate adapter and third-runtime divergence](0016-curl-impersonate-adapter-and-third-runtime-divergence.md) | accepted |
 | 0017  | [curl-impersonate extraction and final capability divergence](0017-curl-impersonate-extraction-and-final-capability-divergence.md) | accepted |
 | 0018  | [Devcontainer and engine image (Phase 2.5 kickoff)](0018-devcontainer-and-engine-image.md) | accepted (revisited under ADR-0025 in R6) |
-| 0019  | [Control plane architecture and ScrapeJob CRD (Phase 3 kickoff)](0019-control-plane-architecture-and-scrapejob-crd.md) | accepted (§3 subprocess-in-pod superseded by ADR-0020; §5 `JobRunner` preserved) |
+| 0019  | [Control plane architecture and ScrapeJob CRD (Phase 3 kickoff)](0019-control-plane-architecture-and-scrapejob-crd.md) | accepted (§3 subprocess-in-pod superseded by ADR-0020; §5 `JobRunner` evolved with `jobID` + `outputSinkKind` in R4.2 — abstraction preserved; §4 gains Postgres restart-recovery in R4.2) |
 | 0020  | [Microservices architecture supersession](0020-microservices-architecture-supersession.md) | accepted |
 | 0021  | [Service discovery](0021-service-discovery.md)                                | accepted |
 | 0022  | [TCP / gRPC transport](0022-tcp-grpc-transport.md)                            | accepted (supersedes ADR-0008 §2) |
