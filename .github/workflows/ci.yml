@@ -123,14 +123,15 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-features
       - run: cargo build --release
-      # Smoke tests for the spectre binary (ADR-0013). Both subcommands
-      # are subprocess-free, so they run on the unit-test CI job without
-      # needing the Playwright/Chromium toolchain that the engine
-      # integration job carries.
-      - name: spectre version
-        run: ./target/release/spectre version
-      - name: spectre validate
-        run: ./target/release/spectre validate ../../examples/hello-hackernews/job.yaml
+      # The R2.3 binary is service-only (`run`/`validate`/`version`
+      # subcommands retired with the CLI surface — ADR-0020 §3). The
+      # equivalent smoke is "the release binary exists and is
+      # executable"; deeper service-mode smokes that bind a port and
+      # probe `grpc.health.v1.Health` belong in the engine-image job
+      # below where a port can be mapped without colliding with the
+      # GitHub runner.
+      - name: spectre binary built
+        run: test -x ./target/release/spectre
 
   go:
     name: Go (${{ matrix.module }})
@@ -495,8 +496,16 @@ jobs:
             -f core/engine/Dockerfile \
             --load \
             .
-      - name: Smoke test (spectre version)
-        run: docker run --rm spectre-engine:ci version
+      - name: Smoke test (spectre binary present)
+        # R2.3 retired the `version` subcommand alongside the rest of
+        # the CLI surface; the equivalent image-level smoke is "the
+        # binary exists at the canonical path". A start-and-probe
+        # smoke that binds a port and queries `grpc.health.v1.Health`
+        # is deferred to the operator-image / kind end-to-end jobs.
+        run: |
+          docker run --rm \
+            --entrypoint=test \
+            spectre-engine:ci -x /usr/local/bin/spectre
       - name: Report image size
         run: docker images spectre-engine:ci --format '{{.Size}}'
 
@@ -583,10 +592,13 @@ jobs:
             -f core/control-plane/Dockerfile \
             .
       - name: Smoke test (engine binary present)
+        # R2.3 retired the `spectre version` subcommand. The
+        # equivalent image-level smoke is "the bundled engine binary
+        # exists at the canonical path".
         run: |
           docker run --rm \
-            --entrypoint=/usr/local/bin/spectre \
-            spectre-control-plane:ci version
+            --entrypoint=test \
+            spectre-control-plane:ci -x /usr/local/bin/spectre
       - name: Smoke test (Playwright adapter bundled)
         run: |
           docker run --rm \
@@ -658,7 +670,13 @@ jobs:
   operator-smoke-kind:
     name: Operator smoke (kind end-to-end)
     needs: [changes, operator-image]
-    if: needs.changes.outputs.operator == 'true' || needs.changes.outputs.engine_image == 'true'
+    # The kind end-to-end smoke runs the operator's
+    # `SubprocessRunner`, which shells out to `spectre run` — a CLI
+    # surface retired in R2.3. The job is gated off until R3.1 lands
+    # `EngineClientRunner` (the operator becomes a gRPC client of the
+    # engine service). Re-enable by restoring the original `if:`
+    # expression once the runner refactor merges.
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

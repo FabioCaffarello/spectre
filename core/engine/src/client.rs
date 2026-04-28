@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! gRPC client over a Unix domain socket.
+//! gRPC client over TCP.
 //!
 //! Wraps `tonic`'s generated [`proto::driver_client::DriverClient`]
 //! behind a small surface so the rest of the engine never sees raw
 //! protobuf request/response types.
+//!
+//! # Endpoint format
+//!
+//! [`Client::dial`] accepts either a bare `host:port` string or a
+//! full `grpc://host:port` URI. Both formats are normalised to an
+//! `http://host:port` URI for the underlying [`Endpoint`]. TLS is
+//! out of scope for v1alpha1 — see ADR-0022 §6.
 //!
 //! # Connect/gRPC interop
 //!
@@ -14,71 +21,65 @@
 //! per-request from headers, so no client-side configuration is
 //! needed.
 //!
-//! # `:authority` header
+//! # Timeouts
 //!
-//! Node's `http2` server, when bound to a UDS, requires the
-//! `:authority` pseudo-header to be `localhost`. The Python harness
-//! handled this with `("grpc.default_authority", "localhost")`
-//! (ADR-0008). Tonic exposes the equivalent through
-//! [`tonic::transport::Endpoint::origin`]; we set
-//! `http://localhost/` so the H2 framing carries the right authority.
-//!
-//! # UDS connector
-//!
-//! Tonic does not have a built-in UDS transport. The recipe is the
-//! one from `tonic/examples/uds`: an `Endpoint` whose `connect_with_connector`
-//! is given a `tower::service_fn` that resolves a `tokio::net::UnixStream`
-//! to the configured path and wraps it in `hyper_util::rt::TokioIo`.
+//! Connect timeout defaults to 5 seconds; per-request timeouts are
+//! the responsibility of the caller (or absent — most driver RPCs
+//! finish in milliseconds, and the conformance suite has not flagged
+//! a need). Tunable via [`Client::dial_with_timeout`] if needed.
 
-use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use hyper_util::rt::TokioIo;
-use tokio::net::UnixStream;
 use tonic::Request;
-use tonic::transport::{Channel, Endpoint, Uri};
-use tower::service_fn;
+use tonic::transport::{Channel, Endpoint};
 
 use crate::error::EngineError;
 use crate::proto;
 use crate::proto::driver_client::DriverClient;
+
+/// Default connect timeout for [`Client::dial`]. Picked to be
+/// generous over a Compose / Kubernetes service boundary while still
+/// surfacing dead endpoints in interactive use. See ADR-0022 §4.
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Engine-side gRPC client.
 ///
 /// The client is `Clone`-cheap because [`Channel`] is `Clone`. The
 /// inner `DriverClient` is recreated per call so we never hold a
 /// shared mutable reference; this also keeps the request-extension
-/// state independent across concurrent calls (PR7 is sequential, but
-/// the structure is forward-compatible).
+/// state independent across concurrent calls.
 #[derive(Clone)]
 pub struct Client {
     channel: Channel,
 }
 
 impl Client {
-    /// Dial the gRPC server listening on the given UDS path.
+    /// Dial the gRPC server listening at `endpoint`. Accepts
+    /// `host:port`, `http://host:port`, or `grpc://host:port`.
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError::Transport`] if the channel could not be
-    /// constructed or the underlying [`Endpoint`] rejected the
-    /// authority URI.
-    pub async fn dial(socket: &Path) -> Result<Self, EngineError> {
-        let socket: PathBuf = socket.to_path_buf();
-        // The URI here is purely informational — tonic uses it to
-        // populate the `:authority` pseudo-header on outgoing H2
-        // streams. The connector below ignores it. Node's http2/UDS
-        // server insists on `localhost`. See module docs.
-        let endpoint = Endpoint::try_from("http://localhost")
-            .map_err(|e| EngineError::Transport(format!("endpoint: {e}")))?;
+    /// Returns [`EngineError::Transport`] if the endpoint cannot be
+    /// parsed or the underlying TCP connection cannot be established
+    /// within [`DEFAULT_CONNECT_TIMEOUT`].
+    pub async fn dial(endpoint: &str) -> Result<Self, EngineError> {
+        Self::dial_with_timeout(endpoint, DEFAULT_CONNECT_TIMEOUT).await
+    }
 
-        let channel = endpoint
-            .connect_with_connector(service_fn(move |_uri: Uri| {
-                let socket = socket.clone();
-                async move {
-                    let stream = UnixStream::connect(&socket).await?;
-                    Ok::<_, std::io::Error>(TokioIo::new(stream))
-                }
-            }))
+    /// Like [`Self::dial`] with a caller-supplied connect timeout.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::dial`].
+    pub async fn dial_with_timeout(
+        endpoint: &str,
+        connect_timeout: Duration,
+    ) -> Result<Self, EngineError> {
+        let uri = normalise_endpoint(endpoint);
+        let channel = Endpoint::from_shared(uri)
+            .map_err(|e| EngineError::Transport(format!("endpoint: {e}")))?
+            .connect_timeout(connect_timeout)
+            .connect()
             .await
             .map_err(|e| EngineError::Transport(format!("connect: {e}")))?;
 
@@ -217,6 +218,19 @@ pub struct InitializeOutcome {
     pub capability_names: Vec<String>,
 }
 
+fn normalise_endpoint(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_owned()
+    } else if let Some(rest) = trimmed.strip_prefix("grpc://") {
+        format!("http://{rest}")
+    } else if let Some(rest) = trimmed.strip_prefix("grpcs://") {
+        format!("https://{rest}")
+    } else {
+        format!("http://{trimmed}")
+    }
+}
+
 fn check_driver_error(err: Option<&proto::DriverError>) -> Result<(), EngineError> {
     let Some(e) = err else { return Ok(()) };
     let code = proto::driver_error::Code::try_from(e.code)
@@ -234,6 +248,46 @@ fn check_driver_error(err: Option<&proto::DriverError>) -> Result<(), EngineErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalise_endpoint_accepts_bare_host_port() {
+        assert_eq!(
+            normalise_endpoint("127.0.0.1:9091"),
+            "http://127.0.0.1:9091"
+        );
+    }
+
+    #[test]
+    fn normalise_endpoint_passes_http_through() {
+        assert_eq!(
+            normalise_endpoint("http://playwright:9091"),
+            "http://playwright:9091"
+        );
+    }
+
+    #[test]
+    fn normalise_endpoint_rewrites_grpc_scheme() {
+        assert_eq!(
+            normalise_endpoint("grpc://playwright:9091"),
+            "http://playwright:9091"
+        );
+    }
+
+    #[test]
+    fn normalise_endpoint_rewrites_grpcs_scheme() {
+        assert_eq!(
+            normalise_endpoint("grpcs://playwright:9091"),
+            "https://playwright:9091"
+        );
+    }
+
+    #[test]
+    fn normalise_endpoint_trims_whitespace() {
+        assert_eq!(
+            normalise_endpoint("  127.0.0.1:9091  "),
+            "http://127.0.0.1:9091"
+        );
+    }
 
     #[test]
     fn unspecified_default_error_is_treated_as_ok() {

@@ -621,3 +621,56 @@ Rejected:
   [ADR-0009 Navigate, session lifecycle, and the driver error mapping](0009-navigate-and-session-lifecycle.md),
   [ADR-0010 Element lifecycle, capability granularity, and selector mapping](0010-element-lifecycle-and-capability-gating.md),
   [ADR-0011 Screenshot RPC, scope mapping, and payload boundaries](0011-screenshot-rpc-and-payload-boundaries.md).
+
+## Update (R2.3, ADR-0020)
+
+This ADR's decisions are partially superseded. The refactor's
+phase R2.3 retires the engine binary's CLI surface and the
+subprocess launcher; the DSL parser, planner, and executor
+pipeline carry forward unchanged. Section by section:
+
+- **§1 (DSL philosophy — high-level over protocol).** Preserved
+  unchanged. The DSL ➝ `Job` ➝ `Plan` translation stays as PR7
+  designed it; R2.3 changes only how the resulting plan is
+  driven.
+- **§2 (Validation approach — manual over derive-based).**
+  Preserved unchanged. Manual `Job::from_yaml` validation
+  remains the parser entry point.
+- **§3 (Planner architecture — explicit `Plan` struct).**
+  Preserved unchanged. The `Plan` and `PlanStep` types are the
+  same value the gRPC server's `RunJob` handler executes after
+  parsing the inline DSL.
+- **§4 (Driver launcher contract — subprocess spawn over UDS).**
+  Superseded by [ADR-0022](0022-tcp-grpc-transport.md) §1 (TCP
+  transport) and [ADR-0021](0021-service-discovery.md) §5
+  (env-var endpoint discovery). The launcher (`load_uds_command`,
+  `allocate_socket_path`, the readiness-line regex, `SIGTERM`
+  / `SIGKILL` handling, the `DriverHandle` Drop semantics) is
+  retired in full. R2.3's
+  [`AdapterRegistry`](../../core/engine/src/registry.rs)
+  resolves DSL driver names to TCP endpoints; the engine dials
+  the resolved endpoint directly.
+- **§5 (JSONL output streaming — per-row flush).** Preserved as
+  a contract, repurposed at the boundary. The `OutputSink` trait
+  and the streaming write-flush invariant carry forward; the
+  [`ChannelSink`](../../core/engine/src/server.rs) used by the
+  `RunJob` server forwards each row as a `RunJobResponse.Row`
+  event on an unbounded mpsc channel rather than appending to
+  a JSONL file. The `JsonlFileSink` and `StdoutSink` types are
+  preserved for tests and embedded use; the gRPC server uses
+  the channel sink so the wire response is the row stream.
+- **§6 (Field-spec sugar mapping).** Preserved unchanged. The
+  `text` / `attr:` / `mode:` shorthand stays in the DSL.
+
+The retirement of §4 is the architectural payoff: 628 lines of
+subprocess management code go away, and the engine becomes a
+stateless gRPC service that any control plane can drive (R3.1
+is the first such consumer). The audit trail for the
+retirement lives in
+[`docs/refactor-audit.md`](../refactor-audit.md) §"R2.3 — engine
+transport + service mode" and the per-step commits of the R2.3
+PR.
+
+See [ADR-0020](0020-microservices-architecture-supersession.md)
+§3 for the architectural commitment, §6 for the supersession
+record, and §5 for the full phase sequence.

@@ -49,9 +49,9 @@ canonical 9093 reserved by ADR-0021 §4.
 
 > The R6.2 Compose stack will replace `just curl-imp-run` as the
 > canonical local-dev path. Until then this recipe survives as a
-> convenience. The R2.2-R2.3 sequence breaks `spectre run`
-> end-to-end because the engine still dials UDS — see
-> `KNOWN_BREAKAGE.md` at the repo root.
+> convenience. The engine talks to this adapter over TCP gRPC
+> after R2.3 (ADR-0022); the engine binary itself is also a gRPC
+> service after R2.3 (`just engine-run`).
 
 ## Why subprocess invocation, not cgo
 

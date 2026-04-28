@@ -16,6 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "spectre/driver/v1alpha1/capabilities.proto",
         "spectre/driver/v1alpha1/errors.proto",
         "spectre/driver/v1alpha1/extraction.proto",
+        "spectre/engine/v1alpha1/engine.proto",
     ]
     .iter()
     .map(|p| proto_root.join(p))

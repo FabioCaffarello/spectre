@@ -4,88 +4,85 @@ A minimal Spectre job that drives the curl-impersonate adapter
 against [example.com](https://example.com), queries every link
 on the page, and extracts each link's visible text and `href`.
 
-> **Status:** runnable via `spectre run job.yaml` once the
-> curl-impersonate adapter has been built (`just curl-imp-build`)
-> and a curl-impersonate variant (default `curl_chrome116`) is on
-> `$PATH`. PR12 closes the v1alpha1 unary surface for the
-> curl-impersonate adapter; see
-> [ADR-0017](../../docs/adr/0017-curl-impersonate-extraction-and-final-capability-divergence.md)
-> for the deviations from the browser drivers and the
-> [roadmap](../../docs/roadmap.md) for the full Phase 2 picture.
+> **Status (R2.3 era).** The `spectre run` CLI surface this
+> example documented in PR12 was retired by R2.3 (ADR-0020 §3).
+> End-to-end invocation is currently a manual `grpcurl` flow:
+> start the engine, start the curl-impersonate adapter, send the
+> inline DSL. R3.1 replaces this with `kubectl apply -f
+> scrapejob.yaml` against a Helm-installed cluster; R6.2 replaces
+> it with `docker compose up` plus a
+> `just example-curl-impersonate-extract` recipe.
 
 ## Why a separate example
 
 `hello-hackernews` exercises the same DSL against the Playwright
 adapter; `seleniumbase-extract` exercises it against the
-SeleniumBase adapter. This example completes the trio against the
-curl-impersonate adapter — the same `job.yaml` shape, the same
-RPC sequence (`Initialize → Navigate → Query → ExtractEach →
-Close`), three honestly different runtime models. **One CLI, one
-protocol, three runtimes.**
+SeleniumBase adapter. This example completes the trio against
+the curl-impersonate adapter — the same `job.yaml` shape, the
+same RPC sequence (`Initialize → Navigate → Query → ExtractEach
+→ Close`), three honestly different runtime models. **One
+engine, one protocol, three runtimes.**
 
 ## Run it
 
-From the repository root:
+The pieces, three terminals (or three `tmux` panes — the engine
+and adapter are both long-running services):
 
 ```bash
-just curl-imp-build                                    # go build -o bin/adapter ./cmd/adapter
-# Install a curl-impersonate release if needed (Linux: tarball into /usr/local/bin;
-# macOS: download from https://github.com/lwthiker/curl-impersonate/releases).
-just spectre-build
-just spectre-run examples/curl-impersonate-extract/job.yaml --verbose
+# Terminal 1 — engine gRPC service on 127.0.0.1:9090
+just engine-run
+
+# Terminal 2 — curl-impersonate adapter on 127.0.0.1:9093
+just curl-imp-build
+# Install a curl-impersonate release if needed:
+#   https://github.com/lwthiker/curl-impersonate/releases
+just curl-imp-run 9093
+
+# Terminal 3 — submit the job
+grpcurl -plaintext \
+    -import-path proto -proto spectre/engine/v1alpha1/engine.proto \
+    -d "$(jq -n --arg dsl "$(cat examples/curl-impersonate-extract/job.yaml)" '{job_dsl: $dsl}')" \
+    127.0.0.1:9090 \
+    spectre.engine.v1alpha1.Engine/RunJob
 ```
 
-Or, with the binary on `$PATH`:
+The adapter spawns one `curl_chrome116` subprocess per
+`Navigate` call (no browser, no rendering). The engine streams
+`RunJobResponse` events back: one `row.json_line` per link on
+example.com, then a terminal `completed.rows_extracted`.
 
-```bash
-spectre run examples/curl-impersonate-extract/job.yaml --verbose
-```
-
-The adapter spawns one `curl_chrome116` subprocess per `Navigate`
-call (no browser, no rendering). The job writes one JSON object
-per link to `links.jsonl`, resolved relative to this directory.
-With `--verbose`, the engine prints the compiled `Plan` to stderr
-so you can see the protocol-level RPC sequence.
-
-To inspect the plan without running anything:
-
-```bash
-spectre validate examples/curl-impersonate-extract/job.yaml
-```
-
-Expected output (one line per link):
+Expected `row.json_line` (one line; example.com currently has a
+single link):
 
 ```json
 {"text":"More information...","url":"https://www.iana.org/domains/example"}
 ```
 
-(example.com currently has a single link; the job is structured
-so adding a richer target — your own page, a documentation site —
-is one YAML edit away.)
+The job is structured so adding a richer target — your own
+page, a documentation site — is one YAML edit away.
 
 ## What it does
 
-1. Engine parses `job.yaml` into a validated `Job`, then compiles
-   it to a `Plan`: `Initialize → Navigate → Query → ExtractEach →
-   Close`. The plan is identical to the one produced for
-   `hello-hackernews` and `seleniumbase-extract`; only the driver
-   name differs.
-2. Engine launches the curl-impersonate adapter as a subprocess
-   (reading `adapters/curl-impersonate/driver.yaml`), polls the
-   gRPC standard health check until SERVING (ADR-0021 §6), and
-   dials the TCP listener over gRPC (ADR-0022). The engine-side
-   TCP dial lands in R2.3; until then the `spectre run` flow
-   against this example is broken — see `KNOWN_BREAKAGE.md` at
-   the repo root.
-3. Engine sends the RPC sequence. `Navigate` shells out to
+1. The engine parses `job.yaml` into a validated `Job`, then
+   compiles it to a `Plan`:
+   `Initialize → Navigate → Query → ExtractEach → Close`. The
+   plan is identical to the one produced for `hello-hackernews`
+   and `seleniumbase-extract`; only the driver name differs.
+2. The engine resolves `driver: curl-impersonate` to
+   `SPECTRE_CURL_IMPERSONATE_ENDPOINT` (default
+   `127.0.0.1:9093`) via `AdapterRegistry`, dials the TCP
+   listener over gRPC (ADR-0022), and waits for
+   `grpc.health.v1.Health.Check` to return `SERVING`
+   (ADR-0021 §6).
+3. The engine sends the RPC sequence. `Navigate` shells out to
    `curl_chrome116`, parses the response body via goquery
    (ADR-0017 §2), and caches the `*goquery.Document` on the
    session. `Query(a)` resolves the CSS selector against the
-   cached document; `ExtractEach` reads `textContent` (a goquery
-   `Selection.Text()` call) and the `href` attribute (a goquery
-   `Selection.Attr` call) from each match.
-4. Each result row is written to `links.jsonl` as soon as its
-   `Extract` returns.
+   cached document; `ExtractEach` reads `textContent` (a
+   goquery `Selection.Text()` call) and the `href` attribute (a
+   goquery `Selection.Attr` call) from each match.
+4. Each `Extract` response becomes a `RunJobResponse.Row` event
+   on the wire.
 
 ## Operator notes
 
@@ -108,18 +105,19 @@ is one YAML edit away.)
 ## What this driver cannot do
 
 - **JavaScript execution.** No `js_execution`; no `MODE_EVAL`
-  field. A job with `eval:` would fail
-  `spectre validate` against this driver.
+  field. A job with `eval:` would fail at plan time against
+  this driver.
 - **Screenshots.** No `screenshot_*` capability declared, ever.
   ADR-0016 §5.
-- **Text and attribute selectors as separate capabilities.** The
-  adapter accepts CSS and XPath only. `SELECTOR_KIND_TEXT` and
-  `SELECTOR_KIND_ATTRIBUTE` reject with `CODE_INVALID_ARGUMENT`
-  and a message pointing at ADR-0017 §1 — the cross-driver
-  semantic-equivalence contract that justifies the omission.
+- **Text and attribute selectors as separate capabilities.**
+  The adapter accepts CSS and XPath only. `SELECTOR_KIND_TEXT`
+  and `SELECTOR_KIND_ATTRIBUTE` reject with
+  `CODE_INVALID_ARGUMENT` and a message pointing at ADR-0017
+  §1 — the cross-driver semantic-equivalence contract that
+  justifies the omission.
 - **Visibility-aware text extraction.** `MODE_INNER_TEXT` falls
-  back to `MODE_TEXT_CONTENT` because there is no layout engine
-  to evaluate visibility. ADR-0017 §5 documents the
+  back to `MODE_TEXT_CONTENT` because there is no layout
+  engine to evaluate visibility. ADR-0017 §5 documents the
   approximation; clients who need true visible-text semantics
   should use `driver: playwright` or `driver: seleniumbase`.
 

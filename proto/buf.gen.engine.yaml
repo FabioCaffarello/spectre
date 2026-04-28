@@ -1,0 +1,32 @@
+# Code generation for the internal Engine protocol
+# (`spectre.engine.v1alpha1`).
+#
+# Per the R2.3 contract: only Rust (the engine itself) and Go (the
+# control plane, R3.1) consume this protocol. Python and TS bindings
+# are intentionally not generated — neither the SeleniumBase adapter
+# nor the Playwright adapter sees the engine API. Keeping them out
+# of the gen tree avoids dead code and dead namespaces in those
+# language ecosystems.
+#
+# Rust generation does not happen here; it is produced by
+# `core/engine/build.rs` at cargo build time, the same way the
+# driver protocol is generated. See `docs/architecture/engine.md`.
+#
+# Run from the repository root via `just proto-generate`, which
+# invokes `buf generate` first against the driver path with the
+# default template (`buf.gen.yaml`) and then against the engine
+# path with this template.
+
+version: v2
+
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: gen/go
+    opt:
+      - paths=source_relative
+
+  - remote: buf.build/grpc/go
+    out: gen/go
+    opt:
+      - paths=source_relative
+      - require_unimplemented_servers=false

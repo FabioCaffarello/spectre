@@ -71,8 +71,15 @@ proto-breaking:
 # adapters/playwright/src/proto/. See ADR-0007 for rationale; Rust
 # bindings are produced lazily by core/engine/build.rs at cargo
 # invocation time and are not materialised by this recipe.
+#
+# Two invocations: the default template generates Go + Python + TS
+# for the public driver protocol (and the vendored grpc.health.v1).
+# The engine template generates Go only for the internal engine
+# protocol — Python and TS bindings are intentionally not produced
+# (R2.3; ADR-0020 §6).
 proto-generate: proto-bootstrap
-    cd proto && buf generate
+    cd proto && buf generate --path spectre/driver --path grpc
+    cd proto && buf generate --template buf.gen.engine.yaml --path spectre/engine
     bash tools/codegen/post-generate.sh
 
 # ---------------------------------------------------------------------------
@@ -101,35 +108,31 @@ engine-integration-test: pw-build pw-install-browsers
     cd core/engine && PLAYWRIGHT_AVAILABLE=1 cargo test --test integration -- --ignored --nocapture
 
 # ---------------------------------------------------------------------------
-# spectre CLI (core/engine/src/bin/spectre.rs)
+# spectre engine binary (core/engine/src/bin/spectre.rs)
 # ---------------------------------------------------------------------------
-# The CLI is the engine binary; see ADR-0013. These recipes drive the
-# release build and the three subcommands.
+# The binary is the gRPC service entry point — no subcommands. R2.3
+# retired the CLI surface ADR-0013 introduced (`run`, `validate`,
+# standalone `version`); ADR-0020 §3 records the supersession.
 
 # Build the release `spectre` binary at core/engine/target/release/spectre.
 spectre-build:
     cd core/engine && cargo build --release --bin spectre
 
-# Print the engine and protocol versions. Cheap; used as a CI smoke test.
-spectre-version: spectre-build
-    core/engine/target/release/spectre version
+# Run the engine as a gRPC service. Listens on `0.0.0.0:9090` by
+# default; override via `SPECTRE_ENGINE_PORT`. Adapter endpoints
+# resolve from `SPECTRE_PLAYWRIGHT_ENDPOINT`,
+# `SPECTRE_SELENIUMBASE_ENDPOINT`, and
+# `SPECTRE_CURL_IMPERSONATE_ENDPOINT` with `127.0.0.1:909{1,2,3}`
+# defaults for local-development convenience. SIGTERM/Ctrl-C drains
+# in-flight RPCs and exits 0.
+engine-run *ARGS='': spectre-build
+    core/engine/target/release/spectre {{ARGS}}
 
-# Validate a job YAML file: parse, plan, and check declared
-# capabilities without launching the driver. Prints the compiled plan.
-spectre-validate JOB: spectre-build
-    core/engine/target/release/spectre validate {{JOB}}
-
-# Run a job end-to-end. Requires the Playwright adapter to be built
-# and Chromium installed (run `just pw-install-browsers` first). Pass
-# extra args after the job path, e.g. `just spectre-run job.yaml --verbose`.
-spectre-run JOB *ARGS='': spectre-build pw-build
-    core/engine/target/release/spectre run {{JOB}} {{ARGS}}
-
-# Back-compat alias for the PR7 recipe: runs the hello-hackernews job
-# via the spectre binary. Equivalent to
-# `just spectre-run examples/hello-hackernews/job.yaml`.
-engine-run-hello *ARGS='': spectre-build pw-build
-    core/engine/target/release/spectre run examples/hello-hackernews/job.yaml {{ARGS}}
+# gRPC health-probe the running engine on its default port. Requires
+# `grpc_health_probe` on PATH (https://github.com/grpc-ecosystem/grpc-health-probe).
+# Override the port with `PORT=...` if the engine is bound elsewhere.
+engine-grpc-test PORT='9090':
+    grpc_health_probe -addr=127.0.0.1:{{PORT}}
 
 # ---------------------------------------------------------------------------
 # Go control plane / Kubernetes operator (core/control-plane)
@@ -182,14 +185,13 @@ op-test: cp-test
 op-build: cp-build
 
 # Run the operator from your host against the current kubectl context.
-# Points the SubprocessRunner at the workspace's release-build spectre
-# binary and the workspace adapters/ directory so JSONL output flows
-# through the real engine + Playwright stack — equivalent to what the
-# operator image does in-cluster, just outside the Pod. The
-# --adapters-path override is mandatory here: PR16 changed the manager's
-# default to /opt/spectre/adapters (the in-image install path), which
-# does not exist on the developer host. Builds the spectre binary and
-# the Playwright adapter on demand.
+#
+# Broken in R2.3 pending R3.1. The operator's SubprocessRunner shells
+# out to `spectre run`, which the engine binary no longer accepts —
+# the binary is a gRPC service after R2.3. R3.1 replaces
+# SubprocessRunner with EngineClientRunner (a gRPC client of the
+# engine service). The recipe is left in place so the diff between
+# R2.3 and R3.1 stays small; expect runtime failure until R3.1 lands.
 op-run: spectre-build pw-build
     cd core/control-plane && \
         GOTOOLCHAIN=go1.25.3 go run ./cmd/main.go \
@@ -237,10 +239,15 @@ op-build-image: engine-image
 # operator-image job; failures here surface bad COPY paths, missing
 # build-args, Chrome / ChromeDriver version skew, or a missing
 # curl-impersonate variant on PATH before kind smoke.
+#
+# R2.3: the `spectre version` invocation was retired with the CLI
+# surface (ADR-0020 §3); the binary smoke is reduced to "the binary
+# exists at the canonical path" until R3.1 reshapes the operator
+# image around `EngineClientRunner`.
 op-image-smoke: op-build-image
     docker run --rm --platform=linux/amd64 \
-        --entrypoint=/usr/local/bin/spectre \
-        spectre-control-plane:dev version
+        --entrypoint=test \
+        spectre-control-plane:dev -x /usr/local/bin/spectre
     docker run --rm --platform=linux/amd64 \
         --entrypoint=/bin/sh \
         spectre-control-plane:dev -c \
@@ -478,11 +485,17 @@ engine-image:
         --load \
         .
 
-# Smoke-test the image by printing the engine and protocol versions.
-# Mirrors the CI engine-image job. The --platform flag is required on
+# Smoke-test the image by confirming the engine binary exists at the
+# canonical path. Mirrors the CI engine-image job. R2.3 retired the
+# `version` subcommand alongside the rest of the CLI surface; the
+# binary is now a gRPC service entry point. A deeper start-and-probe
+# smoke (bind a port, query `grpc.health.v1.Health`) belongs to the
+# Compose stack landing in R6.2. The --platform flag is required on
 # Apple Silicon hosts (Docker emulates linux/amd64 via QEMU there).
 engine-image-run: engine-image
-    docker run --rm --platform=linux/amd64 spectre-engine:dev version
+    docker run --rm --platform=linux/amd64 \
+        --entrypoint=test \
+        spectre-engine:dev -x /usr/local/bin/spectre
 
 # Devcontainer post-create entry point. Equivalent to running
 # `bash .devcontainer/post-create.sh`. Useful inside the container if

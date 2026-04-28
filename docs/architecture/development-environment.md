@@ -125,12 +125,17 @@ the build runs natively without emulation.
 
 ### Why the image exists today
 
-Nothing in this PR (or the next several) runs the engine from the
-container — `spectre run examples/...` invokes the host binary
-directly. The image lays groundwork for Phase 3's control plane,
-which will deploy the engine inside Kubernetes pods. Building the
-image now (and exercising it in CI on every PR) keeps it healthy
-until that consumer arrives.
+The image lays groundwork for the microservices stack the
+refactor (R1-R8) is delivering: Phase 3's control plane will
+dial the engine as a gRPC service, and R6.2's Compose stack
+will run the engine and adapters as separate services backed by
+this same image. Building the image now (and exercising it in
+CI on every PR) keeps it healthy until those consumers arrive.
+
+After R2.3, the engine binary is itself a gRPC service entry
+point (ADR-0020 §3); it is no longer a CLI. End-to-end local
+runs against a built image are deferred to R6.2's
+`docker compose up` flow.
 
 ## Why per-adapter images and Compose are deferred
 

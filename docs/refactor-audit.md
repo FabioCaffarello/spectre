@@ -93,6 +93,21 @@
 
 ## R2.3 — engine transport + service mode
 
+> **Status (R2.3 complete):** every engine-side and cross-cutting
+> entry below was applied in PR R2.3. `core/engine/src/launcher.rs`
+> is gone; `Client::dial` accepts `host:port` / `grpc://host:port`
+> endpoints and connects via `tonic::transport::Endpoint`'s TCP
+> path; the engine binary is the gRPC service entry point on
+> `0.0.0.0:9090`; adapter discovery flows through `AdapterRegistry`
+> reading `SPECTRE_PLAYWRIGHT_ENDPOINT` /
+> `SPECTRE_SELENIUMBASE_ENDPOINT` / `SPECTRE_CURL_IMPERSONATE_ENDPOINT`
+> with `127.0.0.1:909{1,2,3}` defaults. A grep for `launcher`,
+> `--socket`, `SPECTRE_DRIVER_SOCKET`, `UnixStream`, `:authority`,
+> or `spectre run` against `core/engine/` returns zero hits. The
+> R2.3 → R3.1 window leaves the operator's `SubprocessRunner`
+> broken at runtime — that gap is closed by R3.1's
+> `EngineClientRunner`, intentionally scoped as the next PR.
+
 ### core/engine/
 
 | File | Lines | Change |

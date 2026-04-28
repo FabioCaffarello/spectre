@@ -1,79 +1,47 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! `spectre` — the Spectre CLI.
+//! `spectre` — the engine gRPC service binary.
 //!
-//! ADR-0013 records why the CLI lives in the engine crate as
-//! `src/bin/spectre.rs` rather than as a separate binary. The crate
-//! `spectre-engine` produces the binary `spectre` (the `[[bin]]` name
-//! in `Cargo.toml`); `cargo install spectre-engine` installs it under
-//! that name.
+//! Binds a TCP listener (default `0.0.0.0:9090`, override via
+//! `SPECTRE_ENGINE_PORT`), registers
+//! `spectre.engine.v1alpha1.Engine` (the streaming `RunJob` RPC)
+//! and `grpc.health.v1.Health` (returning `SERVING` from process
+//! startup), and serves until SIGTERM/SIGINT.
 //!
-//! Three subcommands at v1alpha1:
+//! Adapter discovery is via environment variables read at startup;
+//! see [`spectre_engine::registry`]. Defaults bind the three
+//! reference adapters to `127.0.0.1:909{1,2,3}` so a developer
+//! running engine + adapter on the same workstation gets a working
+//! configuration with no setup. Compose (R6.2) and Helm (R7.1)
+//! override the variables to point at deployed service names.
 //!
-//! - `spectre run <job.yaml>` — parse, plan, launch the driver,
-//!   execute, write JSONL.
-//! - `spectre validate <job.yaml>` — parse, plan, check declared
-//!   capabilities; print the compiled plan; never launch a driver.
-//! - `spectre version` — print engine and protocol versions.
+//! The CLI subcommands (`run`, `validate`, standalone `version`)
+//! that ADR-0013 introduced were retired in R2.3; the binary now
+//! does one thing — start the gRPC service. ADR-0020 §3 records the
+//! supersession.
 
-use std::path::{Path, PathBuf};
+use std::env;
+use std::net::SocketAddr;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION, Plan};
+use spectre_engine::registry::AdapterRegistry;
+use spectre_engine::server::engine_server;
+use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
+use tonic::transport::Server;
+use tonic_health::ServingStatus;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-#[derive(Debug, Parser)]
-#[command(
-    name = "spectre",
-    bin_name = "spectre",
-    version = ENGINE_VERSION,
-    about = "Spectre — driver-agnostic browser automation",
-    long_about = None,
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Run a Spectre job to completion.
-    Run {
-        /// Path to the YAML job file.
-        job: PathBuf,
-        /// Print the compiled plan to stderr before execution.
-        #[arg(short, long)]
-        verbose: bool,
-        /// Override the YAML's `output.path`. Use `-` for stdout.
-        #[arg(short, long)]
-        output: Option<String>,
-        /// Override the adapters directory (default: workspace
-        /// `adapters/` or `$SPECTRE_ADAPTERS_PATH`).
-        #[arg(long)]
-        adapters_path: Option<PathBuf>,
-    },
-    /// Parse, plan, and check capabilities without running the driver.
-    Validate {
-        /// Path to the YAML job file.
-        job: PathBuf,
-        /// Override the adapters directory.
-        #[arg(long)]
-        adapters_path: Option<PathBuf>,
-    },
-    /// Print engine and protocol versions.
-    Version,
-}
+const DEFAULT_PORT: u16 = 9090;
+const PORT_ENV: &str = "SPECTRE_ENGINE_PORT";
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> ExitCode {
-    let cli = Cli::parse();
+    init_tracing();
 
-    init_tracing(matches!(cli.command, Command::Run { verbose: true, .. }));
-
-    match dispatch(cli.command).await {
-        Ok(code) => code,
+    match run().await {
+        Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");
             ExitCode::from(1)
@@ -81,93 +49,91 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn dispatch(cmd: Command) -> Result<ExitCode> {
-    match cmd {
-        Command::Run {
-            job,
-            verbose,
-            output,
-            adapters_path,
-        } => cmd_run(&job, verbose, output.as_deref(), adapters_path.as_deref()).await,
-        Command::Validate { job, adapters_path } => cmd_validate(&job, adapters_path.as_deref()),
-        Command::Version => {
-            cmd_version();
-            Ok(ExitCode::SUCCESS)
-        }
-    }
-}
+async fn run() -> Result<()> {
+    let port = parse_port()?;
+    let addr: SocketAddr = format!("0.0.0.0:{port}")
+        .parse()
+        .with_context(|| format!("invalid bind address for port {port}"))?;
 
-fn cmd_version() {
-    println!("spectre {ENGINE_VERSION}");
-    println!("protocol {PROTOCOL_VERSION}");
-}
+    let registry = AdapterRegistry::from_env();
+    log_registry(&registry);
 
-fn cmd_validate(job_path: &Path, adapters_path: Option<&Path>) -> Result<ExitCode> {
-    let yaml = std::fs::read_to_string(job_path)
-        .with_context(|| format!("reading job at {}", job_path.display()))?;
-    let engine = Engine::new(adapters_path);
-    let plan = engine.validate_only(&yaml)?;
-    print_plan(&plan, &mut std::io::stdout())?;
-    Ok(ExitCode::SUCCESS)
-}
+    let engine = Engine::with_registry(registry);
+    let svc = engine_server(engine);
 
-async fn cmd_run(
-    job_path: &Path,
-    verbose: bool,
-    output_override: Option<&str>,
-    adapters_path: Option<&Path>,
-) -> Result<ExitCode> {
-    let yaml = std::fs::read_to_string(job_path)
-        .with_context(|| format!("reading job at {}", job_path.display()))?;
-    let job_dir = job_path
-        .parent()
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter
+        .set_service_status("", ServingStatus::Serving)
+        .await;
+    health_reporter
+        .set_service_status("spectre.engine.v1alpha1.Engine", ServingStatus::Serving)
+        .await;
 
-    let job = Engine::parse_job(&yaml)?;
-    let mut plan = Engine::plan_job(&job);
-    if let Some(path) = output_override {
-        path.clone_into(&mut plan.output.path);
-    }
+    info!(
+        version = ENGINE_VERSION,
+        protocol = PROTOCOL_VERSION,
+        addr = %addr,
+        "spectre engine listening"
+    );
 
-    if verbose {
-        eprintln!("--- compiled plan ---");
-        print_plan(&plan, &mut std::io::stderr())?;
-        eprintln!("---");
-    }
+    Server::builder()
+        .add_service(svc)
+        .add_service(health_service)
+        .serve_with_shutdown(addr, shutdown_signal())
+        .await
+        .context("gRPC server terminated")?;
 
-    let engine = Engine::new(adapters_path);
-    let rows = engine.run_plan(plan, &job_dir).await?;
-    tracing::info!(rows, "spectre run complete");
-    Ok(ExitCode::SUCCESS)
-}
-
-fn print_plan(plan: &Plan, out: &mut impl std::io::Write) -> std::io::Result<()> {
-    writeln!(out, "Driver: {}", plan.driver)?;
-    let mut caps: Vec<&String> = plan.required_capabilities.iter().collect();
-    caps.sort();
-    writeln!(out, "Required capabilities: {caps:?}")?;
-    writeln!(
-        out,
-        "Output: format={:?} path={:?}",
-        plan.output.format, plan.output.path
-    )?;
-    writeln!(out, "Steps:")?;
-    for (i, step) in plan.steps.iter().enumerate() {
-        writeln!(out, "  [{i}] {step:?}")?;
-    }
+    info!("spectre engine shut down");
     Ok(())
 }
 
-fn init_tracing(verbose: bool) {
-    // RUST_LOG always wins. Otherwise: WARN by default, INFO with
-    // --verbose. tracing-subscriber writes to stderr so JSONL on stdout
-    // stays clean for piping.
-    let default_level = if verbose { "info" } else { "warn" };
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new(format!(
-            "spectre_engine={default_level},spectre={default_level}"
-        ))
-    });
+fn parse_port() -> Result<u16> {
+    match env::var(PORT_ENV) {
+        Ok(s) => s
+            .parse::<u16>()
+            .with_context(|| format!("invalid {PORT_ENV} value (expected u16): {s:?}")),
+        Err(_) => Ok(DEFAULT_PORT),
+    }
+}
+
+fn log_registry(registry: &AdapterRegistry) {
+    for (driver, endpoint) in registry.iter() {
+        info!(driver, endpoint, "adapter endpoint registered");
+    }
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            warn!(error = %e, "ctrl-c handler failed");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                warn!(error = %e, "SIGTERM handler failed");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => info!("received SIGINT"),
+        () = terminate => info!("received SIGTERM"),
+    }
+}
+
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("spectre_engine=info,spectre=info"));
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(filter)

@@ -1,12 +1,13 @@
 # seleniumbase-extract — query and extract against a public page using
 # the SeleniumBase adapter.
 #
-# Run via: spectre run examples/seleniumbase-extract/job.yaml
-# See README.md for status. PR10 lands the SeleniumBase adapter's
-# Query and Extract surface, so this job exercises the second
-# driver through the same DSL hello-hackernews uses against the
-# Playwright adapter — visible evidence that one CLI runs one
-# protocol against two runtimes in two languages.
+# See README.md for the run instructions. R2.3 retired the
+# `spectre run` CLI; submit this DSL via `grpcurl` against the
+# engine's `spectre.engine.v1alpha1.Engine.RunJob` RPC. The job
+# exercises the second driver through the same DSL
+# `hello-hackernews` uses against the Playwright adapter — visible
+# evidence that one engine runs one protocol against two runtimes
+# in two languages.
 
 spectre: v1alpha1
 driver: seleniumbase

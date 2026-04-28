@@ -115,15 +115,6 @@ exist yet.
 > live progress. The pre-refactor architecture below continues to
 > function for existing examples; new contributions should align
 > with the post-refactor direction.
->
-> **R2.2 → R2.3 transitional break.** PR R2.2 switched all three
-> reference adapters and the conformance suite from Unix-domain-
-> socket gRPC to TCP gRPC plus the standard health check (ADR-0021,
-> ADR-0022). The engine binary's UDS dial path lands in R2.3, so
-> `spectre run` against the example jobs is broken in this window.
-> [`KNOWN_BREAKAGE.md`](KNOWN_BREAKAGE.md) documents the gap and
-> the workaround (use `just conf-test` to exercise the adapters
-> end-to-end). R2.3's first commit deletes `KNOWN_BREAKAGE.md`.
 
 **Phases 1 and 2 — complete.** The engine parses the DSL, plans
 against driver capabilities, and runs `spectre run` against the
