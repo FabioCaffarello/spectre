@@ -1,0 +1,66 @@
+# Sample ScrapeJob with the S3 output sink (R5.1 — ADR-0024 §3).
+# The reconciler accepts the S3 variant since R5.1 wired the
+# engine's `aws-sdk-s3` uploader end-to-end. The job buffers
+# extracted rows in memory as JSONL and uploads as a single
+# PutObject at job completion. Re-driving the ScrapeJob produces
+# a fresh job_id and (when the key template includes {{.JobID}})
+# a fresh S3 key — overwriting only happens when the operator
+# omits the template.
+#
+# S3 admission gating is engine-side per ADR-0024 §5:
+#   - SPECTRE_S3_* env unset → INFO-level fallback to the AWS
+#     default credential chain (BYO-credentials mode, the
+#     production-typical shape).
+#   - SPECTRE_S3_* env configured but unreachable → WARN.
+#   - In either failure case, jobs against `None` fail fast at
+#     job-start with `error_code = "S3_UNAVAILABLE"`. Empty
+#     bucket / key fail with `S3_FIELD_REQUIRED`.
+#
+# Local-dev path: `docker compose up -d` brings up MinIO on
+# `localhost:9000` (S3 API) and `localhost:9001` (web console),
+# plus a one-shot bucket-bootstrap container that pre-creates
+# `spectre-rows`. The engine resolves credentials from
+# SPECTRE_S3_ACCESS_KEY_ID + SPECTRE_S3_SECRET_ACCESS_KEY (see
+# `.env.example`) and the per-job endpoint from
+# spec.outputSink.s3.endpoint below.
+#
+# Production deployments leave the endpoint field unset and use
+# real AWS S3; the engine's SPECTRE_S3_REGION env or the CRD's
+# region field selects the bucket's region. ADR-0024 §3 records
+# that the per-job endpoint beats the engine's env override, so
+# a single engine binary can serve mixed-endpoint workloads.
+apiVersion: spectre.io/v1alpha2
+kind: ScrapeJob
+metadata:
+  name: hello-hackernews-s3
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  jobDSL: |
+    spectre: v1alpha1
+    driver: playwright
+    steps:
+      - navigate: https://news.ycombinator.com
+      - extract:
+          selector: .titleline > a
+          fields:
+            title: textContent
+            url: href
+    output:
+      format: jsonl
+      path: ./stories.jsonl
+  engineRef:
+    service:
+      name: spectre-engine
+      namespace: spectre-system
+      port: 9090
+  outputSink:
+    s3:
+      bucket: spectre-rows
+      key: scrapes/{{.JobID}}/rows.jsonl
+      # In-cluster reference for a Kubernetes deployment of
+      # MinIO; for native-binary dev against `docker compose up`,
+      # use `http://localhost:9000` instead.
+      endpoint: http://minio.spectre-system.svc.cluster.local:9000
+      region: us-east-1
