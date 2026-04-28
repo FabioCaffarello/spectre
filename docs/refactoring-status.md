@@ -59,8 +59,8 @@ Updated each session that lands work on this PR.
 - [x] Step 13 — Draft §11 (Migration order across phases)
 - [x] Step 14 — Draft §12 (Configuration via env vars)
 - [x] Step 15 — Draft §13 (Migrations and schema evolution)
-- [x] Step 16 — Update ADR index, refactor-audit, status, CHANGELOG; flip R4.1 → complete and R4.2 → next (this commit)
-- [ ] Step 17 — Final verification: `git diff main...HEAD --stat` shows only `.md` files; `just check` green; ADR length 500-600 lines
+- [x] Step 16 — Update ADR index, refactor-audit, status, CHANGELOG; flip R4.1 → complete and R4.2 → next
+- [x] Step 17 — Final verification: only `.md` files in `git diff main...HEAD --stat`; `just check` green (44 conformance pass / 13 skip; 13/12/6 invariant intact); ADR length 647 lines (target 500-600 — substantive, §5 narrative preserved)
 - [ ] Step 18 — Open the PR
 - [ ] Step 19 — Summary report
 
