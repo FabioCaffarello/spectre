@@ -309,6 +309,61 @@ the implementation tracks ADR-0023.
 > R4 closes with this PR — the full Postgres + Redis + Kafka
 > stateful-services architecture from ADR-0023 is operational.**
 
+> **Status (R5.1 complete — Phase R5 CLOSED):** S3 + webhook
+> output sinks integrate end-to-end. The engine ships an
+> `aws-sdk-s3` 1.x uploader (rustls features aligned with sqlx;
+> `behavior-version-latest` opts into stable behaviour pinning)
+> and a `reqwest` 0.12 client (rustls-tls-native-roots).
+> `S3Uploader::from_env` is the analog of `KafkaProducer::from_env`
+> with the ADR-0024 §5 asymmetry: env-unset arm is INFO-level
+> (BYO-credentials mode covers IAM-role / SSO / profile —
+> production-typical), unparseable env is WARN; `S3_UNAVAILABLE`
+> at job-start when the uploader is `None`, `S3_FIELD_REQUIRED`
+> for empty bucket / key. `WebhookClient::new` is infallible —
+> webhook has no engine-level state per ADR-0024 §5; the per-job
+> `WebhookSession` flushes after every row at `BatchSize=0` (CRD
+> default) or at N-row threshold; bounded exponential-backoff
+> retry (3 attempts, 200/400/800 ms with jitter) on transient
+> errors (connection refused / 5xx / 429); fatal on first
+> attempt for non-429 4xx; ADR-0024 §4 header schema (User-Agent,
+> X-Spectre-Job-Id, X-Spectre-Driver, X-Spectre-Row-Count,
+> X-Spectre-Batch-Size when batched). `engine.proto` evolves with
+> nested `S3SinkConfig` (field 5) + `WebhookSinkConfig` (field 6)
+> messages — `kafka_topic` (field 4) stays as a flat string for
+> R4.4 wire compat; v1alpha2 may promote it to a
+> `KafkaSinkConfig` for symmetry. `validateOutputSink` unblocks
+> both variants with defence-in-depth on per-variant required
+> fields; `outputSinkS3Config` / `outputSinkWebhookConfig`
+> helpers parallel R4.4's `outputSinkKafkaTopic`. The
+> `JobRunner.Run` signature now stands at 7 parameters; the
+> RunRequest struct refactor is explicitly deferred to v1alpha2
+> per ADR-0019 §5 R5.1 addendum and master prompt §4.4.
+> `TestFailedOnUnsupportedSink` is **deleted** because every
+> v1alpha2 sink variant is now wired — its input set has gone
+> to zero. Compose stack adds MinIO at `localhost:9000` (S3 API)
+> and `localhost:9001` (web console) plus a one-shot
+> `minio-bootstrap` container that pre-creates the
+> `spectre-rows` bucket; `.env.example` carries the
+> `SPECTRE_S3_*` block; justfile recipes `engine-s3-test`,
+> `engine-webhook-test`, `minio-console`, `minio-ls`. Two new
+> sample manifests (`spectre_v1alpha2_scrapejob_s3.yaml`,
+> `..._webhook.yaml`). The conformance suite gains
+> `test_s3_sink.py` (one test against Compose MinIO via boto3)
+> and `test_webhook_sink.py` (two tests — per-row + batched —
+> against an in-process aiohttp server, no Compose dep). Full
+> conformance suite at 50 passed, 14 skipped (vs R4.4's 47
+> passed; the +3 are the new tests). The 13 / 12 / 6 capability
+> invariant holds byte-for-byte. ADR-0024 introduced
+> (~530 lines, §1–§10 covering library choices, buffering
+> models, retry/admission semantics, header schemas,
+> Postgres + sink coexistence, library pinning, out-of-scope
+> v1alpha2 deferrals). ADR-0023 §6 gains a cross-reference
+> addendum; ADR-0019 §5 gains R4.4 + R5.1 addenda. **Phase R5
+> closes with this PR — the v1alpha2 `OutputSink` discriminated
+> union is fully behaviourally implemented; remaining phases
+> (R6 deployment, R7 production, R8 docs) are about packaging,
+> not behaviour.**
+
 > **Status (R4.3 complete):** Redis integrates end-to-end across
 > all three reference adapters. Each adapter externalises session
 > metadata to Redis under `session:<adapter>:<session_id>` per
@@ -340,6 +395,7 @@ the implementation tracks ADR-0023.
 | R4.2 | Engine `core/engine/migrations/` (sqlx versioned SQL files); engine Postgres write path; control-plane `pgx/v5` read path for `Status`; `SPECTRE_POSTGRES_URL` env var added to engine + operator Deployments; Helm subchart wiring for Bitnami Postgres (deferred to R7.1). | §2 (schema) · §8 (library) · §11 (R4.2 first, smallest blast radius) · §12 (env var) · §13 (migration discipline) |
 | R4.3 | Adapter Redis clients (`ioredis` / `redis-py` / `go-redis/v9`); `session:<adapter>:<session_id>` keyspace; 1-hour idle TTL refreshed on every non-Initialize RPC; `adapter_instance_id` per-process UUID stamped at Initialize and validated on every subsequent RPC; foreign-instance sessions surface as gRPC `UNAVAILABLE`; Close best-effort deletes the Redis key with TTL as safety net; adapter startup PINGs Redis and exits non-zero when unavailable (`SPECTRE_REDIS_URL`); conformance suite gains `test_session_restart_invalidation.py` (one test per adapter) and preserves the 13 / 12 / 6 capability invariant byte-for-byte. | §4 (keyspace) · §5 (incl. R4.3 addendum on `adapter_instance_id`) · §6 (Redis required) · §7 (only adapters touch Redis) · §8 (library) · §11 (R4.3 second, highest-risk PR) · §12 (env var) |
 | R4.4 | Engine `rdkafka` producer; topic `spectre.rows.<workspace>` with default workspace `default`; 8-partition default keyed by job UUID; one-message-per-row with `job_id` / `row_index` / `driver` / `timestamp` headers; reconciler removes the "kafka output sink not yet implemented" admission rejection so the v1alpha2 schema's `OutputSink.Kafka` becomes a runnable variant; admission gate falls back to "kafka not available" when broker is unreachable at engine startup. | §3 (topic / partitioning / message shape) · §6 (Kafka admission-gated) · §8 (library) · §11 (R4.4 last, depends on R4.2's `jobs` table) · §12 (env var) |
+| R5.1 | Engine `aws-sdk-s3` 1.x uploader (in-memory JSONL buffer + single PutObject at job completion; `{{.JobID}}` key templating; empty-result uploads zero-byte object) and `reqwest` 0.12 webhook client (per-row or batched POST/PUT with bounded exponential-backoff retry; ADR-0024 §4 header schema); reconciler removes the "s3 / webhook output sink not yet implemented" admission rejections — every v1alpha2 `OutputSink` variant is wired; `engine.proto` adds nested `S3SinkConfig` (field 5) + `WebhookSinkConfig` (field 6) messages; admission-gating asymmetry recorded in ADR-0024 §5: Kafka and S3 hold engine-level state validated at startup (S3 env-unset arm logs INFO, not WARN — BYO-credentials mode is production-typical), Webhook is per-job with no global state. Compose stack adds MinIO + bucket bootstrapper; `JobRunner.Run` evolves to 7 parameters (RunRequest struct refactor deferred to v1alpha2 per ADR-0019 §5 R5.1 addendum). `TestFailedOnUnsupportedSink` deleted (input set went to zero). | ADR-0024 §3 (S3 sink) · §4 (Webhook sink) · §5 (admission gating asymmetry) · §6 (Postgres + sink coexistence) · §8 (library pinning) · §9 (depends on R4.2's `jobs` table + R4.4's pattern); ADR-0023 §6 R5.1 addendum (cross-reference); ADR-0019 §5 R5.1 addendum (`JobRunner.Run` evolution) |
 
 ## Counts
 
