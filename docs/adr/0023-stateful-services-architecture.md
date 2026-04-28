@@ -998,3 +998,63 @@ Three existing ADRs interact with R4:
 No existing ADR is superseded by ADR-0023. R4 is purely
 additive at the architectural layer; the existing seams stay.
 
+## §12 — Configuration via env vars
+
+ADR-0021 §5 established the env-var-per-dependency convention
+for the service-mesh layer. ADR-0023 extends the convention to
+the stateful services. Each service reads its own connection
+configuration at startup; there is no central configuration
+store, no ConfigMap holding the cross-service shape, no Secrets
+reference at the application layer beyond what Kubernetes /
+Helm already inject.
+
+Three env vars are added across R4:
+
+```
+SPECTRE_POSTGRES_URL=postgres://user:pass@host:5432/dbname
+SPECTRE_KAFKA_BROKERS=broker1:9092,broker2:9092
+SPECTRE_REDIS_URL=redis://host:6379/0
+```
+
+The URL conventions match each ecosystem's idiomatic form:
+
+- `SPECTRE_POSTGRES_URL` is a `postgres://` connection URL
+  per the libpq convention. `sqlx` and `pgx/v5` both accept
+  this form; the engine and control plane share the
+  configuration shape.
+- `SPECTRE_KAFKA_BROKERS` is a comma-separated list of
+  `host:port` pairs. Kafka clients across every language
+  accept this form; the engine reads it and passes it to
+  `rdkafka` directly.
+- `SPECTRE_REDIS_URL` is a `redis://` connection URL per the
+  RFC. `ioredis`, `redis-py`, and `go-redis/v9` all accept
+  this form; the three adapters share the configuration shape.
+
+Each service reads only the env vars it needs:
+
+- Engine reads `SPECTRE_POSTGRES_URL` and `SPECTRE_KAFKA_BROKERS`.
+- Control plane reads `SPECTRE_POSTGRES_URL` only.
+- Each adapter reads `SPECTRE_REDIS_URL` only.
+
+A service that does not need a stateful-service dial does not
+read its env var. An operator who runs Spectre under Compose
+sees three env vars across the stack; under Helm, the rendering
+populates each Deployment with only the env vars its workload
+needs.
+
+### Secret handling
+
+Connection URLs embed credentials. Production deployments must
+populate the env vars from Kubernetes Secrets via
+`valueFrom.secretKeyRef`; R7.1's chart defaults to this
+pattern. The Compose stack carries credentials in the
+`environment:` block directly — acceptable for a local
+development stack where the credentials are well-known throw-
+away values, not acceptable for production.
+
+The R8.1 documentation refresh will narrate the credential
+flow end-to-end (where the operator stores the URL, how Helm
+populates the Secret, how the Deployment references it). This
+ADR commits the env-var contract; R7.1 / R8.1 own the
+production runbook.
+
