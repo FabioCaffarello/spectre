@@ -89,11 +89,26 @@ impl EngineService for EngineServiceImpl {
         &self,
         request: Request<RunJobRequest>,
     ) -> Result<Response<Self::RunJobStream>, Status> {
-        let RunJobRequest { job_dsl, job_id } = request.into_inner();
+        let RunJobRequest {
+            job_dsl,
+            job_id,
+            output_sink_kind,
+        } = request.into_inner();
         let job_id = if job_id.is_empty() {
             Uuid::new_v4().to_string()
         } else {
             job_id
+        };
+        // Empty defaults to "stdout" so clients that predate R4.2
+        // (notably the engine's own integration tests and any
+        // hand-written grpcurl call) continue to work without
+        // setting the field. ADR-0023 §2 enumerates the four
+        // canonical values; anything else is rejected at the schema
+        // CHECK constraint when the engine writes the row.
+        let output_sink_kind = if output_sink_kind.is_empty() {
+            "stdout".to_owned()
+        } else {
+            output_sink_kind
         };
 
         // Parse + plan eagerly so the most common configuration
@@ -107,7 +122,12 @@ impl EngineService for EngineServiceImpl {
         let engine = Arc::clone(&self.engine);
         let (tx, rx) = mpsc::unbounded_channel::<Result<RunJobResponse, Status>>();
 
-        info!(job_id = %job_id, driver = %plan.driver, "RunJob accepted");
+        info!(
+            job_id = %job_id,
+            driver = %plan.driver,
+            output_sink_kind = %output_sink_kind,
+            "RunJob accepted",
+        );
 
         tokio::spawn(async move {
             let mut sink = ChannelSink::new(tx.clone());

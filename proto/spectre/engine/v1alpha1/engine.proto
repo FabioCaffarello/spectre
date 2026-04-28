@@ -38,6 +38,17 @@ message RunJobRequest {
   // Optional client-supplied correlation id. Included in engine
   // logs and traces. The engine generates one if empty.
   string job_id = 2;
+
+  // Output-sink kind selected by the control plane from the
+  // ScrapeJob's `OutputSink` discriminated union (R3.2). Determines
+  // whether the engine appends rows to the `job_rows` audit table
+  // per ADR-0023 §2 — currently `'stdout'` writes audit rows;
+  // `'kafka'`, `'s3'`, `'webhook'` skip the table to avoid
+  // double-write costs. Empty defaults to `'stdout'` for backward
+  // compatibility with clients that predate R4.2 (notably the
+  // engine's own integration tests). Field 3 is reserved going
+  // forward even if this field is later removed.
+  string output_sink_kind = 3;
 }
 
 message RunJobResponse {
