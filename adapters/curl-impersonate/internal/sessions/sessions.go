@@ -1,27 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package sessions implements the in-memory session registry for
-// the curl-impersonate adapter.
+// the curl-impersonate adapter, backed by Redis-resident metadata
+// for the §5 restart-invalidation contract.
 //
-// The contract mirrors the SessionManager shapes from the
-// SeleniumBase (Python) and Playwright (TypeScript) adapters but
-// is HTTP-only: each session owns a cookie-jar file path that
-// curl uses to persist cookies across multiple Navigates. PR11
-// implements `Initialize` + `Navigate`; `Close`, `Query`, and
-// `Extract` arrive in PR12 and will reuse the same session
-// records (and the response-cache field) without changes here.
+// Each session owns a cookie-jar file path that curl uses to
+// persist cookies across multiple Navigates (ADR-0016 §4). PR12
+// added the cached *goquery.Document per session for Query and
+// Extract; R4.3 (this revision) externalises the session
+// metadata to Redis under ``session:curl-impersonate:<id>`` per
+// ADR-0023 §4 and adds the ``adapter_instance_id`` validation
+// path the gRPC server uses to surface foreign-instance sessions
+// as gRPC ``UNAVAILABLE``.
 //
-// See ADR-0016 §4 for the cookie-jar architecture rationale.
+// The local registry remains the source of truth for cookie-jar
+// paths and parsed documents; Redis is the source of truth for
+// session existence (and adapter ownership). Together they
+// implement the §5 contract:
+//
+//   - Local entry exists + Redis has the session for this
+//     instance → RPC proceeds.
+//   - Local entry missing + Redis has the session for a foreign
+//     instance → RPC fails with ``UNAVAILABLE`` (the §5 restart
+//     invalidation case).
+//   - Redis has no entry → ``CODE_INVALID_ARGUMENT`` (unknown
+//     session_id).
+//
 // See ADR-0014 §4 for why the three drivers re-implement the
-// SessionManager shape rather than sharing a common contract
-// (premature abstraction; ADR-0014 deferred extraction to "after
-// the third driver lands" — that's PR11; the surface area is now
-// visible but the extraction itself remains a v1alpha2 candidate).
+// SessionManager shape rather than sharing a common contract;
+// ADR-0023 §8 extends the same reasoning to per-language Redis
+// libraries.
 package sessions
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -31,6 +46,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/elements"
+	redisx "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/redis"
 )
 
 // CookieJarDir is where session-scoped cookie-jar files live.
@@ -51,42 +67,56 @@ const CookieJarPattern = "spectre-curl-*.cookies"
 // session_id validation, carried over to every adapter).
 var ErrUnknownSession = errors.New("unknown session_id")
 
-// Session is the per-id record. PR12 adds Document, the parsed
-// HTML cached from the most recent successful Navigate. Query
-// resolves selectors against this document; Extract reads field
-// values off element references whose generation matches the
-// session's current generation in the ElementRegistry. The
-// document is replaced (not mutated) on every Navigate; the
-// generation bump that accompanies the replacement invalidates
-// every prior ElementRef. ADR-0017 §3 records the lifecycle.
+// Session is the per-id record. Document is the parsed HTML
+// cached from the most recent successful Navigate, or nil before
+// the first Navigate.
 type Session struct {
 	ID            string
 	CookieJarPath string
 	Created       time.Time
+	Document      *goquery.Document
+}
 
-	// Document is the parsed HTML from the most recent successful
-	// Navigate, or nil before the first Navigate. The session
-	// manager's mutex guards access; handlers should obtain it
-	// via Manager.Document(id).
-	Document *goquery.Document
+// ValidationKind enumerates the result of Manager.Validate.
+type ValidationKind int
+
+const (
+	// ValidationOK — Redis has the session and the stored
+	// adapter_instance_id matches the manager's. The gRPC
+	// handler proceeds with the RPC.
+	ValidationOK ValidationKind = iota
+	// ValidationUnknown — Redis has no entry for the id (never
+	// created or TTL-expired). The gRPC handler returns
+	// CODE_INVALID_ARGUMENT.
+	ValidationUnknown
+	// ValidationDifferentInstance — Redis has the session but
+	// it belongs to a different adapter instance (the §5
+	// restart-invalidation case). The gRPC handler returns
+	// codes.Unavailable.
+	ValidationDifferentInstance
+)
+
+// Validation is the typed result of Manager.Validate.
+type Validation struct {
+	Kind              ValidationKind
+	Metadata          *redisx.SessionMetadata
+	StoredInstanceID  string
 }
 
 // Manager owns the live session registry and is concurrency-safe
 // for register / has / close calls. Concurrent Navigate against
-// the *same* session is undefined and not protected — see
-// ADR-0016 §4 (operators must serialise per-session calls; the
-// engine's per-session linear executor satisfies this naturally).
-//
-// PR12 adds the ElementRegistry as a Manager-owned field. Handlers
-// reach element-related state through Manager methods rather than
-// the registry directly; that keeps the contract identical to the
-// SeleniumBase SessionManager (sessions.py) and Playwright
-// SessionManager (sessions.ts).
+// the *same* session is undefined and not protected — ADR-0016
+// §4 (operators must serialise per-session calls; the engine's
+// per-session linear executor satisfies this naturally).
 type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
 	dir      string
 	registry *elements.Registry
+	redis    *redisx.Client
+	// instanceID is the per-process UUID (or env-var override)
+	// stamped on every session metadata document. ADR-0023 §5.
+	instanceID string
 
 	// uuidFn is overridable for tests so deterministic ids land
 	// in the registry; production code uses uuid.NewString.
@@ -95,46 +125,70 @@ type Manager struct {
 
 // NewManager constructs a Manager whose cookie-jar files live
 // under the default CookieJarDir.
-func NewManager() *Manager {
-	return newManagerIn(CookieJarDir)
+func NewManager(redis *redisx.Client, instanceID string) *Manager {
+	return newManagerIn(CookieJarDir, redis, instanceID)
 }
 
-func newManagerIn(dir string) *Manager {
+func newManagerIn(dir string, redis *redisx.Client, instanceID string) *Manager {
 	return &Manager{
-		sessions: make(map[string]*Session),
-		dir:      dir,
-		registry: elements.NewRegistry(),
-		uuidFn:   uuid.NewString,
+		sessions:   make(map[string]*Session),
+		dir:        dir,
+		registry:   elements.NewRegistry(),
+		redis:      redis,
+		instanceID: instanceID,
+		uuidFn:     uuid.NewString,
 	}
+}
+
+// AdapterInstanceID exposes the manager's per-process UUID for
+// tests and diagnostics.
+func (m *Manager) AdapterInstanceID() string {
+	return m.instanceID
 }
 
 // SweepStale removes any cookie-jar files matching the pattern
 // in the manager's directory. Called once at adapter startup so
 // crashed prior runs do not leak files into the new run's
-// session namespace. Safe to call concurrently with Create —
-// the manager owns the namespace, not the disk.
+// session namespace.
 func (m *Manager) SweepStale() error {
 	matches, err := filepath.Glob(filepath.Join(m.dir, CookieJarPattern))
 	if err != nil {
 		return fmt.Errorf("sweep stale jars: glob: %w", err)
 	}
 	for _, path := range matches {
-		// Best-effort: a removal failure does not block startup.
-		// The next Navigate against a stale file would either
-		// reuse it (harmless — same prefix means same protocol
-		// version) or overwrite it.
 		_ = os.Remove(path)
 	}
 	return nil
 }
 
-// Create allocates a new session: a fresh UUIDv4 id and a
-// cookie-jar path under the manager's directory. The jar file
-// itself is not created — curl creates it on first response
-// with cookies. Returns the registered Session.
-func (m *Manager) Create() *Session {
+// Create allocates a new session: a fresh UUIDv4 id, a cookie-
+// jar path under the manager's directory, and a Redis metadata
+// write stamped with the manager's instanceID. Order matters:
+// the local registry is updated only after a successful Redis
+// write so a Redis failure leaves the manager unaware of the id
+// and a retry produces a fresh write rather than the appearance
+// of a registered-but-not-stored session.
+//
+// Returns the created Session or an error if Redis is
+// unreachable (the gRPC handler maps the error to
+// codes.Unavailable).
+func (m *Manager) Create(ctx context.Context) (*Session, error) {
 	id := m.uuidFn()
 	jarPath := filepath.Join(m.dir, fmt.Sprintf("spectre-curl-%s.cookies", id))
+	now := nowUTCISO()
+	metadata := redisx.SessionMetadata{
+		SessionID:         id,
+		Adapter:           redisx.AdapterName,
+		AdapterInstanceID: m.instanceID,
+		CreatedAt:         now,
+		LastActiveAt:      now,
+		Metadata: map[string]any{
+			"cookie_jar_path": jarPath,
+		},
+	}
+	if err := m.redis.SetSession(ctx, id, metadata); err != nil {
+		return nil, fmt.Errorf("redis SET session %s: %w", id, err)
+	}
 	session := &Session{
 		ID:            id,
 		CookieJarPath: jarPath,
@@ -143,11 +197,10 @@ func (m *Manager) Create() *Session {
 	m.mu.Lock()
 	m.sessions[id] = session
 	m.mu.Unlock()
-	return session
+	return session, nil
 }
 
-// Has returns true if the session_id is registered. Used by RPC
-// handlers to reject unknown ids before doing any work.
+// Has returns true if the session_id is registered locally.
 func (m *Manager) Has(id string) bool {
 	m.mu.Lock()
 	_, ok := m.sessions[id]
@@ -156,7 +209,7 @@ func (m *Manager) Has(id string) bool {
 }
 
 // Get returns the Session record for an id, or
-// ErrUnknownSession if the id was never registered.
+// ErrUnknownSession if the id was never registered locally.
 func (m *Manager) Get(id string) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -167,13 +220,54 @@ func (m *Manager) Get(id string) (*Session, error) {
 	return session, nil
 }
 
-// Close removes a session from the registry, clears its
-// ElementRegistry entry, and deletes its cookie-jar file. Returns
-// ErrUnknownSession if the id was not registered. The
-// ElementRegistry is forgotten before the cookie-jar is removed
-// so a late Lookup cannot resolve to a Selection from the
-// document of a session that is mid-teardown.
-func (m *Manager) Close(id string) error {
+// Validate looks up the session in Redis and compares the
+// stored adapter_instance_id against the manager's instanceID.
+// Refreshes last_active_at and the TTL on the OK path.
+//
+// The handler maps Validation.Kind as follows:
+//
+//   - ValidationOK              → proceed
+//   - ValidationUnknown         → CODE_INVALID_ARGUMENT (unknown session_id)
+//   - ValidationDifferentInstance → codes.Unavailable
+//
+// Redis errors (other than the missing-key case) propagate as
+// the second return value; the handler maps them to
+// codes.Unavailable so the conformance suite's restart-
+// invalidation test pattern works against transient Redis
+// failures the same way it works against actual instance
+// mismatch.
+func (m *Manager) Validate(ctx context.Context, id string) (Validation, error) {
+	metadata, err := m.redis.GetSession(ctx, id)
+	if err != nil {
+		return Validation{}, err
+	}
+	if metadata == nil {
+		return Validation{Kind: ValidationUnknown}, nil
+	}
+	if metadata.AdapterInstanceID != m.instanceID {
+		return Validation{
+			Kind:             ValidationDifferentInstance,
+			StoredInstanceID: metadata.AdapterInstanceID,
+		}, nil
+	}
+	metadata.LastActiveAt = nowUTCISO()
+	if err := m.redis.SetSession(ctx, id, *metadata); err != nil {
+		// Last-write-wins per phase prompt §4.5: a refresh
+		// failure still proceeds; the next RPC will retry.
+		// Log and continue rather than fail the validation.
+		log.Printf("redis refresh failed for session %s: %v", id, err)
+	}
+	return Validation{Kind: ValidationOK, Metadata: metadata}, nil
+}
+
+// Close removes a session from the local registry, clears its
+// ElementRegistry entry, deletes its cookie-jar file, and best-
+// effort deletes the Redis key. Returns ErrUnknownSession if the
+// id was not registered locally. Per phase prompt §4.6 the Redis
+// delete is best-effort: failures are logged and the local
+// teardown continues. The TTL is the safety net for the rare
+// delete failure.
+func (m *Manager) Close(ctx context.Context, id string) error {
 	m.mu.Lock()
 	session, ok := m.sessions[id]
 	if !ok {
@@ -183,19 +277,19 @@ func (m *Manager) Close(id string) error {
 	delete(m.sessions, id)
 	m.mu.Unlock()
 
-	// ForgetSession is concurrency-safe internally and does not
-	// share the manager's mutex.
 	m.registry.ForgetSession(id)
-
-	// Remove outside the lock so a slow filesystem does not
-	// block other RPCs. The session is already de-registered.
+	if err := m.redis.DeleteSession(ctx, id); err != nil {
+		log.Printf("redis delete failed for session %s: %v", id, err)
+	}
 	_ = os.Remove(session.CookieJarPath)
 	return nil
 }
 
 // CloseAll evicts every session, clears every ElementRegistry
 // entry, and removes every cookie-jar file. Idempotent; called
-// from the SIGTERM handler.
+// from the SIGTERM handler. Does not enumerate Redis keys for
+// deletion — restart invalidation handles abandoned keys via
+// TTL expiry (ADR-0023 §5).
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
 	ids := make([]string, 0, len(m.sessions))
@@ -216,13 +310,7 @@ func (m *Manager) CloseAll() {
 }
 
 // SetDocument caches the parsed HTML for a session and bumps the
-// generation counter so prior ElementRefs are invalidated. The
-// generation bump is part of SetDocument so callers cannot
-// accidentally cache a new document without invalidating refs
-// against the old one — ADR-0010 §1's strict-invalidation
-// contract is what motivates the coupling.
-//
-// Returns ErrUnknownSession when the id is not registered.
+// generation counter so prior ElementRefs are invalidated.
 func (m *Manager) SetDocument(id string, doc *goquery.Document) error {
 	m.mu.Lock()
 	session, ok := m.sessions[id]
@@ -237,11 +325,8 @@ func (m *Manager) SetDocument(id string, doc *goquery.Document) error {
 	return nil
 }
 
-// Document returns the cached *goquery.Document for a session, or
-// nil when the session has had no successful Navigate yet. Does
-// not return ErrUnknownSession — callers (Query, Extract) check
-// Has first; the dual return would just force an extra error
-// branch in already-validated code paths.
+// Document returns the cached *goquery.Document for a session,
+// or nil when the session has had no successful Navigate yet.
 func (m *Manager) Document(id string) *goquery.Document {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -254,13 +339,13 @@ func (m *Manager) Document(id string) *goquery.Document {
 
 // Allocate stores each node in the selection under a fresh UUID
 // at the session's current generation and returns the ids in
-// input order. Delegates to the ElementRegistry.
+// input order.
 func (m *Manager) Allocate(id string, sel *goquery.Selection) []string {
 	return m.registry.Allocate(id, sel)
 }
 
-// LookupElement resolves a UUID to an elements.Lookup whose Status
-// distinguishes ok / stale / unknown.
+// LookupElement resolves a UUID to an elements.Lookup whose
+// Status distinguishes ok / stale / unknown.
 func (m *Manager) LookupElement(id, refID string) elements.Lookup {
 	return m.registry.Lookup(id, refID)
 }
@@ -269,4 +354,11 @@ func (m *Manager) LookupElement(id, refID string) elements.Lookup {
 // counter; useful for tests and diagnostics.
 func (m *Manager) CurrentGeneration(id string) int {
 	return m.registry.CurrentGeneration(id)
+}
+
+// nowUTCISO mirrors the Playwright (TS) and SeleniumBase
+// (Python) timestamp formats so the JSON document round-trips
+// identically through any adapter.
+func nowUTCISO() string {
+	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 }

@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	caps "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/capabilities"
@@ -34,6 +36,36 @@ import (
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/sessions"
 	driverv1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1"
 )
+
+// R4.3 / ADR-0023 §5: every non-Initialize RPC validates the
+// session against Redis before doing any work.
+// ``ValidationDifferentInstance`` and Redis-unreachable surface
+// as transport-level gRPC ``codes.Unavailable``; the conformance
+// test in ``tools/conformance/tests/test_session_restart_invalidation.py``
+// asserts on ``grpc.StatusCode.UNAVAILABLE`` precisely against
+// this code path. ``ValidationUnknown`` continues to return the
+// in-band ``CODE_INVALID_ARGUMENT`` envelope so the behaviour on
+// a never-Initialized id is unchanged from PR12.
+const (
+	differentInstanceMessage = "session belongs to a different adapter instance; client must re-Initialize"
+	redisUnavailablePrefix   = "redis unreachable"
+)
+
+// gateSession validates ``id`` against Redis. Returns the
+// :class:`sessions.Validation` for the caller to inspect (it
+// will be ``OK`` or ``Unknown``) or a non-nil gRPC ``status``
+// error to propagate (``codes.Unavailable`` for
+// ``DifferentInstance`` or Redis errors).
+func (s *Server) gateSession(ctx context.Context, id string) (sessions.Validation, error) {
+	v, err := s.sessions.Validate(ctx, id)
+	if err != nil {
+		return sessions.Validation{}, status.Errorf(codes.Unavailable, "%s: %v", redisUnavailablePrefix, err)
+	}
+	if v.Kind == sessions.ValidationDifferentInstance {
+		return sessions.Validation{}, status.Error(codes.Unavailable, differentInstanceMessage)
+	}
+	return v, nil
+}
 
 // DefaultNavigateTimeout caps a Navigate RPC when the request
 // supplies no explicit `timeout`. Mirrors the SeleniumBase
@@ -77,12 +109,17 @@ func New(mgr *sessions.Manager, fetch Fetcher, variant string) *Server {
 }
 
 // Initialize allocates a fresh session and returns the declared
-// capabilities. The protocol_version field on the request is
-// ignored in PR11 — the engine and the adapter are pinned to the
-// same v1alpha1 path via codegen (ADR-0007). Strict version
-// checking is a v1alpha2 candidate.
-func (s *Server) Initialize(_ context.Context, _ *driverv1alpha1.InitializeRequest) (*driverv1alpha1.InitializeResponse, error) {
-	session := s.sessions.Create()
+// capabilities. ADR-0023 §6 makes Redis required: if the
+// metadata write fails the RPC fails at the transport layer with
+// ``codes.Unavailable`` so the caller sees the same gRPC status
+// it would see if the adapter could not start. The local
+// registry is only updated after a successful Redis write — see
+// ``sessions.Manager.Create``.
+func (s *Server) Initialize(ctx context.Context, _ *driverv1alpha1.InitializeRequest) (*driverv1alpha1.InitializeResponse, error) {
+	session, err := s.sessions.Create(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "%s; cannot persist session metadata: %v", redisUnavailablePrefix, err)
+	}
 	return &driverv1alpha1.InitializeResponse{
 		SessionId: session.ID,
 		Capabilities: &driverv1alpha1.Capabilities{
@@ -102,10 +139,21 @@ func (s *Server) Navigate(ctx context.Context, req *driverv1alpha1.NavigateReque
 		return navigateError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
 			"session_id is required"), nil
 	}
-	session, err := s.sessions.Get(req.GetSessionId())
-	if err != nil {
+	gate, gateErr := s.gateSession(ctx, req.GetSessionId())
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	if gate.Kind == sessions.ValidationUnknown {
 		return navigateError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
 			"unknown session_id "+quote(req.GetSessionId())+"; call Initialize first"), nil
+	}
+	session, err := s.sessions.Get(req.GetSessionId())
+	if err != nil {
+		// Redis says the session is for this instance but the
+		// local registry has lost it — treat as a foreign-
+		// instance case (the manager's local state has been torn
+		// down out from under Redis).
+		return nil, status.Error(codes.Unavailable, differentInstanceMessage)
 	}
 	if req.GetUrl() == "" {
 		return navigateError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
@@ -221,7 +269,7 @@ func (s *Server) Navigate(ctx context.Context, req *driverv1alpha1.NavigateReque
 //     forgets the registry entry before deleting the jar).
 //
 // ADR-0010 §1 / ADR-0017 §3 record the lifecycle contract.
-func (s *Server) Close(_ context.Context, req *driverv1alpha1.CloseRequest) (*driverv1alpha1.CloseResponse, error) {
+func (s *Server) Close(ctx context.Context, req *driverv1alpha1.CloseRequest) (*driverv1alpha1.CloseResponse, error) {
 	if req.GetSessionId() == "" {
 		return &driverv1alpha1.CloseResponse{
 			Error: &driverv1alpha1.DriverError{
@@ -230,7 +278,21 @@ func (s *Server) Close(_ context.Context, req *driverv1alpha1.CloseRequest) (*dr
 			},
 		}, nil
 	}
-	if err := s.sessions.Close(req.GetSessionId()); err != nil {
+	gate, gateErr := s.gateSession(ctx, req.GetSessionId())
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	if gate.Kind == sessions.ValidationUnknown {
+		return &driverv1alpha1.CloseResponse{
+			Error: &driverv1alpha1.DriverError{
+				Code:    driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
+				Message: "unknown session_id " + quote(req.GetSessionId()),
+			},
+		}, nil
+	}
+	// Best-effort delete inside Manager.Close — Redis blips during
+	// teardown are logged but do not fail the RPC (§4.6).
+	if err := s.sessions.Close(ctx, req.GetSessionId()); err != nil {
 		return &driverv1alpha1.CloseResponse{
 			Error: &driverv1alpha1.DriverError{
 				Code:    driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
@@ -249,12 +311,16 @@ func (s *Server) Close(_ context.Context, req *driverv1alpha1.CloseRequest) (*dr
 // cross-driver semantic-equivalence contract, not a feasibility
 // decision). Zero matches is success with an empty list, not
 // CODE_NOT_FOUND (ADR-0010 §4).
-func (s *Server) Query(_ context.Context, req *driverv1alpha1.QueryRequest) (*driverv1alpha1.QueryResponse, error) {
+func (s *Server) Query(ctx context.Context, req *driverv1alpha1.QueryRequest) (*driverv1alpha1.QueryResponse, error) {
 	if req.GetSessionId() == "" {
 		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
 			"session_id is required"), nil
 	}
-	if !s.sessions.Has(req.GetSessionId()) {
+	gate, gateErr := s.gateSession(ctx, req.GetSessionId())
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	if gate.Kind == sessions.ValidationUnknown {
 		return queryError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
 			"unknown session_id "+quote(req.GetSessionId())+"; call Initialize first"), nil
 	}
@@ -339,12 +405,16 @@ const (
 //     output as MODE_TEXT_CONTENT — because computing rendered
 //     visibility requires a layout engine. Documented
 //     approximation; see ADR-0017 §5.
-func (s *Server) Extract(_ context.Context, req *driverv1alpha1.ExtractRequest) (*driverv1alpha1.ExtractResponse, error) {
+func (s *Server) Extract(ctx context.Context, req *driverv1alpha1.ExtractRequest) (*driverv1alpha1.ExtractResponse, error) {
 	if req.GetSessionId() == "" {
 		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
 			"session_id is required"), nil
 	}
-	if !s.sessions.Has(req.GetSessionId()) {
+	gate, gateErr := s.gateSession(ctx, req.GetSessionId())
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	if gate.Kind == sessions.ValidationUnknown {
 		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
 			"unknown session_id "+quote(req.GetSessionId())+"; call Initialize first"), nil
 	}

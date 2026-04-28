@@ -10,14 +10,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/curlx"
+	redisx "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/redis"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/sessions"
 	driverv1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1"
 )
+
+const testInstanceID = "instance-server-tests"
 
 const queryFixtureHTML = `<!doctype html><html><body>
 <h1 id="title">Elements Page</h1>
@@ -32,17 +37,21 @@ const queryFixtureHTML = `<!doctype html><html><body>
 
 func newServerWithFetcher(t *testing.T, fetcher Fetcher) (*Server, *sessions.Manager) {
 	t.Helper()
-	mgr := newTestManager(t)
+	mgr := newTestManager(t, testInstanceID)
 	return New(mgr, fetcher, "curl_chrome116"), mgr
 }
 
-func newTestManager(t *testing.T) *sessions.Manager {
+// newTestManager builds a Manager backed by a real
+// ``miniredis`` server so SET / GET / DEL behave as in
+// production. The server is torn down via t.Cleanup. The
+// manager's cookie-jar dir defaults to /tmp; the fake Fetcher
+// never touches disk.
+func newTestManager(t *testing.T, instanceID string) *sessions.Manager {
 	t.Helper()
-	// Reuse the manager via its public constructor; the directory
-	// the manager uses is /tmp by default but the gRPC tests do
-	// not write any cookie-jar files (the fake Fetcher never
-	// touches disk). Cleanup after the test still calls CloseAll.
-	mgr := sessions.NewManager()
+	mr := miniredis.RunT(t)
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	mgr := sessions.NewManager(redisx.NewClient(rdb), instanceID)
 	t.Cleanup(mgr.CloseAll)
 	return mgr
 }
@@ -113,7 +122,10 @@ func TestNavigateRejectsUnknownSessionID(t *testing.T) {
 
 func TestNavigateRejectsInvalidURL(t *testing.T) {
 	srv, mgr := newServerWithFetcher(t, mustNotCall(t))
-	session := mgr.Create()
+	session, err := mgr.Create(context.Background())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	cases := []struct {
 		name string
 		url  string
@@ -160,7 +172,10 @@ func TestNavigateHappyPathPopulatesResponse(t *testing.T) {
 		}, nil
 	}
 	srv, mgr := newServerWithFetcher(t, fetcher)
-	session := mgr.Create()
+	session, err := mgr.Create(context.Background())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	resp, err := srv.Navigate(context.Background(), &driverv1alpha1.NavigateRequest{
 		SessionId: session.ID,
 		Url:       "https://example.com",
@@ -195,7 +210,10 @@ func TestNavigateAcceptsAllWaitConditions(t *testing.T) {
 		driverv1alpha1.WaitCondition_WAIT_CONDITION_NETWORK_IDLE,
 	}
 	srv, mgr := newServerWithFetcher(t, fakeOK("https://example.com/"))
-	session := mgr.Create()
+	session, err := mgr.Create(context.Background())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	for _, wait := range cases {
 		t.Run(wait.String(), func(t *testing.T) {
 			resp, err := srv.Navigate(context.Background(), &driverv1alpha1.NavigateRequest{
@@ -223,7 +241,10 @@ func TestNavigateMapsCurlError(t *testing.T) {
 		}
 	}
 	srv, mgr := newServerWithFetcher(t, fetcher)
-	session := mgr.Create()
+	session, err := mgr.Create(context.Background())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	resp, err := srv.Navigate(context.Background(), &driverv1alpha1.NavigateRequest{
 		SessionId: session.ID,
 		Url:       "https://nope.invalid",
@@ -249,8 +270,11 @@ func TestNavigateUsesRequestTimeoutWhenProvided(t *testing.T) {
 		return &curlx.Response{StatusCode: 200, FinalURL: "https://example.com/"}, nil
 	}
 	srv, mgr := newServerWithFetcher(t, fetcher)
-	session := mgr.Create()
-	_, err := srv.Navigate(context.Background(), &driverv1alpha1.NavigateRequest{
+	session, err := mgr.Create(context.Background())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, err = srv.Navigate(context.Background(), &driverv1alpha1.NavigateRequest{
 		SessionId: session.ID,
 		Url:       "https://example.com",
 		Timeout:   durationpb.New(2 * time.Second),
@@ -265,8 +289,11 @@ func TestNavigateUsesRequestTimeoutWhenProvided(t *testing.T) {
 
 func navigateThenInit(t *testing.T, srv *Server, mgr *sessions.Manager) string {
 	t.Helper()
-	session := mgr.Create()
-	_, err := srv.Navigate(context.Background(), &driverv1alpha1.NavigateRequest{
+	session, err := mgr.Create(context.Background())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, err = srv.Navigate(context.Background(), &driverv1alpha1.NavigateRequest{
 		SessionId: session.ID,
 		Url:       "https://example.com",
 	})
@@ -365,7 +392,10 @@ func TestQueryRejectsUnspecifiedKind(t *testing.T) {
 
 func TestQueryRejectsBeforeNavigate(t *testing.T) {
 	srv, mgr := newServerWithFetcher(t, mustNotCall(t))
-	session := mgr.Create()
+	session, err := mgr.Create(context.Background())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	resp, err := srv.Query(context.Background(), &driverv1alpha1.QueryRequest{
 		SessionId: session.ID,
 		Selector:  "h1",
@@ -688,9 +718,12 @@ func TestScreenshotReturnsUnimplemented(t *testing.T) {
 	// any plan that needs a screenshot capability against
 	// driver: curl-impersonate before launch.
 	srv, mgr := newServerWithFetcher(t, mustNotCall(t))
-	session := mgr.Create()
+	session, err := mgr.Create(context.Background())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
-	_, err := srv.Screenshot(context.Background(), &driverv1alpha1.ScreenshotRequest{SessionId: session.ID})
+	_, err = srv.Screenshot(context.Background(), &driverv1alpha1.ScreenshotRequest{SessionId: session.ID})
 	mustGRPCCode(t, err, codes.Unimplemented)
 }
 
@@ -714,7 +747,10 @@ func TestCloseRejectsMissingAndUnknownIDs(t *testing.T) {
 
 func TestCloseEvictsRegisteredSession(t *testing.T) {
 	srv, mgr := newServerWithFetcher(t, mustNotCall(t))
-	session := mgr.Create()
+	session, err := mgr.Create(context.Background())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	if !mgr.Has(session.ID) {
 		t.Fatal("precondition: manager must hold the session")
 	}
