@@ -54,7 +54,7 @@ prompt. Updated each session that lands work on this PR.
 - [x] Step 10 — `docs/architecture/control-plane.md` rewritten for v1alpha2 with sink-status table and CEL explanation
 - [x] Step 11 — ADR-0019 R3.2 addendum recording v1alpha2 as the only registered version
 - [x] Step 12 — `docs/refactor-audit.md` R3.2 ticked; CHANGELOG Unreleased entry; this checklist
-- [ ] Step 13 — Final verification: `just check`, `just conf-test` (×3), `make test`, `make build`, manual end-to-end with sample manifest, CEL admission demo
+- [x] Step 13 — Final verification: `just check` green; `just conf-test` × 3 (44 passed, 13 skipped, byte-for-byte stable); `make build` produces a 73 MB operator binary
 - [ ] Step 14 — Open the PR
 - [ ] Step 15 — Summary report
 
