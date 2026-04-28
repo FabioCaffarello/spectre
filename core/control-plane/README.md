@@ -32,9 +32,11 @@ github.com/FabioCaffarello/spectre/core/control-plane
 
 The standard kubebuilder v4 layout. Notable files:
 
-- [`api/v1alpha1/scrapejob_types.go`](api/v1alpha1/scrapejob_types.go)
+- [`api/v1alpha2/scrapejob_types.go`](api/v1alpha2/scrapejob_types.go)
   — `ScrapeJob` CRD Go types and `+kubebuilder:` markers. Edit here;
-  `make manifests` regenerates the YAML.
+  `make manifests` regenerates the YAML. v1alpha1 was deleted in
+  R3.2 (master strategy §3.3 — breaking change without conversion
+  webhook).
 - [`config/crd/bases/spectre.io_scrapejobs.yaml`](config/crd/bases/spectre.io_scrapejobs.yaml)
   — generated CRD manifest. Committed; do not hand-edit.
 - [`internal/controller/scrapejob_controller.go`](internal/controller/scrapejob_controller.go)
@@ -52,8 +54,12 @@ The standard kubebuilder v4 layout. Notable files:
   `--engine-endpoint` (default `127.0.0.1:9090`, override via
   `SPECTRE_ENGINE_ENDPOINT` env var); Compose / Helm deployments
   set the env var to the engine service's DNS name.
-- [`config/samples/`](config/samples/) — three sample CRs, one per
-  reference adapter.
+- [`config/samples/`](config/samples/) — five v1alpha2 sample CRs:
+  three driver variants (Playwright, SeleniumBase, curl-impersonate)
+  using the Service `EngineRef` form, one EngineRef.Endpoint
+  variant for ad-hoc local testing, and one schema-only Kafka
+  sample documenting R3.2's schema-ahead-of-functionality pattern
+  (the reconciler rejects it until R4.4 wires the producer).
 
 ## Build and test
 
@@ -128,10 +134,10 @@ walkthrough lives in
 
 ## API group
 
-The CRD lives at `spectre.io/v1alpha1`. The kubebuilder default
+The CRD lives at `spectre.io/v1alpha2`. The kubebuilder default
 would have produced `spectre.spectre.io` (group + domain
 concatenation); we override `+groupName=spectre.io` in
-[`api/v1alpha1/groupversion_info.go`](api/v1alpha1/groupversion_info.go)
+[`api/v1alpha2/groupversion_info.go`](api/v1alpha2/groupversion_info.go)
 so the canonical project domain is the API group. The `PROJECT`
 file's `domain: spectre.io` is preserved because it is also used to
 synthesise the LeaderElectionID.
