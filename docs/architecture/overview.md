@@ -106,24 +106,35 @@ integrate Spectre programmatically rather than through the CLI.
 
 ## Data flow: a single job
 
-1. User authors a job document and runs `spectre run job.yaml`.
-2. CLI loads the job and selects a driver (per `driver:` field or
-   per `driver_selector:` policy).
-3. CLI starts the chosen driver process (or connects to a pre-started
-   instance) and reads its `Capabilities` over the handshake RPC.
-4. Engine compiles the job: parser → type checker → planner. The
-   capability matcher runs here; missing capabilities fail with a
-   clear error referencing the job line and the capability name.
-5. Engine dispatches the plan to the driver as a sequence of RPCs
-   (`Initialize`, `Navigate`, `Query`, `Extract`, `Screenshot`,
-   `Close`).
-6. Driver replies with results. The engine writes outputs in the
-   format the job requested (JSONL, CSV, Parquet, etc.).
-7. CLI exits with status 0 on success, non-zero with a structured
-   error otherwise.
+1. A client (the control plane in production, `grpcurl` in
+   transitional local-dev workflows) sends a `RunJob` request to
+   the engine's gRPC service. The request carries the inline DSL
+   document; the engine parses it into a validated `Job`.
+2. The engine compiles the job: parser → type checker → planner.
+   The capability matcher runs here; missing capabilities fail
+   with a clear error referencing the job line and the capability
+   name.
+3. The engine resolves `driver: <name>` against an
+   `AdapterRegistry` populated from per-driver environment
+   variables (ADR-0021 §5) and dials the resulting TCP endpoint
+   over gRPC (ADR-0022). Adapters are long-running services with
+   a `grpc.health.v1.Health` readiness check (ADR-0021 §6) — the
+   engine no longer spawns them as subprocesses.
+4. The engine dispatches the plan to the driver as a sequence of
+   RPCs (`Initialize`, `Navigate`, `Query`, `Extract`,
+   `Screenshot`, `Close`).
+5. The driver replies with results. Each `Extract` response
+   becomes a `RunJobResponse.Row` event on the streaming response;
+   a terminal `Completed { rows_extracted }` follows on success or
+   `Failed { error_code, error_message }` on failure.
+6. The client consumes the stream — the control plane writes
+   each row to its configured sink (Kafka in R4.4, S3 / webhook
+   in R5); a `grpcurl`-driven local run prints the JSON-encoded
+   events to its own stdout.
 
-In a distributed run, steps 2–6 happen inside an engine worker
-scheduled by the control plane.
+In a distributed run, the control plane orchestrates the
+`RunJob` per `ScrapeJob` resource and persists the resulting
+rows.
 
 ## Boundaries and what is intentionally outside scope
 
