@@ -52,7 +52,7 @@ serde_yaml_ng = "0.10"
 # Error plumbing: thiserror for the public `EngineError` enum;
 # anyhow gives the spectre binary context-rich top-level errors
 # without forcing a public error type on the library API.
-thiserror = "1"
+thiserror = "2"
 anyhow = "1"
 
 # CLI argument parsing. clap with the derive feature is the de facto
