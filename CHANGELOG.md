@@ -28,17 +28,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ecosystem libraries (`google.golang.org/grpc/health` and
   `grpcio-health-checking`) directly. Buf lint exempts the
   vendored file so it stays byte-identical to the upstream source.
-- `KNOWN_BREAKAGE.md` at the repo root documents the deliberate
-  engine ↔ adapter transport mismatch between R2.2 and R2.3
-  merges. R2.3's first commit deletes the file.
+- `KNOWN_BREAKAGE.md` documented the R2.2 → R2.3 engine ↔ adapter
+  transport mismatch. R2.3's first commit deleted the file as the
+  engine-side TCP dial landed.
+- Internal `spectre.engine.v1alpha1.Engine` service contract
+  (R2.3) at `proto/spectre/engine/v1alpha1/engine.proto`. A
+  single streaming RPC, `RunJob`, takes an inline DSL document
+  and streams `Row` events followed by a terminal `Completed` or
+  `Failed`. Cancellation is gRPC stream cancellation; status,
+  metrics, and listing are control-plane responsibilities.
+  Bindings are generated for Rust (via `core/engine/build.rs`)
+  and Go (via `proto/buf.gen.engine.yaml`); Python and TS are
+  intentionally not generated.
+- Engine becomes a stateless gRPC service (R2.3, ADR-0020 §3).
+  The binary at `core/engine/src/bin/spectre.rs` registers
+  `spectre.engine.v1alpha1.Engine` and `grpc.health.v1.Health`
+  on a single TCP listener (default `0.0.0.0:9090`, override
+  via `SPECTRE_ENGINE_PORT`) and shuts down cleanly on
+  SIGTERM/SIGINT. Adapter discovery flows through
+  `AdapterRegistry`, which reads
+  `SPECTRE_PLAYWRIGHT_ENDPOINT` /
+  `SPECTRE_SELENIUMBASE_ENDPOINT` /
+  `SPECTRE_CURL_IMPERSONATE_ENDPOINT` (defaults
+  `127.0.0.1:909{1,2,3}`).
+- Engine architecture document at
+  `docs/architecture/engine.md` describing the service contract,
+  discovery model, health-check registration, CLI-retirement
+  rationale, and v1alpha1 statelessness invariant.
 
 ### Changed
 
 - ADR-0008 (UDS transport), ADR-0009 (session lifecycle),
   ADR-0019 (subprocess-in-pod) carry "Update (R1.1, ADR-0020)"
   notes recording per-section supersession. ADR-0013 (CLI as
-  engine binary) is superseded in full. The ADR index reflects
-  these changes.
+  engine binary) is superseded in full. ADR-0012 (engine DSL +
+  execution pipeline) carries an "Update (R2.3, ADR-0020)" note
+  recording the launcher-contract supersession; §§1-3, 5, 6 are
+  preserved unchanged. The ADR index reflects these changes.
 - Adapter transport for all three reference adapters (Playwright,
   SeleniumBase, curl-impersonate) and the conformance harness
   switched from Unix-domain-socket gRPC to TCP gRPC (R2.2,
@@ -58,6 +84,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matching the canonical port from ADR-0021 §4) instead of a
   socket path. The recipes survive R2.2 as developer
   conveniences and are scheduled for retirement in R6.2.
+- Engine `Client::dial` (R2.3) accepts `host:port` or
+  `grpc://host:port` endpoints and connects via
+  `tonic::transport::Endpoint`'s TCP path. The
+  `tower::service_fn` UDS connector and the
+  `:authority=localhost` Node-http2 workaround are gone.
+- Engine binary (R2.3) is service-only. The `run`, `validate`,
+  and standalone `version` subcommands the CLI exposed via clap
+  are gone with ADR-0013's CLI surface (ADR-0020 §3). The binary
+  has no flags beyond `--help`/`--version` and its single
+  responsibility is starting the gRPC service.
+- `justfile` and `.github/workflows/ci.yml` (R2.3) drop the
+  `spectre version` / `spectre validate` smoke steps. The
+  release-binary smoke becomes "the binary built / exists at the
+  canonical path"; deeper start-and-probe smokes are deferred to
+  the Compose stack (R6.2). The `operator-smoke-kind` CI job is
+  gated `if: false` until R3.1 lands `EngineClientRunner`.
+- Example READMEs (R2.3) document the manual `grpcurl` flow
+  honestly. The `seleniumbase-navigate` and
+  `curl-impersonate-fetch` directories are deleted; they
+  existed to demonstrate the legacy CLI's "minimum viable
+  adapter run" and the `*-extract` examples cover the same
+  adapters with richer functionality.
 - `curl-imp-lint` pinned to `GOTOOLCHAIN=go1.25.3` mirroring the
   existing `cp-lint` pattern; without the pin `golangci-lint
   v2.8.0` (built with go1.25.5) panics on the Go 1.26 stdlib
@@ -77,3 +125,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale-socket unlink logic, the `ready unix:<path>` stdout
   readiness banner, and the `transports:` block in every
   `driver.yaml`.
+- `core/engine/src/launcher.rs` (R2.3) — 628 lines of subprocess
+  management. The engine no longer spawns adapters; it dials
+  them as long-running services via `AdapterRegistry`.
+  `LauncherError` and `EngineError::Launcher` go with it.
+- `core/engine/tests/integration.rs` (R2.3) — required
+  `PLAYWRIGHT_AVAILABLE=1` and Chromium and exercised the same
+  engine → adapter loop the conformance suite already covers
+  across all three adapters.
+- `Engine::new(adapters_path)`, `Engine::run_job(yaml, job_dir)`,
+  `Engine::run_plan(plan, job_dir)`, `Engine::validate_only`
+  (R2.3). The legacy CLI-shaped API gives way to
+  `Engine::from_env` / `Engine::with_registry` and a single
+  `Engine::run_plan_with_sink(plan, sink)` entry point that the
+  gRPC server's `RunJob` handler drives.
+- Engine Cargo.toml deps no longer used (R2.3): `nix` (SIGTERM
+  helper), `regex` (readiness-line matching), `tower` (UDS
+  connector via `service_fn`), `hyper-util` (production —
+  `TokioIo` UDS wrapper), `clap` (CLI subcommand parser),
+  dev-only `hyper` and `http-body-util` (integration-test
+  fixture HTTP server). `tokio`'s `process` feature is dropped.
+  `tonic-health` is added in their place.
+- `examples/seleniumbase-navigate/` and
+  `examples/curl-impersonate-fetch/` (R2.3) — navigate-only CLI
+  demos; the `*-extract` siblings cover the same adapters.
