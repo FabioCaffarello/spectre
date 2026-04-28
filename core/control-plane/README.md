@@ -1,23 +1,26 @@
 # spectre-control-plane
 
 The Spectre control plane: a Kubernetes-native operator that submits
-DSL extraction jobs to the engine, tracks their lifecycle, and (in
-PR16+) orchestrates fan-out and scheduling.
+DSL extraction jobs to the engine over gRPC, tracks their lifecycle,
+and (in Phase 3 follow-ups) orchestrates fan-out and scheduling.
 
-> **Status:** Phase 3 in progress. PR14 shipped the scaffolding,
-> the `ScrapeJob` CRD, and the state-machine reconciler against a
-> stub. PR15 wired `SubprocessRunner` so jobs actually run against
-> the spectre engine binary the operator image bundles. PR16
-> bundled the Playwright adapter and closed the end-to-end loop
-> with an in-cluster smoke against `hello-hackernews`. PR17
-> bundled the SeleniumBase adapter alongside Playwright. PR18
-> bundled the curl-impersonate adapter and closed v1alpha1
-> adapter bundling; the kind smoke now exercises all three
-> adapters sequentially. See
+> **Status:** Phase 3 in progress, microservices refactor in
+> flight. PR14–PR18 shipped the scaffolding, the `ScrapeJob` CRD,
+> the state-machine reconciler, and the bundled-image execution
+> model with all three reference adapters running in one Pod.
+> R1.1–R2.3 turned the engine into a stateless gRPC service and
+> the adapters into long-running services. R3.1 retires the
+> bundled `SubprocessRunner` in favour of `EngineClientRunner`,
+> a thin gRPC client that streams `RunJob` events from the engine
+> service back into the reconciler. Subsequent phases (R4–R7)
+> add stateful services, output sinks beyond stdout, per-service
+> Dockerfiles, the Compose stack, and the Helm chart. See
 > [`docs/architecture/control-plane.md`](../../docs/architecture/control-plane.md)
-> for the user-facing guide and
+> for the user-facing guide,
 > [ADR-0019](../../docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md)
-> for the design decisions.
+> for the original Phase 3 decisions, and
+> [ADR-0020](../../docs/adr/0020-microservices-architecture-supersession.md)
+> for the refactor's architectural commitment.
 
 ## Module path
 
@@ -39,15 +42,16 @@ The standard kubebuilder v4 layout. Notable files:
   Failed.
 - [`internal/runner/runner.go`](internal/runner/runner.go) — the
   `JobRunner` interface and PR14's `StubRunner`. ADR-0019 §5.
-- [`internal/runner/subprocess.go`](internal/runner/subprocess.go)
-  — PR15's `SubprocessRunner`: shells out to the spectre engine
-  binary, streams JSONL through `bufio.Scanner`, reports row counts.
+- [`internal/runner/engine_client.go`](internal/runner/engine_client.go)
+  — R3.1's `EngineClientRunner`: dials the engine's
+  `spectre.engine.v1alpha1.Engine.RunJob` streaming RPC, copies
+  every Row event's `json_line` to the writer, and returns the
+  Completed event's row count. ADR-0020 §5.
 - [`cmd/main.go`](cmd/main.go) — manager bootstrap; wires
-  `SubprocessRunner` into the reconciler. Exposes `--engine-binary`
-  (default `/usr/local/bin/spectre`) and `--adapters-path` (default
-  `/opt/spectre/adapters`, the path the operator image installs the
-  bundled adapters to; overridden by `just op-run` to point at the
-  workspace `adapters/` directory).
+  `EngineClientRunner` into the reconciler. Exposes
+  `--engine-endpoint` (default `127.0.0.1:9090`, override via
+  `SPECTRE_ENGINE_ENDPOINT` env var); Compose / Helm deployments
+  set the env var to the engine service's DNS name.
 - [`config/samples/`](config/samples/) — three sample CRs, one per
   reference adapter.
 

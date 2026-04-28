@@ -15,10 +15,13 @@ limitations under the License.
 */
 
 // Package runner is the integration boundary between the ScrapeJob
-// reconciler and the engine. The reconciler depends on JobRunner; PR15
-// drops in a SubprocessRunner that shells out to the spectre engine
-// binary. PR14 ships StubRunner, which sleeps for a configurable
-// duration and returns no rows. See ADR-0019 §5 for the seam rationale.
+// reconciler and the engine. The reconciler depends on JobRunner;
+// R3.1 wires EngineClientRunner, which dials the engine's gRPC
+// service and streams Row events back. PR14 ships StubRunner, which
+// sleeps for a configurable duration and returns no rows; the
+// envtest reconciler suite continues to use it. See ADR-0019 §5 for
+// the seam rationale and ADR-0020 §5 for the refactor that retired
+// SubprocessRunner (PR15) in favour of the gRPC client.
 package runner
 
 import (

@@ -41,19 +41,11 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
-// defaultEnginePath is the path the operator image installs the
-// spectre engine binary at (see core/control-plane/Dockerfile's
-// multi-stage build copy). Local development overrides via the
-// --engine-binary flag below.
-const defaultEnginePath = "/usr/local/bin/spectre"
-
-// defaultAdaptersPath is the path the operator image installs the
-// bundled reference adapters at. PR16 ships the Playwright adapter
-// here; PR17 / PR18 will land SeleniumBase and curl-impersonate
-// alongside it. Local development with `make run` / `just op-run`
-// overrides via the --adapters-path flag to point at the workspace
-// adapters/ directory.
-const defaultAdaptersPath = "/opt/spectre/adapters"
+// defaultEngineEndpoint is the host:port the operator dials when
+// neither --engine-endpoint nor SPECTRE_ENGINE_ENDPOINT is set. It
+// matches the canonical engine port from ADR-0021 §4 so `make run`
+// against a locally-running engine binary works out of the box.
+const defaultEngineEndpoint = "127.0.0.1:9090"
 
 var (
 	scheme   = runtime.NewScheme()
@@ -76,8 +68,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var enginePath string
-	var adaptersPath string
+	var engineEndpoint string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -96,14 +87,15 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	flag.StringVar(&enginePath, "engine-binary", defaultEnginePath,
-		"Absolute path to the spectre engine binary the SubprocessRunner shells out to. "+
-			"Defaults to the path the operator image installs to.")
-	flag.StringVar(&adaptersPath, "adapters-path", defaultAdaptersPath,
-		"Filesystem path to the engine's adapters directory. Defaults to the path "+
-			"the operator image installs adapters to (PR16 bundles Playwright there). "+
-			"Local development with `make run` / `just op-run` overrides this to the "+
-			"workspace adapters/ directory.")
+	endpointDefault := os.Getenv("SPECTRE_ENGINE_ENDPOINT")
+	if endpointDefault == "" {
+		endpointDefault = defaultEngineEndpoint
+	}
+	flag.StringVar(&engineEndpoint, "engine-endpoint", endpointDefault,
+		"host:port of the spectre.engine.v1alpha1.Engine service the operator dials. "+
+			"Override via SPECTRE_ENGINE_ENDPOINT env var or this flag. Defaults to "+
+			"127.0.0.1:9090 (matches `just engine-run`'s local listener). Compose "+
+			"deployments set this to engine:9090; Helm renders it from values.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -203,13 +195,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// SubprocessRunner shells out to the spectre engine binary the
-	// operator image bundles, captures JSONL on stdout, and reports
-	// the row count back to the reconciler. See ADR-0019 §5 for the
-	// JobRunner seam.
-	jobRunner := &runner.SubprocessRunner{
-		EnginePath:   enginePath,
-		AdaptersPath: adaptersPath,
+	// EngineClientRunner dials the spectre.engine.v1alpha1.Engine
+	// gRPC service and streams Row events back to the reconciler.
+	// See ADR-0019 §5 for the JobRunner seam (preserved through
+	// three implementations) and ADR-0020 §5 for the refactor that
+	// replaced the bundled-engine SubprocessRunner with a service
+	// client.
+	jobRunner := &runner.EngineClientRunner{
+		EngineEndpoint: engineEndpoint,
 	}
 
 	if err := (&controller.ScrapeJobReconciler{

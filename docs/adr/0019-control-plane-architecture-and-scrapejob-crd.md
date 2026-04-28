@@ -366,6 +366,27 @@ implementation that PR15 will introduce).
 > `StubRunner`. The single in-tree edit to `internal/controller/`
 > was a one-line writer swap (`io.Discard` → `os.Stdout`) so JSONL
 > rows surface in `kubectl logs`. The §5 invariant held.
+>
+> **Status update (R3.1, vindication).** The `JobRunner` interface
+> remained stable through three implementations:
+>
+> - `StubRunner` (PR14) — sleep-based placeholder for the
+>   reconciler kickoff.
+> - `SubprocessRunner` (PR15) — shells out to the engine binary;
+>   retired in R3.1.
+> - `EngineClientRunner` (R3.1) — gRPC client of the
+>   `spectre.engine.v1alpha1.Engine.RunJob` streaming RPC.
+>
+> No interface changes were required across the two substitutions.
+> §5's "PR15 is mechanical" claim is vindicated at the second
+> swap: a refactor that touches a single new runner file, deletes
+> the old runner, and updates one constructor call in `cmd/main.go`
+> was sufficient. The reconciler, the `JobRunner` interface, and
+> the envtest suite are byte-for-byte unchanged from PR14. The
+> interface is durable for v1alpha1.
+>
+> §3 (subprocess execution model) was already marked superseded by
+> ADR-0020 (R1.1).
 
 ```go
 type JobRunner interface {

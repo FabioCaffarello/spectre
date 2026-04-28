@@ -1,8 +1,10 @@
 # Sample ScrapeJob targeting the Playwright adapter. The inline DSL
-# mirrors examples/hello-hackernews/job.yaml. PR14's reconciler
-# transitions Pending → Running → Completed via StubRunner; PR15+ will
-# wire SubprocessRunner so this job actually fetches the Hacker News
-# front page.
+# mirrors examples/hello-hackernews/job.yaml. The reconciler
+# transitions Pending → Running → Completed via the JobRunner wired
+# in main.go — EngineClientRunner (R3.1) in production deployments,
+# StubRunner in the envtest suite. The Playwright adapter and engine
+# services are dialled by hostname; with the Compose stack (R6.2) up,
+# this job fetches the Hacker News front page end-to-end.
 apiVersion: spectre.io/v1alpha1
 kind: ScrapeJob
 metadata:

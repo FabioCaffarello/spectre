@@ -184,19 +184,18 @@ cp-build:
 op-test: cp-test
 op-build: cp-build
 
-# Run the operator from your host against the current kubectl context.
-#
-# Broken in R2.3 pending R3.1. The operator's SubprocessRunner shells
-# out to `spectre run`, which the engine binary no longer accepts —
-# the binary is a gRPC service after R2.3. R3.1 replaces
-# SubprocessRunner with EngineClientRunner (a gRPC client of the
-# engine service). The recipe is left in place so the diff between
-# R2.3 and R3.1 stays small; expect runtime failure until R3.1 lands.
-op-run: spectre-build pw-build
+# Run the operator from your host against the current kubectl
+# context. R3.1's EngineClientRunner dials the engine over gRPC, so
+# the local-dev flow needs the engine listening on a TCP port; the
+# recipe does not spawn it. Bring up the engine and the adapters in
+# separate terminals (`just engine-run`, `just pw-run 9091`, …)
+# before invoking this recipe. The endpoint defaults to
+# 127.0.0.1:9090 to match `just engine-run`'s default listener;
+# override via `SPECTRE_ENGINE_ENDPOINT=...` in the environment.
+op-run:
     cd core/control-plane && \
         GOTOOLCHAIN=go1.25.3 go run ./cmd/main.go \
-            --engine-binary="$PWD/../engine/target/release/spectre" \
-            --adapters-path="$PWD/../../adapters"
+            --engine-endpoint="${SPECTRE_ENGINE_ENDPOINT:-127.0.0.1:9090}"
 
 op-install-crds:
     cd core/control-plane && make install
@@ -218,76 +217,32 @@ op-uninstall-crds:
 # builder stage regenerates its language's proto bindings from
 # proto/. Single-arch (linux/amd64) to match the engine image and the
 # Microsoft base; multi-arch is release-engineering work.
-op-build-image: engine-image
-    #!/usr/bin/env bash
-    set -euo pipefail
-    read -r CURL_IMPERSONATE_VERSION CURL_IMPERSONATE_SHA256 < <(grep -v '^#' adapters/curl-impersonate/.curl-impersonate-version | head -n 1)
+# Build the operator image. R3.1 retired the bundled-image
+# execution model: the image carries only the kubebuilder manager
+# binary on top of a distroless static base. The engine and
+# adapters now run as separate services (per ADR-0020 §5);
+# per-service Dockerfiles for them are R6.1 work, the Compose stack
+# is R6.2, and the Helm chart is R7.1. Build context is the
+# repository root because the operator's go.mod has a local
+# `replace` for the proto Go bindings.
+op-build-image:
     docker buildx build \
         --platform=linux/amd64 \
-        --build-arg ENGINE_IMAGE=spectre-engine:dev \
-        --build-arg PLAYWRIGHT_BASE_IMAGE="$(cat adapters/playwright/.playwright-base-image)" \
-        --build-arg CURL_IMPERSONATE_VERSION="${CURL_IMPERSONATE_VERSION}" \
-        --build-arg CURL_IMPERSONATE_SHA256="${CURL_IMPERSONATE_SHA256}" \
         -t spectre-control-plane:dev \
         -f core/control-plane/Dockerfile \
         --load \
         .
 
-# Smoke-test the operator image by invoking the bundled spectre
-# binary AND verifying the bundled Playwright + SeleniumBase +
-# curl-impersonate adapter assets are in place. Mirrors the CI
-# operator-image job; failures here surface bad COPY paths, missing
-# build-args, Chrome / ChromeDriver version skew, or a missing
-# curl-impersonate variant on PATH before kind smoke.
-#
-# R2.3: the `spectre version` invocation was retired with the CLI
-# surface (ADR-0020 §3); the binary smoke is reduced to "the binary
-# exists at the canonical path" until R3.1 reshapes the operator
-# image around `EngineClientRunner`.
+# Smoke-test the operator image. The image is now a distroless Go
+# binary — no /usr/local/bin/spectre, no /opt/spectre/adapters/*. The
+# only meaningful smoke at this layer is "the manager binary exists
+# at /manager and runs". Deeper end-to-end smoke requires the engine
+# and adapter services to be running alongside; that comes back with
+# the Compose stack (R6.2) and the production smoke (R7.2).
 op-image-smoke: op-build-image
     docker run --rm --platform=linux/amd64 \
-        --entrypoint=test \
-        spectre-control-plane:dev -x /usr/local/bin/spectre
-    docker run --rm --platform=linux/amd64 \
-        --entrypoint=/bin/sh \
-        spectre-control-plane:dev -c \
-        'test -f /opt/spectre/adapters/playwright/dist/index.js && \
-         test -d /opt/spectre/adapters/playwright/node_modules/playwright && \
-         test -f /opt/spectre/adapters/playwright/driver.yaml && \
-         echo "playwright adapter assets OK"'
-    docker run --rm --platform=linux/amd64 \
-        --entrypoint=/bin/sh \
-        spectre-control-plane:dev -c '\
-        set -e; \
-        test -f /opt/spectre/adapters/seleniumbase/driver.yaml; \
-        test -x /opt/spectre/adapters/seleniumbase/.venv/bin/python; \
-        /opt/spectre/adapters/seleniumbase/.venv/bin/python -c "import spectre_seleniumbase"; \
-        /opt/spectre/adapters/seleniumbase/.venv/bin/python -c "from spectre.driver.v1alpha1 import driver_pb2"; \
-        google-chrome --version; \
-        chromedriver --version; \
-        echo "seleniumbase adapter assets OK"'
-    docker run --rm --platform=linux/amd64 \
-        --entrypoint=/bin/sh \
-        spectre-control-plane:dev -c '\
-        set -e; \
-        test -x /opt/spectre/adapters/curl-impersonate/bin/adapter; \
-        test -f /opt/spectre/adapters/curl-impersonate/driver.yaml; \
-        command -v curl_chrome116; \
-        curl_chrome116 --version | head -n 1; \
-        echo "curl-impersonate adapter assets OK"'
-
-# In-cluster end-to-end smoke test for the bundled operator image.
-# Brings up a kind cluster, loads the operator and engine images,
-# applies the CRD plus all three reference samples, polls each
-# until its phase is terminal, and asserts rowsExtracted >= 1 per
-# sample. PR18 extended the script to cover all three bundled
-# adapters (hello-hackernews → seleniumbase-extract →
-# curl-impersonate-extract); the CI operator-smoke-kind job
-# exercises the same flow.
-#
-# Tear down with `kind delete cluster --name spectre-pr18` when done.
-op-smoke-kind CLUSTER='spectre-pr18': op-build-image
-    bash core/control-plane/hack/smoke-kind.sh {{CLUSTER}}
+        --entrypoint=/manager \
+        spectre-control-plane:dev --help
 
 # ---------------------------------------------------------------------------
 # Go curl-impersonate adapter (adapters/curl-impersonate)

@@ -41,7 +41,9 @@ const defaultJobTimeout = 10 * time.Minute
 // Pending → Running → Completed | Failed, with terminal phases
 // short-circuiting subsequent reconciliations. The actual job
 // execution is delegated to a JobRunner injected by main.go (ADR-0019
-// §5). PR14 wires StubRunner; PR15 will swap in SubprocessRunner.
+// §5). The envtest suite wires StubRunner; the production manager
+// wires EngineClientRunner (R3.1, ADR-0020 §5), which streams events
+// from the engine's gRPC service.
 type ScrapeJobReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -97,7 +99,8 @@ func (r *ScrapeJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// JSONL rows flow to the operator's stdout so they surface in
 		// `kubectl logs <operator-pod>` per ADR-0019 §6. StubRunner
-		// ignores the writer; SubprocessRunner forwards every row to it.
+		// ignores the writer; EngineClientRunner forwards every Row
+		// event's json_line to it.
 		rows, runErr := r.Runner.Run(runCtx, job.Spec.JobDSL, os.Stdout)
 
 		now := metav1.Now()
