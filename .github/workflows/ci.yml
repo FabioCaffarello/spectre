@@ -318,7 +318,7 @@ jobs:
         run: uv sync --all-extras --dev
       - if: matrix.package == 'tools/conformance'
         name: Install Google Chrome
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@v2
         with:
           chrome-version: stable
       - if: matrix.package == 'tools/conformance'
