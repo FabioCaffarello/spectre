@@ -60,8 +60,8 @@ architecture (Postgres + Redis + Kafka) is operational.
 - [x] Step 12 — `docs/architecture/kafka.md`: producer lifecycle, configuration table, topic / partitioning / headers contract, delivery semantics, admission-gating UX, Postgres + Kafka coexistence, local-dev stack with justfile recipes, production-deployment cross-reference to R7.1 / Strimzi
 - [x] Step 13 — This entry; CHANGELOG `Unreleased` Kafka block; refactor-audit R4.4 row + Phase R4 CLOSED note; README quick-start mention of Kafka
 - [x] Step 14 — Final verification: engine clippy + cargo fmt --check + 52 unit tests green; control-plane `make test` green (envtest 85.6 %, runner 81.6 %); conformance ruff + mypy + 3× pytest runs at 47 passed / 14 skipped (skips are curl-impersonate when `curl_chrome116` is not on PATH locally — CI runs all three). 13 / 12 / 6 capability invariant holds byte-for-byte (no driver.yaml or capability touches in this PR). Engine kafka integration tests green against the local Compose broker (2 tests round-trip payload + headers and verify partition-key colocation). Manual transcript: `docker compose ps` shows postgres / redis / kafka / kafka-console all healthy; `just kafka-topics` lists the conformance topics; `kafka-console-consumer.sh --property print.headers=true` shows three messages per kafka job with `job_id=<UUID>`, `row_index=0/1/2`, `driver=playwright`, `timestamp=ISO-8601` headers and `{"text":"first|second|third"}` bodies; Postgres `jobs` table shows kafka jobs at `status=completed, rows_extracted=3` and `job_rows` count = 0 for kafka jobs (ADR-0023 §2 contract verified)
-- [ ] Step 15 — Open the PR
-- [ ] Step 16 — Summary report
+- [x] Step 15 — Open the PR (#63)
+- [x] Step 16 — Summary report
 
 ## Surfaced decisions
 
