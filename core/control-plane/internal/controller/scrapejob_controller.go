@@ -96,11 +96,11 @@ func (r *ScrapeJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	case spectrev1alpha2.ScrapeJobPhasePending:
 		if err := validateOutputSink(job.Spec.OutputSink); err != nil {
-			return r.transitionToFailed(ctx, &job, err.Error())
+			return ctrl.Result{}, r.transitionToFailed(ctx, &job, err.Error())
 		}
 		endpoint, err := resolveEngineEndpoint(job.Spec.EngineRef, job.Namespace, r.DefaultEngineEndpoint)
 		if err != nil {
-			return r.transitionToFailed(ctx, &job, err.Error())
+			return ctrl.Result{}, r.transitionToFailed(ctx, &job, err.Error())
 		}
 
 		now := metav1.Now()
@@ -144,17 +144,18 @@ func (r *ScrapeJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // transitionToFailed records a Failed terminal phase with the given
 // error message and a CompletedAt timestamp. Used at Pending →
 // Failed for spec-level rejections (unsupported sink, malformed
-// EngineRef).
+// EngineRef). Returns the apiserver Update error; callers wrap with
+// `ctrl.Result{}` so the reconciler does not requeue.
 func (r *ScrapeJobReconciler) transitionToFailed(
 	ctx context.Context,
 	job *spectrev1alpha2.ScrapeJob,
 	message string,
-) (ctrl.Result, error) {
+) error {
 	job.Status.Phase = spectrev1alpha2.ScrapeJobPhaseFailed
 	job.Status.Error = message
 	now := metav1.Now()
 	job.Status.CompletedAt = &now
-	return ctrl.Result{}, r.Status().Update(ctx, job)
+	return r.Status().Update(ctx, job)
 }
 
 // jobTimeout resolves Spec.TimeoutSeconds into a duration, falling
