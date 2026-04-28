@@ -184,19 +184,18 @@ cp-build:
 op-test: cp-test
 op-build: cp-build
 
-# Run the operator from your host against the current kubectl context.
-#
-# Broken in R2.3 pending R3.1. The operator's SubprocessRunner shells
-# out to `spectre run`, which the engine binary no longer accepts —
-# the binary is a gRPC service after R2.3. R3.1 replaces
-# SubprocessRunner with EngineClientRunner (a gRPC client of the
-# engine service). The recipe is left in place so the diff between
-# R2.3 and R3.1 stays small; expect runtime failure until R3.1 lands.
-op-run: spectre-build pw-build
+# Run the operator from your host against the current kubectl
+# context. R3.1's EngineClientRunner dials the engine over gRPC, so
+# the local-dev flow needs the engine listening on a TCP port; the
+# recipe does not spawn it. Bring up the engine and the adapters in
+# separate terminals (`just engine-run`, `just pw-run 9091`, …)
+# before invoking this recipe. The endpoint defaults to
+# 127.0.0.1:9090 to match `just engine-run`'s default listener;
+# override via `SPECTRE_ENGINE_ENDPOINT=...` in the environment.
+op-run:
     cd core/control-plane && \
         GOTOOLCHAIN=go1.25.3 go run ./cmd/main.go \
-            --engine-binary="$PWD/../engine/target/release/spectre" \
-            --adapters-path="$PWD/../../adapters"
+            --engine-endpoint="${SPECTRE_ENGINE_ENDPOINT:-127.0.0.1:9090}"
 
 op-install-crds:
     cd core/control-plane && make install

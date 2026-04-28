@@ -141,8 +141,10 @@ spec:
             memory: 512Mi
         volumeMounts:
           # Chromium writes its user-data-dir, downloads, and other
-          # scratch state under /tmp. The manager itself also writes
-          # the temp DSL job file the SubprocessRunner materialises.
+          # scratch state under /tmp. R3.1 retired the
+          # SubprocessRunner so the manager no longer materialises
+          # the DSL to a tempfile, but the /tmp mount stays for the
+          # browser side of the engine container's renderer chain.
           - name: tmp
             mountPath: /tmp
           # Chromium's renderer process uses /dev/shm for shared memory

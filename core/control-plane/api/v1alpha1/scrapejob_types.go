@@ -34,8 +34,8 @@ const (
 	ScrapeJobPhasePending ScrapeJobPhase = "Pending"
 
 	// ScrapeJobPhaseRunning indicates the DSL has been validated and
-	// the JobRunner has been invoked. PR14's StubRunner sleeps in
-	// this phase; PR15's SubprocessRunner shells out to the engine.
+	// the JobRunner has been invoked. R3.1's EngineClientRunner
+	// streams Row events through the engine's gRPC service.
 	ScrapeJobPhaseRunning ScrapeJobPhase = "Running"
 
 	// ScrapeJobPhaseCompleted is a terminal phase. RowsExtracted and
