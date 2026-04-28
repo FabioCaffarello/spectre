@@ -170,7 +170,7 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           # Pinned to a version built with the same Go toolchain as our
           # modules target (go 1.24+). v1.62 was built with go 1.23 and
