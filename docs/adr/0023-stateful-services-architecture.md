@@ -8,63 +8,50 @@ deciders: [Fabio Caffarello]
 
 ## §1 — Context and Problem Statement
 
-Six PRs into the refactor, the architecture Spectre commits to in
-ADR-0020 is operationally complete at the service-mesh layer.
+Six PRs into the refactor, the architecture Spectre commits to
+in ADR-0020 is operationally complete at the service-mesh layer.
 ADR-0021 / ADR-0022 retired the subprocess-in-pod transport in
 favour of TCP gRPC with env-var discovery (R2.1–R2.3); ADR-0019
 + ADR-0020 §5 reshaped the control plane into a thin gRPC client
 of the engine (R3.1); ADR-0019's R3.2 addendum evolved the
 ScrapeJob CRD to v1alpha2 with EngineRef and a four-variant
-OutputSink discriminated union (R3.2). Every component that
-needs to talk to every other component now does so over the
-network. What remains is what the network has, so far, been
-asked to carry: nothing durable. Job state lives in the engine's
-Tokio task and on the operator's `Status` subresource — both
-volatile across Pod restart. Output rows leave the engine via
-stdout and reach `kubectl logs` as soon as the operator buffers
-them, with no streaming surface for downstream consumers. Adapter
-session metadata — the UUIDs the conformance suite already exercises
-under ADR-0010, the cookie-jar paths curl-impersonate emits,
-the per-session generation counter Playwright uses for stable-
-node tracking — lives entirely in the adapter's process memory.
-A single Pod restart on any of the three layers loses every job
-in flight and every session a client thought it held.
+OutputSink discriminated union (R3.2). Every component now talks
+to every other component over the network. What remains is what
+the network has not yet been asked to carry: anything durable.
+Job state lives in the engine's Tokio task and on the operator's
+`Status` subresource — both volatile across Pod restart. Output
+rows leave the engine via stdout with no streaming surface for
+downstream consumers. Adapter session metadata — the UUIDs from
+ADR-0010, cookie-jar paths, generation counters — lives in the
+adapter's process memory. One Pod restart on any layer loses
+every job in flight and every session a client thought it held.
 
-R4 closes that gap. Three stateful services land together in the
-architecture: PostgreSQL for job state and audit, Kafka for
-output streaming, Redis for adapter session metadata. The PRs
-that wire them — R4.2 (Postgres), R4.3 (Redis), R4.4 (Kafka) —
-land in series, but the architectural commitment is one
-decision, not three, because the three services interlock.
-Postgres alone cannot recover a job whose adapter session was
-lost on Redis-less Pod restart. Kafka alone cannot publish rows
-the engine never persisted. Redis alone externalises session
-metadata that no other service knows how to index. Introducing
-them piecemeal would leave the system in a half-stateful state
-no operator can reason about: some workloads recoverable, some
-not, with the matrix depending on which PR landed when. This
-ADR records the full commitment up front so the implementation
-PRs can each ship a coherent slice of one architecture rather
-than three negotiations of an emerging one. The companion
-[`docs/refactor-audit.md`](../refactor-audit.md) tracks the
-per-PR work plan; this ADR is the architectural reference R4.2
-/ R4.3 / R4.4 each implement against.
+R4 closes that gap. Three stateful services land together:
+PostgreSQL for job state and audit, Kafka for output streaming,
+Redis for adapter session metadata. The PRs that wire them —
+R4.2 (Postgres), R4.3 (Redis), R4.4 (Kafka) — land in series,
+but the architectural commitment is one decision because the
+three services interlock. Postgres alone cannot recover a job
+whose adapter session was lost on Redis-less restart. Kafka
+alone cannot publish rows the engine never persisted. Redis
+alone externalises metadata no other service indexes.
+Piecemeal introduction would leave the system half-stateful,
+with the recoverability matrix depending on which PR landed
+when. ADR-0023 records the full commitment up front so R4.2 /
+R4.3 / R4.4 ship coherent slices of one architecture, not three
+negotiations of an emerging one.
 
 ## §2 — PostgreSQL
 
-PostgreSQL is the durable store for job state. The engine writes
-one row to a `jobs` table on every job admission, updates the
-status column as the job transitions, and (for `OutputSink.Stdout`
-jobs only) appends each row of extracted data to a `job_rows`
-table as a JSONB document. The control plane reads the same
-tables to populate the `ScrapeJob` `Status` subresource and to
-serve historical queries — "show me every Failed job in the last
-hour", "show me the rows for job X" — without round-tripping
-through the engine. The two services share one database; the
-schema is normalised, owned by the engine, and migrated through
-sqlx-cli at engine startup (see §13 for the migration discipline).
-
-### Schema
+The engine writes one row to a `jobs` table on every admission,
+mutates the status column on each transition, and (for
+`OutputSink.Stdout` jobs only) appends each extracted row to
+`job_rows` as a JSONB document. The control plane reads the
+same tables to populate `ScrapeJob` `Status` and to serve
+historical queries without round-tripping through the engine.
+Both services share one database; the schema is normalised,
+owned by the engine, and migrated through sqlx-cli at engine
+startup (see §13).
 
 ```sql
 CREATE TABLE jobs (
@@ -94,389 +81,234 @@ CREATE INDEX idx_jobs_output_sink_kind ON jobs(output_sink_kind);
 CREATE INDEX idx_job_rows_job_id ON job_rows(job_id);
 ```
 
-The CHECK constraints on `status` and `output_sink_kind` are
-database-level invariants — the engine cannot insert a row with a
-status string the schema does not recognise, and the same
-phase enum that lives in `ScrapeJobPhase` (v1alpha2 §
-`scrapejob_types.go`) is enforced at the storage layer. The
-ON DELETE CASCADE on `job_rows.job_id` simplifies job retention:
-deleting a `jobs` row removes its audit rows in one statement.
+The CHECK constraints enforce the same enum values that
+v1alpha2's `ScrapeJobPhase` and `OutputSink` discriminants
+encode at the API layer. ON DELETE CASCADE simplifies retention
+— deleting a `jobs` row removes its audit rows in one
+statement. `job_rows` is populated only when `output_sink_kind`
+is `'stdout'`; Kafka / S3 / Webhook sinks bypass this table to
+avoid double-write costs for no recoverability gain. The
+`output_sink_kind` column is recorded for every job regardless
+of variant, so a reader can answer "where did the output go?"
+without joining.
 
-`job_rows` is populated only when a job's `output_sink_kind` is
-`'stdout'`. Kafka, S3, and Webhook sinks bypass this table — their
-data lives at their respective destinations (the topic, the
-bucket, the HTTP endpoint), and duplicating into `job_rows` would
-pay double-write costs for no recoverability gain. The
-`output_sink_kind` column itself is recorded for every job
-regardless of variant, so a reader of the `jobs` table can answer
-"where did this job's output go?" without joining.
+The engine uses `sqlx` (compile-time-checked queries via
+`query!()` macros). The control plane uses `pgx/v5`. The full
+library matrix lives in §8; the rationale for not using
+`lib/pq` (in maintenance mode) is recorded there. The dialect
+is plain PostgreSQL, no vendor extensions; v1alpha1 pins the
+Compose stack and the Helm subchart to PostgreSQL 16.
 
-### Library and dialect
-
-The engine uses `sqlx` (see §8 for the full library matrix).
-Compile-time-checked queries — `query!()` macros that read the
-schema at build time and reject misshapen SQL — give the engine's
-Rust code the same compiler-enforced contract the gRPC bindings
-already provide for the wire protocol. The control plane uses
-`pgx/v5`; the choice of driver per side is documented in §8 and
-the rationale for not using `lib/pq` (in maintenance mode) lives
-there.
-
-The dialect is plain PostgreSQL. No vendor extensions. The schema
-runs unchanged on PostgreSQL 14 through 16; v1alpha1 of the
-refactor pins the Compose stack and the Helm chart's bundled
-subchart to PostgreSQL 16 (see §9 / §10).
-
-### Alternatives considered
-
-- **MySQL.** Mature, widely deployed, but the JSON column type
-  is less ergonomic than Postgres' JSONB (no GIN indices on
-  arbitrary JSONB paths in MySQL until 8.0+, and the operator
-  ecosystem in Kubernetes is thinner). The marginal benefit
-  from familiarity does not offset the storage-layer
-  ergonomics gap.
-- **SQLite.** A single-file embedded database is appealing for
-  the simplest demonstrator, but the engine and control plane
-  are separate Pods that would each need their own SQLite file
-  — exactly the multi-writer scenario SQLite cannot serve. A
-  network-mounted SQLite file is technically possible and
-  uniformly discouraged by SQLite's own documentation.
-- **CockroachDB.** PostgreSQL-wire-compatible with global
-  replication. The geo-distribution story is the wrong shape
-  for a v1alpha1 single-cluster deployment; CockroachDB's
-  operational complexity (Raft consensus tuning, range
-  splitting) is real cost for value v1alpha1 cannot use.
-- **DynamoDB and other managed cloud databases.** Excludes
-  self-hosted deployments — the operator who runs Spectre on
-  bare metal or in a private cluster cannot use them. The
-  Helm chart commits to a subchart-based Postgres in §10
-  precisely so self-hosting stays a first-class deployment
-  shape.
-
-PostgreSQL is the answer. R4.2 implements the schema above and
-the engine's write path; R7.1's Helm chart packages the Bitnami
-Postgres subchart as the default (with an off-switch for
-operators bringing their own).
+Alternatives evaluated: **MySQL** (less-ergonomic JSON storage
+than JSONB; thinner Kubernetes operator ecosystem); **SQLite**
+(single-file embedded — multi-writer scenario across separate
+Pods does not match its design); **CockroachDB** (geo-
+distribution complexity for a v1alpha1 single-cluster
+deployment); **DynamoDB / managed cloud DBs** (excludes self-
+hosted deployments, which §10 keeps as a first-class shape).
 
 ## §3 — Kafka
 
 Kafka is the streaming surface for `OutputSink.Kafka`. The
-v1alpha2 schema already defines the variant —
-`KafkaSink.Brokers []string` and `KafkaSink.Topic string`
-(R3.2; `core/control-plane/api/v1alpha2/scrapejob_types.go`,
-lines 132–142) — and the reconciler currently rejects any
-ScrapeJob that selects it with "kafka output sink not yet
-implemented (R4.4)". This ADR records the producer-side
-contract that R4.4 implements, so the schema and the runtime
-behaviour converge.
-
-### Topic naming
+v1alpha2 schema's `KafkaSink.Brokers []string` and
+`KafkaSink.Topic string` (R3.2,
+`core/control-plane/api/v1alpha2/scrapejob_types.go` lines
+132–142) already define the variant; the reconciler currently
+rejects it at admission with "kafka output sink not yet
+implemented (R4.4)". This section records the producer
+contract R4.4 implements.
 
 Topics follow the pattern `spectre.rows.<workspace>`. v1alpha1
-of the refactor has one workspace, named `default`, so the
-canonical topic is `spectre.rows.default`. The workspace
-component is reserved for v1alpha2 multi-tenancy; until then,
-every job writes to the same topic regardless of namespace or
-ScrapeJob name.
+has one workspace, named `default`, so the canonical topic is
+`spectre.rows.default`. Per-job topics were rejected: job
+cardinality is unbounded, Kafka topics carry per-topic broker
+metadata overhead, and runtime topic creation complicates the
+producer's authorisation model. The workspace component is
+reserved for v1alpha2 multi-tenancy.
 
-Per-job topics were considered and rejected. Spectre's job
-cardinality is unbounded — operators can create thousands of
-ScrapeJob resources over a deployment's lifetime — and Kafka
-topics are not free per-topic (each topic carries metadata
-overhead in the broker, and a topic-per-job pattern would
-require runtime topic creation that complicates the producer's
-authorisation model). One topic per workspace bounds the topic
-count to the workspace count and lets downstream consumers
-subscribe once per workspace rather than once per job.
+Each topic uses 8 partitions by default (tunable per
+environment via Helm values). The partition key is the job's
+UUID. Two consequences: all rows for one job land on one
+partition, so a downstream consumer that orders by `(partition,
+offset)` sees the job's rows in extraction order; and work
+spreads roughly evenly across partitions for many concurrent
+jobs.
 
-### Partitioning
-
-Each topic uses 8 partitions by default. The partition key is
-the job's UUID; the producer hashes it into the partition index.
-Two consequences follow.
-
-First, all rows for a single job land on the same partition, so
-a downstream consumer that orders by `(partition, offset)` sees
-that job's rows in production order. The engine's row emission is
-sequential per job (one task per running job, draining a
-streaming RPC into the sink), so partition order matches
-extraction order.
-
-Second, work spreads across partitions roughly evenly across
-many concurrent jobs. The 8-partition default is tunable per
-environment via a future Helm value (R7.1 territory); the ADR
-fixes the default but does not pin it.
-
-### Message shape
-
-One Kafka message per row. The body is the JSONL row exactly as
-the engine would have written it to stdout — same schema, same
-field order, same line terminator (no terminator inside the
-Kafka body — Kafka frames the message). Headers carry the
+One Kafka message per row. The body is the JSONL row exactly
+as the engine would have written to stdout. Headers carry the
 metadata downstream consumers need to route or filter without
 parsing the body:
 
-- `job_id` — the UUID, matching `jobs.id` in the Postgres
-  schema (§2)
-- `row_index` — monotonic counter per job, matching
-  `job_rows.row_index` for stdout-sinked jobs (§2)
-- `driver` — `playwright`, `seleniumbase`, or
-  `curl-impersonate`
+- `job_id` — UUID matching `jobs.id` (§2)
+- `row_index` — monotonic counter per job
+- `driver` — `playwright` / `seleniumbase` / `curl-impersonate`
 - `timestamp` — ISO-8601 row-emission time
 
-Consumers that need to back-fill a Postgres `job_rows` view (for
-example, an analytics service that wants the full audit log
-across both Stdout and Kafka jobs) can join on `(job_id,
-row_index)`; the headers carry the join keys explicitly so the
-consumer never has to parse the body to route.
+The engine uses `rdkafka` (see §8). Brokers compatible with the
+Apache Kafka 0.11+ wire protocol all work. R7.1's production
+path defaults to a Strimzi or Bitnami Kafka deployment; R6.2's
+Compose stack uses Redpanda single-node — wire-compatible with
+Kafka, single binary, no ZooKeeper dependency. The producer
+code does not branch on broker implementation.
 
-### Library and broker compatibility
+Alternatives evaluated: **RabbitMQ** (queue-shaped semantics
+delete on consume; Kafka's offset model is the right shape for
+replayable row streaming); **NATS JetStream** (thinner cross-
+language client ecosystem; weaker partition semantics);
+**Apache Pulsar** (BookKeeper / ZooKeeper add complexity;
+Kafka's mindshare wins for a polyglot consumer story).
 
-The engine uses `rdkafka` (see §8). The library wraps the
-upstream `librdkafka` C library through Rust FFI; the choice
-buys access to the most production-tested Kafka producer
-implementation in any language and a maintained Rust API on
-top.
-
-Brokers compatible with the Apache Kafka 0.11+ wire protocol
-all work. R7.1's production Helm path defaults to a Strimzi or
-Bitnami Kafka deployment; R6.2's local Compose stack uses
-Redpanda single-node — wire-protocol-compatible with Kafka,
-single binary, ~150 MB resident, no ZooKeeper dependency. The
-producer code does not branch on broker implementation; the
-broker list is a configuration value and the producer protocol
-is the abstraction.
-
-### Alternatives considered
-
-- **RabbitMQ.** AMQP semantics are queue-shaped (delete on
-  consume) rather than log-shaped (immutable, replayable). A
-  consumer that loses position cannot rewind without
-  application-level retention; Kafka's offset model is the
-  exact shape downstream consumers want for row-streaming.
-- **NATS JetStream.** Capable, but the cross-language client
-  ecosystem is thinner than Kafka's, and the partition
-  semantics are weaker. Spectre's downstream consumers are
-  intentionally polyglot (the same ADR-0014 polyglot
-  argument that picked Node + Python + Go for adapters
-  extends to consumers); Kafka's library breadth matters.
-- **Apache Pulsar.** Comparable feature set to Kafka with
-  additional complexity (BookKeeper, ZooKeeper). Kafka's
-  mindshare wins for a project where the streaming surface
-  is one consumer-facing decision among many.
-
-Kafka is the answer. R4.4 wires the producer and removes the
-admission-time rejection from the v1alpha2 reconciler so
-`OutputSink.Kafka` becomes a runnable variant; R7.1 packages
-the broker subchart. R5.1 (S3 + Webhook output sinks) consumes
-neither this topic nor this producer — those sinks have their
-own destinations — but does share the v1alpha2 schema's
-discriminated-union shape that R3.2 committed.
+R4.4 wires the producer and removes the admission-time
+rejection from the v1alpha2 reconciler. R5.1 (S3 + Webhook)
+does not consume this topic — those sinks have their own
+destinations — but shares the v1alpha2 discriminated-union
+shape R3.2 committed.
 
 ## §4 — Redis
 
-Redis stores adapter session metadata. Each adapter — Playwright,
-SeleniumBase, curl-impersonate — already maintains a session
-table internally: a session_id (UUID) maps to a browser context
-or HTTP client object that holds cookies, the navigation
-history, and per-session generation counters used for stable-
+Each adapter — Playwright, SeleniumBase, curl-impersonate —
+maintains a session table internally: a session_id (UUID) maps
+to a browser context or HTTP client object holding cookies,
+navigation history, and a generation counter used for stable-
 node tracking under ADR-0010 §3. R4.3 externalises the
-*metadata* layer of that table to Redis. The runtime objects
-(the browser process, the HTTP client) remain in the adapter
-process; the index that lets the adapter find them, and the
+*metadata* layer to Redis. The runtime objects stay process-
+local; the index that lets the adapter find them, and the
 metadata a future replacement adapter would need to know about
 their existence, lives in Redis.
-
-### Keyspace
 
 Two keys per session, namespaced by adapter:
 
 - `session:<adapter>:<session_id>` — JSON document holding
-  the session metadata: creation timestamp, current URL, cookie-
-  jar path on the adapter's local volume, generation counter,
-  and a stable-node map summary.
+  creation timestamp, current URL, cookie-jar path, generation
+  counter, stable-node map summary.
 - `session:<adapter>:<session_id>:ref` — last-access
-  timestamp. Updated on every session-bound RPC; used as the
-  signal for LRU-style eviction when an adapter approaches its
-  configured session-count ceiling.
+  timestamp; used as the LRU-eviction signal.
 
-The `<adapter>` component is one of the three driver names —
-`playwright`, `seleniumbase`, `curl-impersonate` — matching
-the values in §3's Kafka headers and the Postgres `jobs.driver`
-column. The session_id is the same UUID the adapter returned to
-the client on `Initialize`, the same UUID the client carries on
-every subsequent RPC, and the same UUID the engine logs and the
-control plane records on `ResolvedEngineEndpoint` traces.
-
-### TTL
+The `<adapter>` component matches the `driver` value in §3
+Kafka headers and the `jobs.driver` column in §2. The
+`<session_id>` is the same UUID returned on `Initialize` and
+carried on every subsequent RPC.
 
 The metadata key carries a 1-hour idle TTL. Each session-bound
 RPC refreshes the TTL via `EXPIRE` on both keys. A session
-unused for an hour falls out of Redis and the adapter
-invalidates the in-memory runtime object on its next eviction
-sweep. The TTL is configurable per environment via Helm values
-(R7.1) but the default value bounds the project's documented
-contract: clients must not assume a session_id is live after
-an hour of inactivity.
+unused for an hour falls out of Redis; the adapter invalidates
+the in-memory runtime on its next eviction sweep. The default
+is configurable per environment via Helm values; clients must
+not assume a session_id stays live after an hour of inactivity.
 
-### Atomicity
+Writes are PUT-style overwrites — the full session-metadata
+document is rewritten atomically on each update via `SET`. No
+field-level updates, no Redis transactions. The atomic boundary
+is one document. The `:ref` key is updated separately; the two
+keys can momentarily disagree but `:ref` is an eviction hint,
+not a correctness input, and the cost of `MULTI/EXEC` outweighs
+the benefit.
 
-Writes are PUT-style overwrites. The full session-metadata
-document is rewritten atomically on each update via `SET`; no
-field-level updates, no `HSET` partial mutation, no Redis
-transactions. The atomic write boundary is one document. The
-choice keeps the failure model simple — either the document is
-written or it is not, and a reader on the other side never sees
-a half-mutated session.
+Three adapters in three languages each pick their ecosystem's
+production-tested client (full library matrix in §8):
+`ioredis` (Playwright), `redis-py` (SeleniumBase),
+`go-redis/v9` (curl-impersonate). Engine and control plane do
+not connect to Redis.
 
-For the `:ref` timestamp key, a separate `SET` follows the
-metadata write. The two keys can momentarily disagree (the
-metadata advances before its `:ref`), but the disagreement is
-not load-bearing — `:ref` is an eviction hint, not a correctness
-input — and the cost of a Redis transaction (MULTI/EXEC, with
-its block-on-server-response cost) outweighs the benefit.
-
-### Library matrix
-
-Three adapters in three languages need three Redis clients.
-Each language picks the most production-tested client in its
-ecosystem:
-
-- Playwright (Node/TypeScript): `ioredis`
-- SeleniumBase (Python): `redis-py` (the official driver)
-- curl-impersonate (Go): `go-redis/v9`
-
-Engine and control plane do not connect to Redis at all; only
-the adapters do. The full library matrix lives in §8.
-
-### Alternatives considered
-
-- **PostgreSQL session table.** Putting session metadata into
-  the same Postgres database that holds job state sounds
-  appealing for operational simplicity (one stateful service
-  fewer). It fails on access pattern. Adapters update session
-  metadata on every RPC — every navigation, every screenshot,
-  every `Find`/`Click` cycle. Postgres's per-statement parser
-  / planner overhead makes it the wrong tool for sub-millisecond
-  metadata writes; Redis is purpose-built for this exact load.
-  The architectural cost of running both services is real, and
-  ADR §6's required-vs-optional matrix records it.
-- **Adapter-local file storage.** Writing session metadata to
-  a per-Pod volume technically survives Pod restart on the same
-  node, but loses the session on Pod reschedule (the standard
-  Kubernetes failure mode), loses the session on Compose
-  `down`/`up`, and does not solve the problem ADR §5 articulates.
-  File storage is a half-solution that hides the choice.
-- **In-memory only (status quo).** What every adapter does
-  today. No Redis dependency, no operational service to run.
-  And no recovery semantics — every Pod restart loses every
-  session. R4.3 changes this; the architectural commitment in
-  §5 makes the change explicit.
-
-Redis is the answer. R4.3 wires the adapter clients per the §8
-library matrix; R7.1 packages the Bitnami Redis subchart.
+Alternatives evaluated: **Postgres session table** (per-RPC
+metadata writes are sub-millisecond; Postgres's parser /
+planner overhead makes it the wrong tool for that load);
+**adapter-local file storage** (survives in-place restart, not
+reschedule; hides the choice §5 articulates); **in-memory only**
+(today's behaviour — every restart loses every session).
 
 ## §5 — The session externalization problem
 
-Adapter sessions cannot be Redis-cached. A "session", at the
-runtime level, is a Playwright `BrowserContext`, a SeleniumBase
+Adapter sessions cannot be Redis-cached. A "session" at the
+runtime level is a Playwright `BrowserContext`, a SeleniumBase
 `SB` instance, or a curl-impersonate `*http.Client` — a live
 process-bound object holding sockets, file descriptors, and
 language-runtime memory that does not survive serialisation.
-Move that object to Redis and the deserialised side has bytes,
-not behaviour. The metadata that *describes* the session — the
-session_id, the cookie-jar path, the navigation history's
-last URL, the generation counter — is serialisable. The session
-itself is not. R4.3 externalises the metadata; the runtime stays
-process-local. That asymmetry is the architectural problem this
-ADR records, and the consequence — what happens on adapter Pod
-restart — has three reasonable answers and one chosen direction.
+The metadata that *describes* the session (session_id, cookie-
+jar path, last URL, generation counter) is serialisable. The
+session itself is not. R4.3 externalises the metadata; the
+runtime stays process-local. The consequence — what happens on
+adapter Pod restart — has three reasonable answers and one
+chosen direction.
 
 ### Option A — restart invalidation (chosen)
 
 When an adapter Pod restarts, every session it held becomes
-invalid. The Redis metadata persists; the adapter, on startup,
-sees session keys whose corresponding runtime objects do not
-exist in its memory, and it does not attempt to reconstitute
-them. Clients that hold session_ids from before the restart see
-`UNAVAILABLE` (or `FAILED_PRECONDITION` on the first session-
-bound RPC after restart) and re-call `Initialize` to allocate
-fresh session_ids backed by fresh runtime objects.
+invalid. Redis metadata persists; the adapter, on startup, sees
+session keys whose runtime objects no longer exist and does not
+attempt to reconstitute them. Clients that hold session_ids
+from before the restart see `UNAVAILABLE` (or
+`FAILED_PRECONDITION` on the first session-bound RPC after
+restart) and re-call `Initialize` to allocate fresh
+session_ids backed by fresh runtime objects.
 
-The cost is borne by the client. A client mid-job sees a session
-fail and must restart its work from the beginning of its session
+The cost is borne by the client. A client mid-job sees a
+session fail and must restart its work from the session
 boundary. For Spectre's primary use case — engine driving an
 adapter for a single ScrapeJob's duration — the cost is
 "restart the job", and v1alpha2's reconciler already retries
-failed jobs on the next reconcile cycle. For consumers running
-longer-lived sessions (the conformance suite, an interactive
-debugging tool), the cost is one round of `Initialize` and the
-loss of in-session state (visited URLs, accumulated cookies).
+failed jobs on the next reconcile. For longer-lived sessions
+(conformance suite, interactive debugging tools), the cost is
+one round of `Initialize` and the loss of in-session state.
 The cost is real and bounded.
 
 The benefit is a contract a reader can hold in their head:
-*session_ids are valid until the adapter Pod restarts*. Nothing
-more. No subtle "sometimes it survives, sometimes it doesn't"
-matrix. No promises about partial recovery the implementation
-cannot keep. The contract matches what the runtime actually
-delivers.
+*session_ids are valid until the adapter Pod restarts.* No
+"sometimes it survives" matrix. No promises about partial
+recovery the implementation cannot keep. The contract matches
+what the runtime actually delivers.
 
 ### Option B — sticky sessions (rejected)
 
-Route every RPC for a given session_id to the specific adapter
-Pod that allocated it. Realised via client-side affinity (the
-client remembers `(session_id, pod_address)` and dials directly)
-or via Service-level routing (a session-aware proxy or a Service
-with `sessionAffinity: ClientIP`).
+Route every RPC for a session_id to the specific Pod that
+allocated it — via client-side affinity (the client remembers
+`(session_id, pod_address)` and dials directly) or Service-
+level routing (a session-aware proxy or a Service with
+`sessionAffinity: ClientIP`).
 
 This preserves session liveness across most operational events
-— routine reschedules, rolling deployments, scale-up — at the
-cost of two architectural compromises. First, the client must
-know about Pod-level addressing, not just Service-level
-addressing; the v1alpha1 transport contract (ADR-0022) is
-plaintext gRPC over a single Service endpoint, and sticky
-sessions would push Pod identity into the client's discovery
-contract. Second, horizontal scaling of the adapter Pool gets
-constrained — a client that pinned to Pod A cannot fail over to
-Pod B if Pod A crashes, so the Service's redundancy guarantee
-is reduced from "any Pod can serve any RPC" to "any Pod can
-serve any *new* RPC". The architectural surface a sticky-session
-contract adds — proxy logic, client-side address caching,
-re-pinning on Pod death — is non-trivial, and the recovery
-semantics it preserves are partial: the cost is paid every day
-for a benefit that the failure case (Pod crash) still does not
-fully cover.
+at the cost of two compromises. First, the client must know
+about Pod-level addressing rather than Service-level; the
+v1alpha1 transport contract (ADR-0022) is plaintext gRPC over
+a single Service endpoint, and sticky sessions push Pod
+identity into the discovery contract. Second, horizontal
+scaling gets constrained — a client pinned to Pod A cannot
+fail over to Pod B if Pod A crashes, so the Service's
+redundancy guarantee weakens from "any Pod can serve any RPC"
+to "any Pod can serve any *new* RPC". The architectural
+surface (proxy logic, client-side address caching, re-pinning
+on Pod death) is non-trivial, and the recovery semantics it
+preserves are partial: the cost is paid every day for a
+benefit the failure case still does not fully cover.
 
 ### Option C — warm recovery (rejected)
 
 On adapter Pod startup, the new Pod reads Redis, sees session
-keys for the adapter, and attempts to reconstitute the runtime
-state — replay the cookie-jar, restore the navigation history,
-re-allocate browser contexts pointed at the last-visited URLs.
-Clients that held session_ids from before the restart see their
-sessions "still working", with the URL they were on and the
-cookies they had accumulated.
+keys for its adapter, and reconstitutes runtime state — replay
+the cookie-jar, restore navigation history, re-allocate browser
+contexts pointed at last-visited URLs. Clients see their
+sessions "still working".
 
-The architectural problem is what "still working" hides. Browser
-state is not the cookies and URL alone. It is the JavaScript
-heap, the WebSocket connections, the per-tab event-listener
-graph, the rendering engine's per-page caches. Replaying
-cookies and the URL gives a client *some* of what they had —
-enough to feel like the session survived — and silently misses
-the rest. A client that was mid-form-fill, mid-CAPTCHA, mid-
-single-page-app navigation finds the recovered session is
-plausibly different in ways the contract does not specify and
-the implementation cannot fully enumerate. Worse, the partial
-recovery creates a false sense of resilience: operators see
-"sessions survive Pod restart" in the docs and design retry
-budgets accordingly, then run into the cases warm recovery does
-not cover and have no honest contract to fall back on.
+The architectural problem is what "still working" hides.
+Browser state is not the cookies and URL alone — it is the
+JavaScript heap, WebSocket connections, per-tab event-listener
+graph, rendering engine's per-page caches. Replaying cookies
+and URL gives the client *some* of what they had — enough to
+feel like the session survived — and silently misses the rest.
+A client mid-form-fill, mid-CAPTCHA, mid-SPA-navigation finds
+the recovered session plausibly different in ways the contract
+does not specify and the implementation cannot fully enumerate.
+Worse, partial recovery creates a false sense of resilience:
+operators see "sessions survive Pod restart" in the docs and
+design retry budgets accordingly, then run into the cases warm
+recovery does not cover with no honest contract to fall back
+on.
 
-The complexity cost is real too. Each of the three adapters has
-a different runtime model — Playwright's CDP-driven Chromium
-process tree, SeleniumBase's Python-driven WebDriver session,
-curl-impersonate's Go-driven HTTP client — and warm recovery
-needs a per-adapter implementation of "given this Redis blob,
+The complexity cost is real too. Each adapter has a different
+runtime model (Playwright's CDP-driven Chromium tree,
+SeleniumBase's Python-driven WebDriver session, curl-
+impersonate's Go-driven HTTP client) and warm recovery needs a
+per-adapter implementation of "given this Redis blob,
 materialise an equivalent runtime". Three implementations,
 three failure surfaces, and the union of "sessions sometimes
 survive, sometimes silently degrade" replaces the simple
@@ -484,531 +316,269 @@ restart-invalidation contract.
 
 ### The choice and its cost
 
-ADR-0023 commits to restart invalidation (Option A). The
-contract is "session_ids are valid for the lifetime of the
-adapter Pod that allocated them". Clients re-call `Initialize`
-on `UNAVAILABLE`. The Redis metadata persists across restart
-not as a recovery surface but as an indexable record of what
-sessions existed — useful for debugging, useful for v1alpha2
-contracts that may build on it (multi-tenant accounting,
-session-level audit), and useful as the data structure
-sticky-session and warm-recovery options would build on if
-v1alpha2 deliberately revisits the choice.
+ADR-0023 commits to restart invalidation. Clients re-call
+`Initialize` on `UNAVAILABLE`. The Redis metadata persists
+across restart not as a recovery surface but as an indexable
+record of which sessions existed — useful for debugging,
+useful for v1alpha2 contracts that may build on it (multi-
+tenant accounting, session-level audit), and useful as the
+data structure sticky-session and warm-recovery options would
+build on if v1alpha2 deliberately revisits the choice.
 
 The cost — clients restarting jobs on adapter Pod restart — is
 the cost the runtime imposes regardless of how the metadata
-layer is organised. Restart invalidation makes that cost visible
-and contractual. Sticky sessions hide it (until they don't);
-warm recovery hides it (and creates harder-to-debug failures
-when the recovery is incomplete). v1alpha2 may revisit the
-choice if real users run longer-lived sessions whose restart
+layer is organised. Restart invalidation makes that cost
+visible and contractual. Sticky sessions hide it (until they
+don't); warm recovery hides it (and creates harder-to-debug
+failures when the recovery is incomplete). v1alpha2 may
+revisit if real users run longer-lived sessions whose restart
 cost is operationally significant; v1alpha1 commits to the
 honest contract.
 
 ## §6 — Required vs optional
 
-The three stateful services do not all carry the same
-deployment commitment. Two are required everywhere; one is
-required only when a workload exercises it. The commitment is
-the same in development (Compose) and in production (Helm).
-
 | Service   | Production | Dev (Compose) | Rationale |
 |-----------|------------|---------------|-----------|
-| Postgres  | REQUIRED   | REQUIRED      | Job state is always persisted. There is no in-memory mode. |
-| Kafka     | OPTIONAL   | INCLUDED      | Required only when a ScrapeJob selects `OutputSink.Kafka`. Admission rejects new Kafka sinks if the broker is unavailable. |
-| Redis     | REQUIRED   | REQUIRED      | Session metadata is always written. Defines the restart-invalidation contract from §5. |
+| Postgres  | REQUIRED   | REQUIRED      | Job state always persisted; no in-memory mode. |
+| Kafka     | OPTIONAL   | INCLUDED      | Required only when a ScrapeJob selects `OutputSink.Kafka`. Admission rejects new Kafka sinks if unavailable. |
+| Redis     | REQUIRED   | REQUIRED      | Session metadata always written. Defines the §5 restart-invalidation contract. |
 
-### Postgres always
+**Postgres always.** Engine startup validates the dial, runs
+migrations (§13), and only then registers the gRPC service. A
+startup-time outage is a startup-time engine failure — visible
+to `kubectl get pod` as a crash loop, to `docker compose up` as
+non-zero exit. There is no "engine without Postgres" mode.
 
-Engine startup validates the Postgres dial: it opens the
-connection pool, runs migrations (§13), and only then registers
-the gRPC service. A startup-time Postgres outage is a startup-
-time engine failure — visible to `kubectl get pod` as a crash
-loop and to `docker compose up` as the container exiting non-
-zero. There is no "engine without Postgres" mode. A reader
-debugging a deployment sees one binary cause for "engine not
-serving"; an operator does not have to weigh "is this a
-Postgres-side issue or a config-side issue" against any toggle.
-
-### Kafka admission-gated
-
-Engine startup validates the Kafka producer dial, but the
-failure semantics are softer than Postgres'. If the broker is
+**Kafka admission-gated.** Engine startup validates the
+producer dial with softer semantics. If the broker is
 reachable, the engine logs "kafka producer ready" and accepts
-admission of new ScrapeJobs with `OutputSink.Kafka`. If the
-broker is unreachable, the engine logs a warning, marks the
-Kafka admission gate disabled, and *continues to start*. New
-ScrapeJobs with `OutputSink.Kafka` are rejected at admission
-with the same "kafka not available" message R3.2's reconciler
-returned for "kafka not yet implemented" — semantically
-distinct, surfaceably similar to the operator. ScrapeJobs in
-flight with current sinks (Stdout, S3, Webhook) continue
-unaffected.
+admission of new Kafka-sinked ScrapeJobs. If unreachable, the
+engine logs a warning, marks the Kafka admission gate disabled,
+and continues to start. New Kafka-sinked ScrapeJobs are
+rejected at admission with the same "kafka not available"
+message R3.2 returns for "kafka not yet implemented" —
+semantically distinct, surfaceably similar to the operator.
+Jobs with other sinks continue unaffected. The architectural
+distinction is that Kafka is a *consumer-chosen* destination
+selected per-job by v1alpha2; an operator who never runs
+Kafka-sinked jobs genuinely does not need Kafka at all.
 
-The architectural distinction is that Kafka is a *consumer-
-chosen* dependency. Postgres and Redis are the architecture's
-own state store; an operator does not opt out of them by
-configuration. Kafka is a destination, selected per-job by the
-v1alpha2 schema; an operator who never runs Kafka-sinked jobs
-genuinely does not need Kafka at all. The deployment matrix
-respects that distinction.
+**Redis always.** Adapter startup validates the dial — same
+model as Postgres for the engine. The §5 contract requires
+Redis as the session index; an adapter without Redis would have
+to invent a different index or break the contract. Both are
+worse than the simple "adapter requires Redis" rule.
 
-### Redis always
-
-Adapter startup validates the Redis dial. Same model as
-Postgres for the engine — a startup-time Redis outage is a
-startup-time adapter failure. There is no "adapter without
-Redis" mode, and the rationale is the §5 contract. The restart-
-invalidation contract requires that Redis be the index of which
-sessions exist; an adapter running without Redis would have to
-either invent a different index (file storage, in-memory only)
-or break the contract. Both options are worse than the simple
-"adapter requires Redis" rule, and ADR-0023 commits the simple
-rule.
-
-### No "lite mode"
-
-The combined effect is that Spectre runs the full stack or
-does not run. There is no minimal-dependency variant for
-testing or for resource-constrained deployments. The conformance
-suite (R6.2 / Compose) and the production deployment (R7.1 /
-Helm) both pull Postgres + Redis (and optionally Kafka) into
-the topology. The R8.1 documentation refresh records this
-explicitly so a reader who arrives at the docs without reading
-this ADR understands the deployment shape.
-
-The single-mode commitment trades a deployment-shape constraint
-for an operational-clarity gain. An operator who has the stack
-running has the same stack every other operator has. A
-contributor reading the codebase does not have to thread "what
-if Postgres is unavailable" through every code path. The
-trade-off is recorded honestly.
+Spectre runs the full stack or does not run. There is no
+minimal-dependency variant. The trade-off — deployment-shape
+constraint for operational-clarity gain — is recorded honestly
+in R8.1's documentation refresh.
 
 ## §7 — Network topology
 
 The post-R4 topology has eight long-lived services on the
 network: control-plane, engine, three adapters, Postgres,
-Redis, and (when an operator runs it) Kafka. The connection
-graph stays sparse — each service knows only about the
-dependencies it actually needs, and no service holds a channel
-it does not use.
+Redis, and (when an operator runs it) Kafka.
 
 ```
 ┌──────────────────┐       ┌──────────────────┐
-│  control-plane   │──gRPC─▶│       engine      │
-│  (operator Pod)  │       │  (Rust service)  │
+│  control-plane   │──gRPC─▶│      engine      │
 └──────────────────┘       └──────────────────┘
-         │                          │   │
-         │ pgx/v5                   │   │ rdkafka
-         │                          │   │
-         ▼                          │   ▼
+         │ pgx/v5                  │       │
+         │                  sqlx   │       │ rdkafka
+         ▼                         │       ▼
 ┌──────────────────┐                │ ┌──────────────────┐
-│   PostgreSQL     │◀─sqlx──────────┘ │      Kafka       │
+│    PostgreSQL    │◀───────────────┘ │      Kafka       │
 │  (jobs, rows)    │                  │ (spectre.rows.*) │
 └──────────────────┘                  └──────────────────┘
-                                       (when operator runs it)
+                                       (when run by operator)
 
-┌──────────────────┐       ┌──────────────────┐
-│      engine      │──gRPC─▶│   adapter Pod    │
-│  (Rust service)  │       │ (3× per topology)│
-└──────────────────┘       └──────────────────┘
-                                    │
-                                    │ ioredis / redis-py / go-redis
-                                    ▼
-                           ┌──────────────────┐
-                           │      Redis       │
-                           │  (session:*)     │
-                           └──────────────────┘
+┌──────────────────┐  gRPC  ┌──────────────────┐
+│      engine      │───────▶│   adapter Pod    │
+│                  │        │ (3× per topology)│
+└──────────────────┘        └──────────────────┘
+                                     │ ioredis / redis-py / go-redis
+                                     ▼
+                            ┌──────────────────┐
+                            │      Redis       │
+                            │  (session:*)     │
+                            └──────────────────┘
 ```
 
-Five connection patterns make up the graph:
+Six connection patterns: **engine → Postgres** (read/write,
+one row per admission, status mutations, optional `job_rows`
+appends); **engine → Kafka** (write only, one shared producer);
+**engine → adapters** (the pre-R4 path, gRPC+TCP via ADR-0022,
+discovery via ADR-0021 §5, unchanged); **adapters → Redis**
+(read/write per RPC); **control plane → Postgres** (read only,
+populates `Status` from queries); **control plane → engine**
+(the pre-R4 path; ADR-0019 §5's `EngineClientRunner`
+preserved).
 
-- **Engine → Postgres.** Read/write. The engine writes one row
-  to `jobs` per admission, mutates the status column on each
-  transition, and (for stdout-sinked jobs) appends to
-  `job_rows`. The pool is one connection at idle, scaling under
-  load to a configurable per-engine cap.
-- **Engine → Kafka.** Write only. One producer per engine,
-  publishing to `spectre.rows.<workspace>` for jobs whose
-  `output_sink_kind` is `'kafka'`. The producer is shared
-  across all jobs that need it; partition selection (§3) gives
-  per-job ordering without per-job producers.
-- **Engine → Adapters (3).** The pre-R4 transport, unchanged.
-  gRPC over TCP per ADR-0022; service discovery via env vars
-  per ADR-0021 §5; each adapter exposes the same Driver
-  Protocol surface ADR-0001 froze and ADR-0008 / ADR-0014 /
-  ADR-0016 instantiated.
-- **Adapters → Redis.** Read/write. Each adapter holds one
-  Redis client and writes session metadata on every state-
-  changing RPC. The `:ref` timestamp updates are read-mostly
-  for the eviction sweep.
-- **Control plane → Postgres.** Read only. The control plane
-  populates `Status` subresources from Postgres queries; no
-  writes flow this direction. Engine is the sole writer; the
-  control plane is one of two readers (the other is whatever
-  ad-hoc query an operator runs via `psql`).
-- **Control plane → Engine.** The pre-R4 path, unchanged. The
-  reconciler dials the resolved engine endpoint per ScrapeJob
-  and consumes the `RunJob` stream. ADR-0019 §5's
-  `EngineClientRunner` (R3.1) is preserved verbatim.
+Two non-connections: **adapters do not connect to Postgres**
+(job state is the engine's concern; adapters do not know which
+job they serve), and **adapters do not connect to Kafka**
+(output streaming is the engine's concern). The adapter surface
+to the rest of the system is exactly what the Driver Protocol
+carries — the §1 frame "the protocol does not change" stays
+intact.
 
-Two non-connections are worth recording. **Adapters do not
-connect to Postgres.** Job state is the engine's concern;
-adapters do not know which job they are serving (the engine
-addresses them per-RPC, not per-job). **Adapters do not
-connect to Kafka.** Output streaming is the engine's concern;
-the engine consumes the adapter's RPC stream and writes onward
-to whichever sink the v1alpha2 schema selected. The adapter
-surface to the rest of the system is exactly what the Driver
-Protocol carries — nothing more — and the §1 frame "the
-protocol does not change" stays intact through R4.
-
-The control-plane → engine path is the seam ADR-0019 §5
-preserved through three runner implementations
-(`StubRunner`, `SubprocessRunner`, `EngineClientRunner`). R4
-does not touch it. The control plane gains a Postgres dial as
-a *new* dependency, not a replacement for the engine dial; the
-two paths coexist, with the engine dial driving execution and
-the Postgres dial serving status reads.
+The control plane gains the Postgres dial as a *new*
+dependency, not a replacement for the engine dial. The two
+paths coexist: the engine dial drives execution, the Postgres
+dial serves status reads.
 
 ## §8 — Library choices and pinning
 
-ADR-0023 commits to specific client libraries per language.
-The commitments close out the per-PR debate that R4.2 / R4.3 /
-R4.4 would otherwise reopen. Each library is the most
-production-tested, maintained option in its ecosystem at the
-time of writing; if new information surfaces during
-implementation, the response is a follow-up ADR, not a per-PR
-re-litigation.
+Each library is the most production-tested, maintained option
+in its ecosystem at the time of writing. Library *replacements*
+require a follow-up ADR; library *version bumps* are normal-
+course maintenance.
 
-### Engine (Rust)
+- **Engine (Rust).** `sqlx` for Postgres (compile-time-checked
+  queries via `query!()` macros; Tokio-async; rejected:
+  `tokio-postgres` (no compile-time check), `diesel` / `sea-
+  orm` (ORM machinery the engine does not need)). `rdkafka`
+  for Kafka (Rust FFI over `librdkafka`, the ecosystem's
+  canonical Kafka implementation; rejected: `rskafka`,
+  `kafka-rust` — pure-Rust but less production-exercised). No
+  Redis dependency.
+- **Control plane (Go).** `pgx/v5` for Postgres (modern Go
+  driver with native protocol, connection pooling, prepared-
+  statement caching, JSONB-aware). The historical alternative
+  `lib/pq` is in maintenance mode — security fixes only, no
+  new features — and ADR-0023 explicitly commits to `pgx/v5`
+  so R4.2 does not reach for `lib/pq` by reflex. No Kafka or
+  Redis dependency.
+- **Playwright adapter (Node / TypeScript).** `ioredis` for
+  Redis (mature, full command surface, includes Cluster /
+  Sentinel for v1alpha2 evolution; the alternative
+  `node-redis` is also viable but `ioredis` is selected for
+  community familiarity).
+- **SeleniumBase adapter (Python).** `redis-py` (the official
+  driver, package name `redis`; maintained by the Redis team).
+- **curl-impersonate adapter (Go).** `go-redis/v9` (idiomatic
+  context-aware API; the older `redigo` is less actively
+  developed).
 
-- **Postgres**: `sqlx`. Compile-time-checked queries (`query!`
-  macros that read the database schema at build time), async-
-  first API on Tokio, no ORM machinery to learn around. The
-  alternative — `tokio-postgres` directly — is lower-level
-  with no compile-time check, and an ORM (`diesel`,
-  `sea-orm`) introduces an abstraction the engine does not
-  need.
-- **Kafka**: `rdkafka`. Wraps `librdkafka` via Rust FFI, which
-  in turn is the canonical Kafka client across the ecosystem
-  (used by the C / Python / Node clients downstream). The pure-
-  Rust alternatives (`rskafka`, `kafka-rust`) are less
-  exercised at production scale; the FFI cost of `rdkafka` is
-  paid once per process and the implementation maturity is
-  worth it.
-- **Redis**: not used engine-side (per §7). Listed here for
-  symmetry; the engine has no Redis dependency.
-
-### Control plane (Go)
-
-- **Postgres**: `pgx/v5`. The modern Go Postgres driver. Native
-  protocol support (no `database/sql` indirection unless
-  desired), connection pooling built in, prepared-statement
-  caching, JSONB-aware. The historical alternative `lib/pq` is
-  in maintenance mode — no new features, security fixes only —
-  and ADR-0023 §8 explicitly commits to `pgx/v5` so R4.2's
-  implementation does not reach for `lib/pq` by reflex.
-
-The control plane has no Kafka or Redis dependency; the only
-new dependency R4 introduces control-plane-side is `pgx/v5`.
-
-### Playwright adapter (Node / TypeScript)
-
-- **Redis**: `ioredis`. Mature, maintained, supports the
-  full Redis command surface, includes Cluster / Sentinel
-  support for v1alpha2 if Spectre's deployment shape evolves.
-  The alternative `node-redis` is also viable; `ioredis` is
-  selected for its slightly larger feature surface and
-  community familiarity.
-
-The Playwright adapter has no Postgres or Kafka dependency.
-
-### SeleniumBase adapter (Python)
-
-- **Redis**: `redis-py` (the official driver, package name
-  `redis`). Maintained by the Redis team itself; the de-facto
-  standard Python client. Async support via `redis.asyncio`
-  if SeleniumBase's adapter wrapper goes async; v1alpha1 of
-  the adapter is sync, so the sync API is the path R4.3 takes
-  initially.
-
-The SeleniumBase adapter has no Postgres or Kafka dependency.
-
-### curl-impersonate adapter (Go)
-
-- **Redis**: `go-redis/v9`. Mature Go Redis client; idiomatic
-  context-aware API. The alternative `redigo` is older and
-  less actively developed; `go-redis/v9` is selected.
-
-The curl-impersonate adapter has no Postgres or Kafka
-dependency.
-
-### Pinning discipline
-
-Each library lands at a specific minor version pinned in the
-respective dependency manifest at R4.2 / R4.3 / R4.4 time:
-
-- Engine: `Cargo.toml` `[dependencies]` block, pinned via
-  semver `~` operators on minor (e.g. `sqlx = "~0.8"`).
-- Control plane: `core/control-plane/go.mod`, pinned via the
-  Go module system.
-- Playwright: `adapters/playwright/package.json`, pinned via
-  `npm`'s `^` (caret-major).
-- SeleniumBase: `adapters/seleniumbase/pyproject.toml`,
-  pinned via PEP 440 `~=` (compatible-release).
-- curl-impersonate: `adapters/curl-impersonate/go.mod`,
-  pinned via the Go module system.
-
-The implementation PRs (R4.2 / R4.3 / R4.4) commit specific
-versions; this ADR commits the *libraries* and the *pinning
-discipline*, not the version numbers themselves. Library
-version bumps over the project's life are normal-course
-maintenance; library *replacements* require revisiting this
-section.
+Each library is pinned in the respective dependency manifest
+at R4.2 / R4.3 / R4.4 time (`Cargo.toml`, `go.mod`,
+`package.json`, `pyproject.toml`) using the ecosystem's
+idiomatic compatibility-range operator. ADR-0023 commits the
+library, not the version number.
 
 ## §9 — Compose stack composition
 
-R6.2 lands the local Compose stack. ADR-0025 will record the
-full stack design; this section commits the stateful-service
-slice of it so R4.2 / R4.3 / R4.4 can rely on a known shape
-when their integration tests run against it.
+R6.2 lands the full Compose stack; ADR-0025 will record the
+design. The stateful slice committed here so R4.2 / R4.3 / R4.4
+integration tests have a stable target:
 
-Three image choices, picked for footprint and operational
-parity with what the Helm chart will run in production:
+- **Postgres**: `postgres:16-alpine`, ~80 MB compressed,
+  ~250 MB resident. Version 16 matches the schema's tested
+  surface and the Helm subchart's default (§10).
+- **Kafka**: `redpandadata/redpanda:latest` single-node, ~150
+  MB compressed, ~250 MB resident. Wire-compatible with Kafka
+  0.11+, single binary, no ZooKeeper. Production uses real
+  Kafka via §10; the Compose convenience does not leak
+  upward.
+- **Redis**: `redis:7-alpine`, ~30 MB compressed, ~10 MB
+  resident at startup.
 
-- **Postgres**: `postgres:16-alpine`. Roughly 80 MB
-  compressed, ~250 MB resident. PostgreSQL 16 is the version
-  the schema (§2) is tested against and the version the
-  Helm chart's Bitnami subchart targets by default (§10).
-  Alpine base keeps the image small; the Postgres binary is
-  upstream-built so behaviour matches the Bitnami / vanilla
-  Postgres images operators run elsewhere.
-- **Kafka**: `redpandadata/redpanda:latest` (single-node
-  configuration). Roughly 150 MB compressed, ~250 MB
-  resident under load. Wire-protocol compatible with Apache
-  Kafka 0.11+ — the producer code does not branch on broker
-  identity — and ships as a single Go binary with no
-  ZooKeeper dependency. The choice trades the dev-loop
-  startup cost (a full Kafka + ZooKeeper pair would take
-  20-30 seconds to be admission-ready) for a few seconds of
-  Redpanda startup. Production deployments use real Kafka
-  (or Strimzi-managed Kafka, or Bitnami-managed Kafka — see
-  §10); the Compose-stack convenience does not leak into the
-  production model.
-- **Redis**: `redis:7-alpine`. Roughly 30 MB compressed,
-  ~10 MB resident at startup. The official Redis image on
-  Alpine; nothing exotic.
-
-Total stateful overhead in the dev stack: roughly 260 MB
-compressed image weight, under 600 MB resident at idle. R6.3's
-devcontainer (Docker-in-Docker) is sized accordingly.
-
-Service names in the Compose `services:` block follow the
-discovery convention from ADR-0021 §5: `postgres`, `kafka`
-(the Redpanda container exposes itself as `kafka` so consumer
-code reading `SPECTRE_KAFKA_BROKERS=kafka:9092` resolves the
-right service), `redis`. Application services connect via
-`postgres:5432`, `kafka:9092`, `redis:6379` — no extra
-configuration, no port-forward dance.
-
-The stack composition is recorded here so R4.2 / R4.3 / R4.4's
-integration tests have a stable target. R6.2 implements the
-`docker-compose.yml`; R8.1's documentation refresh will narrate
-the stack from the operator's perspective.
+Total: ~260 MB compressed image weight, under 600 MB resident
+at idle. R6.3's devcontainer is sized accordingly. Service
+names follow ADR-0021 §5: `postgres`, `kafka` (the Redpanda
+container exposes itself as `kafka`), `redis`. Application
+services connect via `postgres:5432`, `kafka:9092`,
+`redis:6379` — no port-forward dance.
 
 ## §10 — Production deployment
 
-R7.1's Helm chart packages the stateful services as managed
-subcharts. The full chart design lives in ADR-0026 (R7.1
-territory); this section commits the stateful-service slice
-that ADR-0023 binds.
+R7.1's Helm chart packages stateful services as managed
+subcharts; ADR-0026 records the chart design. The slice
+ADR-0023 binds:
 
-### Subcharts
+- **Postgres**: Bitnami's `postgresql` chart, pinned by major
+  version. StatefulSet, PVC, Service, Secret. `postgresql.
+  enabled: false` accepts an external Postgres.
+- **Kafka**: two viable options, decision deferred to R7.1.
+  Bitnami's `kafka` chart materialises Kafka directly
+  (simpler for operators already on Bitnami subcharts);
+  Strimzi's operator pattern composes better with Spectre's
+  own operator-based architecture. The Helm-values shape
+  (`kafka.enabled`, external-broker fallback) is independent
+  of which is chosen.
+- **Redis**: Bitnami's `redis` chart. StatefulSet (or master-
+  replica under HA values), Service, Secret. `redis.enabled:
+  false` accepts an external Redis.
 
-- **Postgres**: Bitnami's `postgresql` chart, pinned by
-  major version. The chart materialises a StatefulSet, a
-  PersistentVolumeClaim, the Service, and the Secret holding
-  the connection password. Helm values let the operator
-  size storage, configure replication for HA, or disable the
-  subchart entirely (`postgresql.enabled: false`) when
-  bringing an external Postgres.
-- **Kafka**: Two options, both viable, decision deferred to
-  R7.1's prompt. The Bitnami `kafka` chart materialises a
-  Kafka StatefulSet directly — simpler for operators who
-  already use Bitnami subcharts everywhere. The Strimzi
-  operator pattern (a `Kafka` CRD reconciled into pods)
-  composes better with the rest of Spectre's operator-based
-  architecture and is the path real production Kafka
-  deployments increasingly take. R7.1 picks one with that
-  prompt's full context; ADR-0023 records that both are on
-  the table and that the Helm-values shape (`kafka.enabled`,
-  external-broker fallback) does not depend on which one is
-  picked.
-- **Redis**: Bitnami's `redis` chart. Materialises a
-  StatefulSet (or master-replica pair under HA values), the
-  Service, the Secret. Helm values cover the same
-  `redis.enabled` toggle for operators bringing an external
-  Redis.
+Every subchart carries an `enabled: false` toggle. When
+disabled, the operator supplies the connection URL via Helm
+values, the chart references a Kubernetes Secret via
+`valueFrom.secretKeyRef`, and the rendered Deployment's
+`SPECTRE_*_URL` env vars resolve from the Secret. This pattern
+lets self-hosted operators bring cloud-managed services
+without forking the chart.
 
-### External service support
-
-Every subchart carries an `enabled: false` Helm value. When
-disabled, the chart materialises only the Spectre application
-services and reads connection URLs from the operator-supplied
-configuration:
-
-- `postgresql.enabled: false` requires the operator to set
-  `spectre.postgres.url` in Helm values; the rendered engine
-  Deployment carries `SPECTRE_POSTGRES_URL` from a Secret
-  reference (`valueFrom.secretKeyRef`).
-- `kafka.enabled: false` requires the operator to set
-  `spectre.kafka.brokers`. ScrapeJobs that select
-  `OutputSink.Kafka` write to those brokers; if neither
-  subchart nor external broker is configured, admission
-  rejects new Kafka sinks per §6.
-- `redis.enabled: false` requires the operator to set
-  `spectre.redis.url`. The rendered adapter Deployments
-  carry `SPECTRE_REDIS_URL` from the Secret.
-
-The toggle pattern lets a self-hosted operator bring their
-own managed services (cloud-managed Postgres / Redis / Kafka,
-in-house deployments) without forking the chart. Production
-operators routinely run their stateful services centrally; the
-chart respects that operational pattern.
-
-### Credential handling
-
-The connection URLs embed credentials. Production deployments
-must not hard-code credentials in `values.yaml`; the chart
-references Kubernetes Secrets via `valueFrom.secretKeyRef` for
-every URL. R7.1's chart README documents the Secret shapes the
-operator must pre-create (or, for the bundled subcharts, the
-chart materialises the Secrets on install). The §12
-configuration model is pass-through; Helm just populates the
-env vars.
-
-### Storage and backups
-
-Out of scope for ADR-0023. The Helm chart's PersistentVolumeClaim
-sizing, the backup story for Postgres, and the Kafka retention
-configuration belong in ADR-0026 / R7.1's prompt. ADR-0023's
-commitment is to the *deployment shape* (subchart-or-external,
-configurable via Helm values, credentials in Secrets); the
-operational specifics are R7.1's call.
+Connection URLs embed credentials. Production deployments must
+not hard-code in `values.yaml`; the chart references Secrets
+for every URL. R7.1's chart README documents the Secret shapes
+the operator pre-creates. Storage sizing, the Postgres backup
+story, and Kafka retention belong in ADR-0026 / R7.1.
 
 ## §11 — Migration order across phases
 
-Phase R4 lands the stateful services in three PRs. The order
-is not arbitrary — it reflects the blast radius each PR carries
-and the dependency direction between them.
+R4 lands in three PRs. The order reflects blast radius and
+dependency direction.
 
-### R4.2 first — Postgres
+**R4.2 first — Postgres.** Smallest blast radius. The engine's
+write path and the control plane's read path are both new code
+paths reviewable in isolation; existing stdout-sinked
+ScrapeJobs continue to reach `kubectl logs` unchanged because
+Postgres writes are *additions* to the engine's task graph, not
+replacements. A reviewer can read the diff and verify the
+stdout flow is intact.
 
-R4.2 lands the engine's Postgres write path and the control
-plane's Postgres read path. Schema migrations (the §2 SQL)
-land here, with the engine running them at startup (§13).
-Existing functionality — stdout-sinked ScrapeJobs reaching
-`kubectl logs` — keeps working; the Postgres write becomes
-*additional* state rather than replacing anything. The blast
-radius is the smallest of the three: failure modes are confined
-to the engine's write path and the control plane's read path,
-both of which are new code paths and reviewable in isolation.
+**R4.3 second — Redis.** The highest-risk PR of the entire
+refactor. The §5 restart-invalidation contract changes the
+relationship clients have with adapter sessions. Three adapters
+in three languages each get a Redis client, a write path, and
+the `Initialize`-rejection-on-startup model. The conformance
+suite is the canonical verification surface; R4.3 must keep the
+13 / 12 / 6 capability assertions byte-for-byte identical
+through the switch (ADR-0017's invariant). Lands after R4.2 so
+the highest-risk PR rides on a known-good Postgres path; if
+R4.3 introduces a regression, the bisect against R4.2 is clean.
+R4.3 carries its own staged rollout — Playwright first as the
+reference, SeleniumBase and curl-impersonate following.
 
-R4.2 lands first because it has the most existing-behaviour
-preservation. A reviewer can read the diff and check that the
-stdout flow is unchanged — Postgres writes are
-additions to the engine's task graph, not replacements.
+**R4.4 last — Kafka.** Strictly depends on R4.2. The Kafka
+producer runs alongside Postgres writes (the engine writes one
+row to `jobs` regardless of sink; `output_sink_kind = 'kafka'`
+for these jobs). Without R4.2, R4.4 would either skip `jobs`
+writes for Kafka jobs (coverage gap) or duplicate R4.2's work.
+Lowest existing-user impact: no production user exercises
+`OutputSink.Kafka` today (R3.2's reconciler rejects it).
 
-### R4.3 second — Redis
-
-R4.3 externalises adapter session metadata. This is the
-**highest-risk PR of the entire refactor**. The architectural
-contract from §5 — restart invalidation — changes the
-relationship clients have with adapter sessions. Three
-adapters in three languages each get a Redis client, a write
-path, and the `Initialize`-rejection-on-startup model. The
-conformance suite (`tools/conformance/`) is the canonical
-verification surface; R4.3's prompt will require that the 13 /
-12 / 6 capability assertions stay byte-for-byte identical
-through the switch, just as ADR-0017's invariant has held
-through every prior refactor PR.
-
-R4.3 lands after R4.2 so the highest-risk PR rides on top of
-a known-good Postgres path. If R4.3 introduces a regression,
-the diff bisects against the R4.2 baseline cleanly — the new
-risk is localised to the adapter side.
-
-R4.3 carries its own rollout discipline. The R4.3 prompt will
-detail the per-adapter staging (Playwright first as the
-reference implementation, SeleniumBase and curl-impersonate
-following), the conformance-suite gating, and the contract-
-test expansion.
-
-### R4.4 last — Kafka
-
-R4.4 wires the engine's Kafka producer and removes the
-admission-time rejection from the v1alpha2 reconciler. The
-v1alpha2 schema's `OutputSink.Kafka` becomes a runnable
-variant.
-
-R4.4 lands last because it is the only PR among the three
-that strictly depends on prior R4 work. The Kafka producer
-runs alongside the Postgres write (engine writes one row to
-`jobs` for the job's metadata, regardless of sink; the row's
-`output_sink_kind` is `'kafka'` for these jobs). Without
-R4.2's Postgres path, R4.4 would either skip `jobs` writes
-for Kafka-sinked jobs (creating a coverage gap) or land its
-own Postgres path (duplicating R4.2's work).
-
-R4.4 also has the lowest existing-user impact of the three.
-No production user is exercising `OutputSink.Kafka` today
-(R3.2's reconciler rejects it at admission). R4.4's risk is
-confined to the new code path and to operators who explicitly
-opt into Kafka-sinked jobs once it lands.
-
-### Cross-ADR seams preserved
-
-Three existing ADRs interact with R4:
-
-- **ADR-0010 (element lifecycle).** Preserved. The session
-  metadata layer moves to Redis but the lifecycle contract —
-  `Initialize` → session_id → session-bound RPCs → `Close`
-  / TTL eviction — is byte-for-byte identical from the
-  client's perspective.
-- **ADR-0017 (capability semantic equivalence).**
-  Preserved. The 13 / 12 / 6 capability lists for Playwright /
-  SeleniumBase / curl-impersonate are unchanged; Kafka, S3,
-  and Webhook are *engine* capabilities (sink choices), not
-  *driver-protocol* capabilities (adapter operations).
-  ADR-0017's invariant remains the conformance-suite gate.
-- **ADR-0019 §6 (control plane reads stdout for output).**
-  Evolves. The control plane reads stdout when the sink is
-  `Stdout`; for Kafka, S3, and Webhook sinks the output flows
-  to the sink directly without the control plane consuming
-  the row stream. The §6 commitment is honoured for the
-  Stdout variant and superseded for the others by the
-  v1alpha2 schema R3.2 committed.
-- **ADR-0021 §5 (env-var convention).** Extended. The three
-  new URL env vars (`SPECTRE_POSTGRES_URL`,
-  `SPECTRE_KAFKA_BROKERS`, `SPECTRE_REDIS_URL`; see §12)
-  follow the convention ADR-0021 §5 established for the
-  service-discovery URLs.
-
-No existing ADR is superseded by ADR-0023. R4 is purely
-additive at the architectural layer; the existing seams stay.
+Cross-ADR seams: **ADR-0010** (element lifecycle) preserved —
+metadata moves to Redis, `Initialize`-to-`Close` contract
+byte-for-byte identical from the client's view. **ADR-0017**
+(13 / 12 / 6 capability invariant) preserved — Kafka / S3 /
+Webhook are *engine* capabilities (sink choices), not *driver-
+protocol* capabilities, so the conformance suite sees no
+change. **ADR-0019 §6** (control plane reads stdout) evolves —
+control plane reads stdout when sink is `Stdout`; for Kafka /
+S3 / Webhook the output flows to the sink directly. **ADR-0021
+§5** (env-var convention) extended with the three URL env vars
+(see §12). No existing ADR is superseded; R4 is purely additive
+at the architectural layer.
 
 ## §12 — Configuration via env vars
 
 ADR-0021 §5 established the env-var-per-dependency convention
-for the service-mesh layer. ADR-0023 extends the convention to
-the stateful services. Each service reads its own connection
-configuration at startup; there is no central configuration
-store, no ConfigMap holding the cross-service shape, no Secrets
-reference at the application layer beyond what Kubernetes /
-Helm already inject.
-
-Three env vars are added across R4:
+for the service-mesh layer. ADR-0023 extends it to the
+stateful services. Each service reads its own connection
+configuration at startup; no central configuration store, no
+ConfigMap holding the cross-service shape.
 
 ```
 SPECTRE_POSTGRES_URL=postgres://user:pass@host:5432/dbname
@@ -1016,45 +586,96 @@ SPECTRE_KAFKA_BROKERS=broker1:9092,broker2:9092
 SPECTRE_REDIS_URL=redis://host:6379/0
 ```
 
-The URL conventions match each ecosystem's idiomatic form:
+The forms match each ecosystem's idiomatic convention:
+`postgres://` per libpq (accepted by `sqlx` and `pgx/v5`);
+comma-separated `host:port` for Kafka (accepted by `rdkafka`
+directly); `redis://` per RFC (accepted by `ioredis`,
+`redis-py`, `go-redis/v9`).
 
-- `SPECTRE_POSTGRES_URL` is a `postgres://` connection URL
-  per the libpq convention. `sqlx` and `pgx/v5` both accept
-  this form; the engine and control plane share the
-  configuration shape.
-- `SPECTRE_KAFKA_BROKERS` is a comma-separated list of
-  `host:port` pairs. Kafka clients across every language
-  accept this form; the engine reads it and passes it to
-  `rdkafka` directly.
-- `SPECTRE_REDIS_URL` is a `redis://` connection URL per the
-  RFC. `ioredis`, `redis-py`, and `go-redis/v9` all accept
-  this form; the three adapters share the configuration shape.
+Per-service reading: engine reads Postgres + Kafka; control
+plane reads Postgres only; each adapter reads Redis only. A
+service that does not need a stateful-service dial does not
+read its env var.
 
-Each service reads only the env vars it needs:
-
-- Engine reads `SPECTRE_POSTGRES_URL` and `SPECTRE_KAFKA_BROKERS`.
-- Control plane reads `SPECTRE_POSTGRES_URL` only.
-- Each adapter reads `SPECTRE_REDIS_URL` only.
-
-A service that does not need a stateful-service dial does not
-read its env var. An operator who runs Spectre under Compose
-sees three env vars across the stack; under Helm, the rendering
-populates each Deployment with only the env vars its workload
-needs.
-
-### Secret handling
-
-Connection URLs embed credentials. Production deployments must
+Connection URLs embed credentials. Production deployments
 populate the env vars from Kubernetes Secrets via
-`valueFrom.secretKeyRef`; R7.1's chart defaults to this
-pattern. The Compose stack carries credentials in the
-`environment:` block directly — acceptable for a local
-development stack where the credentials are well-known throw-
-away values, not acceptable for production.
+`valueFrom.secretKeyRef`; R7.1's chart defaults to this. The
+Compose stack carries credentials in `environment:` directly —
+acceptable for local-dev throwaway values, not for production.
 
-The R8.1 documentation refresh will narrate the credential
-flow end-to-end (where the operator stores the URL, how Helm
-populates the Secret, how the Deployment references it). This
-ADR commits the env-var contract; R7.1 / R8.1 own the
-production runbook.
+## §13 — Migrations and schema evolution
 
+Migrations live in `core/engine/migrations/` as versioned SQL
+files: `<timestamp>_<name>.sql`. R4.2 lands the first migration
+— `<timestamp>_initial_schema.sql` containing the §2 schema —
+and every subsequent schema change adds a new file. Timestamps
+are immutable once committed; reordering or renaming after
+merge is forbidden. sqlx records applied migrations in a
+`_sqlx_migrations` table keyed on filename, so a migration the
+engine has already applied does not run again.
+
+The engine runs migrations at startup, before serving traffic.
+Sequence: connect to Postgres using `SPECTRE_POSTGRES_URL`,
+apply any new files in timestamp order, register the gRPC
+service, start serving. If migrations fail (broken SQL,
+conflicting state, permission error) the engine exits non-zero
+— under Helm a Pod crash loop, under Compose a non-zero exit.
+The operator rolls back the deployment (or fixes the migration
+in a follow-up PR).
+
+The "engine runs migrations at startup" choice was made over
+"separate Kubernetes Job runs migrations, engine waits". The
+embedded model gives one artifact, one deployment topology, one
+log stream; slow migrations delay engine readiness, which for
+v1alpha1's small schema is not a concern. A future migration
+large enough to make the embedded model painful is itself an
+architectural signal worth a dedicated ADR; the choice is
+reversible without retroactive ADR-0023 changes.
+
+sqlx migrations are forward-only. There is no "down" migration
+script; rolling back a bad migration is a new forward migration
+that reverses the change, not an inverse script. The discipline
+matches production reality (where "down" against live data is
+rarely the right action) and keeps the migration manifest
+simple. Idempotency at the SQL level is the migration author's
+responsibility — `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF
+NOT EXISTS`, equivalent guards — so a migration is safe to re-
+apply on a partially-migrated database.
+
+The schema's wire-level version is the latest applied
+migration's timestamp. There is no semver on the schema —
+v1alpha1 / v1alpha2 versioning lives at the CRD layer
+(ADR-0019), not the storage layer. A reader needing "what
+schema version is this database running" reads
+`_sqlx_migrations`.
+
+## More Information
+
+- [ADR-0010 — Element lifecycle and capability gating](0010-element-lifecycle-and-capability-gating.md)
+  (preserved; metadata layer moves to Redis, lifecycle
+  contract byte-for-byte identical)
+- [ADR-0017 — curl-impersonate extraction and final capability divergence](0017-curl-impersonate-extraction-and-final-capability-divergence.md)
+  (preserved; 13 / 12 / 6 invariant carries through R4
+  unchanged — sinks are engine capabilities, not driver-
+  protocol capabilities)
+- [ADR-0019 — Control plane architecture and ScrapeJob CRD](0019-control-plane-architecture-and-scrapejob-crd.md)
+  (§6 evolves: control plane reads stdout when sink is Stdout;
+  Kafka / S3 / Webhook output flows to its sink)
+- [ADR-0020 — Microservices architecture supersession](0020-microservices-architecture-supersession.md)
+  (the architectural anchor; this ADR is the §5 phase R4 work)
+- [ADR-0021 — Service discovery](0021-service-discovery.md)
+  (§5 env-var convention extended in §12)
+- [ADR-0022 — TCP / gRPC transport](0022-tcp-grpc-transport.md)
+  (v1alpha1 plaintext-gRPC stance; stateful services follow
+  the same trusted-network assumption)
+- sqlx documentation: <https://github.com/launchbadge/sqlx>
+- rdkafka documentation: <https://github.com/fede1024/rust-rdkafka>
+- pgx documentation: <https://github.com/jackc/pgx>
+- Redpanda quick-start:
+  <https://docs.redpanda.com/current/get-started/quick-start/>
+- Strimzi (Kafka on Kubernetes): <https://strimzi.io/>
+- Bitnami charts: <https://github.com/bitnami/charts>
+- [`docs/refactor-audit.md`](../refactor-audit.md) — per-PR
+  work plan for R4.2 / R4.3 / R4.4
+- [`docs/refactoring-status.md`](../refactoring-status.md) —
+  live phase tracker
