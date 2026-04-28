@@ -133,6 +133,7 @@ impl EngineService for EngineServiceImpl {
             job_id,
             output_sink_kind,
             kafka_topic,
+            ..
         } = request.into_inner();
         // Empty defaults to "stdout" so clients that predate R4.2
         // (notably the engine's own integration tests and any
