@@ -23,9 +23,11 @@
 use std::env;
 use std::net::SocketAddr;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use spectre_engine::db::{Database, run_migrations};
+use spectre_engine::kafka::KafkaProducer;
 use spectre_engine::registry::AdapterRegistry;
 use spectre_engine::server::engine_server;
 use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
@@ -71,11 +73,33 @@ async fn run() -> Result<()> {
         "postgres ready"
     );
 
+    // Kafka producer dial. ADR-0023 §6 makes Kafka OPTIONAL: the
+    // engine continues startup even when the broker is unreachable
+    // or unconfigured. Jobs with `OutputSink.Kafka` later fail fast
+    // at job-start time with `error_code = "KAFKA_UNAVAILABLE"`
+    // (ADR-0023 §3 R4.4 addendum) — equivalent UX to admission
+    // rejection without the cost of a validating webhook.
+    let kafka: Option<Arc<KafkaProducer>> = match KafkaProducer::from_env().await {
+        Ok(producer) => {
+            info!(brokers = producer.brokers(), "kafka producer ready");
+            Some(Arc::new(producer))
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "kafka producer unavailable; OutputSink.Kafka jobs will fail fast \
+                 with KAFKA_UNAVAILABLE — set SPECTRE_KAFKA_BROKERS and restart \
+                 the engine to enable the kafka sink",
+            );
+            None
+        }
+    };
+
     let registry = AdapterRegistry::from_env();
     log_registry(&registry);
 
     let engine = Engine::with_registry(registry);
-    let svc = engine_server(engine, db);
+    let svc = engine_server(engine, db, kafka);
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter

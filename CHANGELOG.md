@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Kafka producer integration; `OutputSink.Kafka` unblocked
+  (R4.4).** ADR-0023 §3 R4.4 addendum implements the engine's
+  `rdkafka` producer end-to-end. The engine binary builds one
+  shared `KafkaProducer` at startup via `KafkaProducer::from_env`
+  and threads it through `EngineServiceImpl` as
+  `Option<Arc<KafkaProducer>>`. Kafka admission gating follows
+  ADR-0023 §6's optional-service pattern: an unreachable broker
+  at startup logs a warning and the engine continues without
+  Kafka; subsequent `RunJob`s with `output_sink_kind = "kafka"`
+  fail fast at job-start time with `error_code = "KAFKA_UNAVAILABLE"`
+  (or `"KAFKA_TOPIC_REQUIRED"` for an empty topic) — equivalent UX
+  to admission rejection without a custom validating webhook.
+  Kafka-sinked jobs publish one message per extracted row to the
+  topic from `ScrapeJob.Spec.OutputSink.Kafka.Topic`,
+  partition-keyed by job UUID so all rows for a job land on a
+  single partition in extraction order, with headers `job_id` /
+  `row_index` / `driver` / `timestamp` (ISO-8601). Producer
+  config: `acks=all`, `enable.idempotence=true`,
+  `compression.type=snappy`, `linger.ms=10` (tunable via
+  `SPECTRE_KAFKA_LINGER_MS`). Delivery semantics:
+  **at-least-once**; consumer-side idempotency on
+  `(job_id, row_index)` is the documented user responsibility.
+  `engine.proto` evolves non-breakingly with `kafka_topic` field
+  (number 4); the control-plane reconciler unblocks the Kafka
+  branch of `validateOutputSink` and forwards the topic via the
+  evolved `JobRunner` interface (ADR-0019 §5 addendum). The
+  `_NOT_YET_IMPLEMENTED` Kafka sample manifest is renamed to
+  `spectre_v1alpha2_scrapejob_kafka.yaml` — a functional
+  example. The Compose stack gains **Apache Kafka 3.7.1 in KRaft
+  mode** (production parity with R7.1's Strimzi target,
+  superseding the original §3 Redpanda single-binary mention)
+  and **Redpanda Console** as the topic / offset / message-browser
+  UI at <http://localhost:8080>. `.env.example` carries
+  `SPECTRE_KAFKA_BROKERS`. Justfile recipes:
+  `engine-kafka-test`, `kafka-console`, `kafka-topics`,
+  `kafka-consume`. Conformance suite gains
+  `tools/conformance/tests/test_kafka_sink.py` — one
+  engine-level E2E test (the kafka path is engine behaviour,
+  not driver-level capability) that spawns the engine binary +
+  Playwright adapter, submits a `RunJob` with the kafka sink,
+  drains the topic via `confluent_kafka.Consumer`, and asserts
+  partition keys + headers. The 13 / 12 / 6 capability
+  invariant holds byte-for-byte. **Phase R4 closes with this PR.**
+  rdkafka 0.36 with `cmake-build + ssl-vendored + tokio`
+  features adds 10-15 minutes to the first clean engine build
+  (OpenSSL compile from source) for forward-compat with
+  v1alpha2 SASL/mTLS; cached thereafter. The OpenSSL stack
+  vendored with librdkafka is *deliberately* separate from
+  sqlx's rustls 0.23 — the two TLS stacks coexist without
+  conflict because they are different libraries (C vs
+  Rust-native).
 - **Redis adapter session externalization with restart
   invalidation (R4.3).** ADR-0023 §4's keyspace lands across all
   three reference adapters: each adapter writes session metadata

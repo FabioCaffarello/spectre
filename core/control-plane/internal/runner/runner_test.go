@@ -28,7 +28,7 @@ import (
 
 func TestStubRunner_ReturnsZeroAndNil(t *testing.T) {
 	r := &StubRunner{SleepDuration: 5 * time.Millisecond}
-	rows, err := r.Run(context.Background(), uuid.New(), "spectre: v1alpha1\n", "stdout", io.Discard)
+	rows, err := r.Run(context.Background(), uuid.New(), "spectre: v1alpha1\n", "stdout", "", io.Discard)
 	if err != nil {
 		t.Fatalf("Run() returned error: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestStubRunner_HonoursContextCancellation(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	rows, err := r.Run(ctx, uuid.New(), "spectre: v1alpha1\n", "stdout", io.Discard)
+	rows, err := r.Run(ctx, uuid.New(), "spectre: v1alpha1\n", "stdout", "", io.Discard)
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, context.DeadlineExceeded) {

@@ -25,7 +25,9 @@
 //!   [`serde_json::Value`] row to an unbounded mpsc channel;
 //! * a *drainer task* (this future) that pulls rows off the channel,
 //!   appends them to `job_rows` when `output_sink_kind = 'stdout'`
-//!   per ADR-0023 §2, and forwards each row to the gRPC stream as a
+//!   per ADR-0023 §2, publishes them to Kafka when
+//!   `output_sink_kind = 'kafka'` per ADR-0023 §3 (R4.4), and
+//!   forwards each row to the gRPC stream as a
 //!   `RunJobResponse.Row` event.
 //!
 //! When the executor finishes, `ChannelSink` (and its sender) drop;
@@ -36,10 +38,14 @@
 //!
 //! Per-row Postgres write failures (`record_job_row`) log a warning
 //! and continue — an audit gap is preferred to aborting an
-//! in-flight scrape over an audit miss. Terminal-state write
-//! failures (`mark_completed` / `mark_failed`) likewise log and
-//! emit the gRPC event regardless, so the client sees a definitive
-//! end even if Postgres is briefly unreachable mid-stream.
+//! in-flight scrape over an audit miss. Per-row Kafka publish
+//! failures terminate the job with `error_code =
+//! "KAFKA_PUBLISH_FAILED"` (ADR-0023 §3 — Kafka is the data
+//! destination, not an audit aside, so a publish error is fatal).
+//! Terminal-state write failures (`mark_completed` / `mark_failed`)
+//! likewise log and emit the gRPC event regardless, so the client
+//! sees a definitive end even if Postgres is briefly unreachable
+//! mid-stream.
 //!
 //! Backpressure is intentionally naive in v1alpha1 (master prompt
 //! §4.4): the channel is unbounded, so a slow client buffers in
@@ -65,34 +71,49 @@ use crate::engine_proto::{
     Completed, Failed, Row, RunJobRequest, RunJobResponse, run_job_response,
 };
 use crate::error::EngineError;
+use crate::kafka::KafkaProducer;
 use crate::output::OutputSink;
 
 /// Reusable factory for the fully-configured tonic service stack.
 /// Wraps the engine in an `Arc` (so the streaming task can hold it
 /// independently) and exposes the resulting `EngineServer` value.
+///
+/// `kafka` is the (optional) shared `KafkaProducer`. `None` when
+/// the engine started without a reachable broker; jobs whose
+/// `output_sink_kind = 'kafka'` then fail fast with
+/// `KAFKA_UNAVAILABLE` (ADR-0023 §3 R4.4 addendum).
 #[must_use]
-pub fn engine_server(engine: Engine, db: Database) -> EngineServer<EngineServiceImpl> {
-    EngineServer::new(EngineServiceImpl::new(engine, db))
+pub fn engine_server(
+    engine: Engine,
+    db: Database,
+    kafka: Option<Arc<KafkaProducer>>,
+) -> EngineServer<EngineServiceImpl> {
+    EngineServer::new(EngineServiceImpl::new(engine, db, kafka))
 }
 
 /// Implementation of `spectre.engine.v1alpha1.Engine`. Holds an
 /// [`Engine`] (cheap to clone — it carries an [`AdapterRegistry`]
-/// of strings) and a [`Database`] handle (cheap to clone — wraps a
-/// reference-counted `PgPool`); both are shared with the streaming
-/// task spawned per `RunJob`.
+/// of strings), a [`Database`] handle (cheap to clone — wraps a
+/// reference-counted `PgPool`), and an optional shared
+/// [`KafkaProducer`]; all are shared with the streaming task
+/// spawned per `RunJob`.
 pub struct EngineServiceImpl {
     engine: Arc<Engine>,
     db: Database,
+    kafka: Option<Arc<KafkaProducer>>,
 }
 
 impl EngineServiceImpl {
-    /// Construct a service implementation wrapping `engine` and
-    /// holding a [`Database`] handle for ADR-0023 §2 persistence.
+    /// Construct a service implementation wrapping `engine`,
+    /// holding a [`Database`] handle for ADR-0023 §2 persistence,
+    /// and an optional [`KafkaProducer`] for ADR-0023 §3
+    /// `OutputSink.Kafka` jobs.
     #[must_use]
-    pub fn new(engine: Engine, db: Database) -> Self {
+    pub fn new(engine: Engine, db: Database, kafka: Option<Arc<KafkaProducer>>) -> Self {
         Self {
             engine: Arc::new(engine),
             db,
+            kafka,
         }
     }
 }
@@ -111,6 +132,7 @@ impl EngineService for EngineServiceImpl {
             job_dsl,
             job_id,
             output_sink_kind,
+            kafka_topic,
         } = request.into_inner();
         // Empty defaults to "stdout" so clients that predate R4.2
         // (notably the engine's own integration tests and any
@@ -148,6 +170,10 @@ impl EngineService for EngineServiceImpl {
         // Persist the `jobs` row before opening the stream. A
         // Postgres failure here is reported synchronously as
         // Internal — the client never sees a half-recorded job.
+        // The row is written for every sink kind (Kafka jobs included)
+        // so a Postgres reader can answer "where did the output go?"
+        // (ADR-0023 §2 — `output_sink_kind` is recorded for every
+        // job; only `job_rows` audit is gated on stdout).
         db_jobs::insert_job(
             &self.db.pool,
             job_uuid,
@@ -167,15 +193,20 @@ impl EngineService for EngineServiceImpl {
 
         let engine = Arc::clone(&self.engine);
         let pool = self.db.pool.clone();
+        let kafka = self.kafka.clone();
+        let driver = plan.driver.clone();
         let (response_tx, response_rx) =
             mpsc::unbounded_channel::<Result<RunJobResponse, Status>>();
 
         tokio::spawn(stream_run_job(
             engine,
             pool,
+            kafka,
             plan,
             job_uuid,
+            driver,
             output_sink_kind,
+            kafka_topic,
             response_tx,
         ));
 
@@ -187,16 +218,51 @@ impl EngineService for EngineServiceImpl {
 
 /// Drives one `RunJob` to completion: spawns the executor on a child
 /// task, drains rows off the executor's channel (persisting and
-/// forwarding), then writes the terminal `mark_completed` /
-/// `mark_failed` UPDATE and emits the matching gRPC event.
+/// publishing as the sink demands, forwarding to gRPC), then writes
+/// the terminal `mark_completed` / `mark_failed` UPDATE and emits
+/// the matching gRPC event.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn stream_run_job(
     engine: Arc<Engine>,
     pool: sqlx::PgPool,
+    kafka: Option<Arc<KafkaProducer>>,
     plan: crate::plan::Plan,
     job_uuid: Uuid,
+    driver: String,
     output_sink_kind: String,
+    kafka_topic: String,
     response_tx: mpsc::UnboundedSender<Result<RunJobResponse, Status>>,
 ) {
+    // Pre-flight kafka admission: short-circuit before touching the
+    // executor when the sink is kafka but the producer is missing
+    // or the topic is empty. Yields the terminal Failed event,
+    // writes `mark_failed`, returns.
+    if output_sink_kind == "kafka" {
+        if kafka.is_none() {
+            terminate_with_failure(
+                &pool,
+                job_uuid,
+                "KAFKA_UNAVAILABLE",
+                "kafka producer is not available; set SPECTRE_KAFKA_BROKERS \
+                 and restart engine to enable OutputSink.Kafka jobs",
+                &response_tx,
+            )
+            .await;
+            return;
+        }
+        if kafka_topic.trim().is_empty() {
+            terminate_with_failure(
+                &pool,
+                job_uuid,
+                "KAFKA_TOPIC_REQUIRED",
+                "kafka_topic is empty; set ScrapeJob.spec.outputSink.kafka.topic",
+                &response_tx,
+            )
+            .await;
+            return;
+        }
+    }
+
     let (row_tx, mut row_rx) = mpsc::unbounded_channel::<serde_json::Value>();
 
     // Executor task: owns the sink (and therefore `row_tx`), so the
@@ -208,7 +274,10 @@ async fn stream_run_job(
     });
 
     let persist_rows = output_sink_kind == "stdout";
+    let publish_kafka = output_sink_kind == "kafka";
     let mut row_index: i64 = 0;
+    let mut kafka_publish_error: Option<String> = None;
+
     while let Some(value) = row_rx.recv().await {
         if persist_rows {
             if let Err(e) = db_jobs::record_job_row(&pool, job_uuid, row_index, &value).await {
@@ -224,15 +293,54 @@ async fn stream_run_job(
             Ok(line) => line,
             Err(e) => {
                 error!(job_id = %job_uuid, error = %e, "row serialisation failed");
+                row_index = row_index.saturating_add(1);
                 continue;
             }
         };
-        // `is_err()` (client dropped) is acknowledged but not acted
-        // on: we keep draining so the executor doesn't block and so
-        // remaining rows still persist to `job_rows`.
-        let _ = response_tx.send(Ok(RunJobResponse {
-            event: Some(run_job_response::Event::Row(Row { json_line })),
-        }));
+
+        if publish_kafka && kafka_publish_error.is_none() {
+            // `kafka` is `Some` here: the pre-flight check above
+            // returned for the `None` case. Publishes are awaited
+            // sequentially per row — librdkafka's internal queue +
+            // delivery futures handle concurrency under the hood.
+            if let Some(producer) = kafka.as_ref() {
+                let timestamp = chrono::Utc::now().to_rfc3339();
+                if let Err(e) = producer
+                    .publish_row(
+                        &kafka_topic,
+                        &job_uuid.to_string(),
+                        row_index,
+                        &driver,
+                        &timestamp,
+                        json_line.as_bytes(),
+                    )
+                    .await
+                {
+                    warn!(
+                        job_id = %job_uuid,
+                        row_index,
+                        topic = %kafka_topic,
+                        error = %e,
+                        "kafka publish failed; aborting drain",
+                    );
+                    kafka_publish_error = Some(e.to_string());
+                }
+            }
+        }
+
+        // Forward the row to the gRPC stream regardless of sink so
+        // the control plane can mirror it into operator stdout for
+        // `kubectl logs` (ADR-0019 §6). Stops forwarding after the
+        // first kafka error so the client sees the failure quickly.
+        if kafka_publish_error.is_none() {
+            // `is_err()` (client dropped) is acknowledged but not
+            // acted on: we keep draining so the executor doesn't
+            // block and so remaining rows still persist to
+            // `job_rows`.
+            let _ = response_tx.send(Ok(RunJobResponse {
+                event: Some(run_job_response::Event::Row(Row { json_line })),
+            }));
+        }
         row_index = row_index.saturating_add(1);
     }
 
@@ -250,7 +358,16 @@ async fn stream_run_job(
         }
     };
 
-    let event = build_terminal_event(&pool, job_uuid, outcome).await;
+    // Kafka publish failure overrides a successful executor outcome
+    // — the executor finished but the destination state is
+    // incomplete, so the job did not "succeed" in the §3 sense.
+    let final_outcome = if let Some(message) = kafka_publish_error {
+        Err(EngineError::Output(format!("kafka publish: {message}")))
+    } else {
+        outcome
+    };
+
+    let event = build_terminal_event(&pool, job_uuid, final_outcome).await;
 
     if response_tx
         .send(Ok(RunJobResponse { event: Some(event) }))
@@ -310,11 +427,44 @@ async fn build_terminal_event(
     }
 }
 
+/// Pre-flight rejection helper. Writes `mark_failed` and emits the
+/// terminal Failed event with the supplied code + message. Used
+/// for the kafka admission shortcuts that fail before the executor
+/// runs.
+async fn terminate_with_failure(
+    pool: &sqlx::PgPool,
+    job_uuid: Uuid,
+    code: &str,
+    message: &str,
+    response_tx: &mpsc::UnboundedSender<Result<RunJobResponse, Status>>,
+) {
+    if let Err(db_err) = db_jobs::mark_failed(pool, job_uuid, message).await {
+        warn!(
+            job_id = %job_uuid,
+            error = %db_err,
+            "mark_failed failed at pre-flight rejection; gRPC terminal event still sent",
+        );
+    }
+    warn!(
+        job_id = %job_uuid,
+        code = code,
+        error = message,
+        "RunJob rejected at pre-flight",
+    );
+    let _ = response_tx.send(Ok(RunJobResponse {
+        event: Some(run_job_response::Event::Failed(Failed {
+            error_code: code.to_owned(),
+            error_message: message.to_owned(),
+        })),
+    }));
+}
+
 /// Output sink that forwards each row as a `serde_json::Value` on an
 /// unbounded mpsc channel. The drainer task in `run_job` is
 /// responsible for serialising the row into JSON for the gRPC
-/// `Row.json_line` payload and (for stdout-sinked jobs) appending
-/// the row to `job_rows` per ADR-0023 §2.
+/// `Row.json_line` payload and for the per-sink side-effects
+/// (appending to `job_rows` for stdout, publishing to Kafka for
+/// kafka — ADR-0023 §2 / §3).
 struct ChannelSink {
     tx: mpsc::UnboundedSender<serde_json::Value>,
 }

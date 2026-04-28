@@ -74,12 +74,13 @@ binaries:
 
 ```bash
 git clone https://github.com/FabioCaffarello/spectre && cd spectre
-cp .env.example .env                  # Postgres URL + endpoint defaults
+cp .env.example .env                  # Postgres / Redis / Kafka URL + endpoint defaults
 just bootstrap                        # fetch every component's deps
 just pw-install-browsers              # Chromium for Playwright
 
-# Stateful services (R4.2 ships Postgres; R4.3/R4.4 add Redis + Kafka).
-just compose-up                       # postgres:16-alpine, healthchecked
+# Stateful services: Postgres (R4.2), Redis (R4.3), Kafka KRaft +
+# Redpanda Console (R4.4). All four healthcheck-gated.
+just compose-up                       # docker compose up -d
 
 # Application services — one terminal each.
 just engine-run                       # gRPC service on :9090
@@ -101,8 +102,12 @@ R2.3 retired the standalone `spectre run` / `validate` CLI; the
 (ADR-0020 §3 supersedes ADR-0013). Job execution flows from a
 ScrapeJob CR through the control plane's gRPC client, into the
 engine's `RunJob` stream, and out to the configured `OutputSink`.
-For Postgres specifics see
-[docs/architecture/postgres.md](docs/architecture/postgres.md).
+For per-service specifics see
+[docs/architecture/postgres.md](docs/architecture/postgres.md),
+[docs/architecture/redis.md](docs/architecture/redis.md), and
+[docs/architecture/kafka.md](docs/architecture/kafka.md). The
+Redpanda Console UI for Kafka inspection runs at
+<http://localhost:8080> (`just kafka-console`).
 
 ## How Spectre compares
 

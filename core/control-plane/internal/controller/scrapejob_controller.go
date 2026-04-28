@@ -176,7 +176,11 @@ func (r *ScrapeJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// `kubectl logs <operator-pod>` per ADR-0019 §6.
 		// EngineClientRunner forwards every Row event's json_line;
 		// StubRunner ignores the writer.
-		rows, runErr := jr.Run(runCtx, jobUUID, job.Spec.JobDSL, sinkKind, os.Stdout)
+		// R4.4: kafkaTopic is sourced from `Spec.OutputSink.Kafka.Topic`
+		// when the sink is Kafka; empty for every other variant.
+		// The engine consumes it only on `output_sink_kind = "kafka"`.
+		kafkaTopic := outputSinkKafkaTopic(job.Spec.OutputSink)
+		rows, runErr := jr.Run(runCtx, jobUUID, job.Spec.JobDSL, sinkKind, kafkaTopic, os.Stdout)
 
 		now := metav1.Now()
 		if runErr != nil {
@@ -336,17 +340,33 @@ func outputSinkKind(sink spectrev1alpha2.OutputSink) string {
 	}
 }
 
-// validateOutputSink enforces R3.2's runtime sink grammar: only
-// Stdout is accepted; Kafka, S3, and Webhook are schema-only and
-// reject with an explicit pointer to the implementing phase. The CEL
-// rule on OutputSink enforces "exactly one variant set" at admission,
-// so the unset-everything case is treated as an internal error.
+// validateOutputSink enforces R4.4's runtime sink grammar: Stdout
+// and Kafka are accepted; S3 and Webhook remain schema-only and
+// reject with an explicit pointer to R5.1. The CEL rule on
+// OutputSink enforces "exactly one variant set" at admission, so
+// the unset-everything case is treated as an internal error.
+//
+// R4.4 unblocked the Kafka branch — the engine ships an `rdkafka`
+// producer and the reconciler forwards `Spec.OutputSink.Kafka.Topic`
+// to the engine via the `kafka_topic` field of `RunJobRequest`
+// (engine.proto field 4). Kafka admission gating is engine-side:
+// if the engine binary started without a reachable broker, jobs
+// with the Kafka sink fail fast at job-start time with
+// `KAFKA_UNAVAILABLE`. ADR-0023 §3 R4.4 addendum records the
+// pattern.
 func validateOutputSink(sink spectrev1alpha2.OutputSink) error {
 	switch {
 	case sink.Stdout != nil:
 		return nil
 	case sink.Kafka != nil:
-		return fmt.Errorf("kafka output sink not yet implemented (R4.4)")
+		// R4.4: Kafka is wired end-to-end. Defence-in-depth on
+		// topic emptiness — CEL's `MinLength=1` already enforces
+		// this at admission, but we surface a clear error if the
+		// CRD is ever regenerated without the rule.
+		if sink.Kafka.Topic == "" {
+			return fmt.Errorf("kafka output sink: topic must be non-empty")
+		}
+		return nil
 	case sink.S3 != nil:
 		return fmt.Errorf("s3 output sink not yet implemented (R5.1)")
 	case sink.Webhook != nil:
@@ -354,6 +374,18 @@ func validateOutputSink(sink spectrev1alpha2.OutputSink) error {
 	default:
 		return fmt.Errorf("OutputSink has no variant set")
 	}
+}
+
+// outputSinkKafkaTopic extracts the topic name when the sink is
+// Kafka, returning the empty string for every other variant. R4.4
+// (ADR-0023 §3) ships the topic on `RunJobRequest.kafka_topic`
+// (engine.proto field 4); the engine ignores the field for sinks
+// other than Kafka.
+func outputSinkKafkaTopic(sink spectrev1alpha2.OutputSink) string {
+	if sink.Kafka != nil {
+		return sink.Kafka.Topic
+	}
+	return ""
 }
 
 // SetupWithManager sets up the controller with the Manager.

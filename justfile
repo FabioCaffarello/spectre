@@ -65,6 +65,30 @@ compose-logs:
 compose-reset:
     docker compose down -v && docker compose up -d
 
+# Open the Redpanda Console UI for the local Kafka broker. Linux
+# uses `xdg-open`; macOS uses `open`. Falls back to printing the
+# URL when no opener is available (e.g. headless dev container).
+kafka-console:
+    @if command -v open >/dev/null; then open http://localhost:8080; \
+    elif command -v xdg-open >/dev/null; then xdg-open http://localhost:8080; \
+    else echo "open http://localhost:8080 in your browser"; fi
+
+# List topics on the local Kafka broker via docker exec — useful
+# for sanity-checking the engine's published topic.
+kafka-topics:
+    docker exec spectre-kafka /opt/kafka/bin/kafka-topics.sh \
+        --bootstrap-server kafka:9092 --list
+
+# Tail messages from a topic on the local broker. Reads from the
+# beginning so a freshly-started consumer sees historical rows.
+# Stop with Ctrl-C.
+kafka-consume TOPIC:
+    docker exec -it spectre-kafka /opt/kafka/bin/kafka-console-consumer.sh \
+        --bootstrap-server kafka:9092 \
+        --topic {{TOPIC}} \
+        --from-beginning \
+        --property print.headers=true
+
 # ---------------------------------------------------------------------------
 # Repository hygiene
 # ---------------------------------------------------------------------------
@@ -146,6 +170,14 @@ engine-integration-test: pw-build pw-install-browsers
 # `just engine-test` stays DB-free.
 engine-db-test:
     cd core/engine && SQLX_OFFLINE=true cargo test --test db_integration -- --ignored --nocapture
+
+# Run the engine's Kafka producer integration tests. Requires a
+# Kafka broker reachable at SPECTRE_KAFKA_BROKERS (the same env
+# var the engine binary reads at startup, ADR-0023 §12). Bring
+# one up via `just compose-up` (R4.4). Tests are `#[ignore]` by
+# default so `just engine-test` stays broker-free.
+engine-kafka-test:
+    cd core/engine && cargo test --test kafka_integration -- --ignored --nocapture
 
 # ---------------------------------------------------------------------------
 # spectre engine binary (core/engine/src/bin/spectre.rs)

@@ -28,6 +28,10 @@ dependencies = [
     # harness dials the same Redis the adapter writes to and asserts
     # on the keyspace shape per ADR-0023 §4.
     "redis>=5.0",
+    # Kafka consumer used by the R4.4 kafka-sink conformance test
+    # to drain the topic the engine published to and assert
+    # partition keys + headers (ADR-0023 §3 R4.4 addendum).
+    "confluent-kafka>=2.5",
 ]
 
 [project.urls]
@@ -76,7 +80,7 @@ mypy_path = ["src"]
 # the boundary; we re-annotate values pulled from the descriptor in
 # source files.
 [[tool.mypy.overrides]]
-module = ["spectre.driver.v1alpha1.*"]
+module = ["spectre.driver.v1alpha1.*", "spectre.engine.v1alpha1.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
@@ -96,6 +100,12 @@ ignore_missing_imports = true
 module = ["redis", "redis.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
+
+# confluent-kafka ships no type stubs; the conformance kafka
+# test wraps it locally so the boundary is bounded.
+[[tool.mypy.overrides]]
+module = ["confluent_kafka", "confluent_kafka.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

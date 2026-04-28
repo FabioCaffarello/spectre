@@ -1,14 +1,16 @@
 # Spectre — local-development Compose stack.
 #
 # R4.2 lands the first slice: PostgreSQL for engine job state and
-# control-plane reads (ADR-0023 §2). R4.3 adds Redis for adapter
-# session metadata externalisation (ADR-0023 §4 + §5). R4.4 will
-# add Kafka (Redpanda), R6.2 will move engine / adapters /
+# control-plane reads (ADR-0023 §2). R4.3 added Redis for adapter
+# session metadata externalisation (ADR-0023 §4 + §5). R4.4 adds
+# Apache Kafka in KRaft mode for `OutputSink.Kafka` jobs
+# (ADR-0023 §3 R4.4 addendum) and Redpanda Console as the topic /
+# offset / message-browser UI. R6.2 will move engine / adapters /
 # control plane into Compose services here. For now the
 # application services still run as native binaries via the
 # `just engine-run` / `just pw-run` / `just op-run` recipes; the
-# binaries connect to Postgres on localhost:5432 and Redis on
-# localhost:6379.
+# binaries connect to Postgres on localhost:5432, Redis on
+# localhost:6379, and Kafka on localhost:9092.
 #
 # Usage:
 #   docker compose up -d        # start
@@ -17,9 +19,10 @@
 #   docker compose down -v      # stop, drop volumes (full reset)
 #
 # DEV-ONLY: the credentials below are visible in source control.
-# Production deployments populate `SPECTRE_POSTGRES_URL` and
-# `SPECTRE_REDIS_URL` from Kubernetes Secrets per ADR-0023 §10 /
-# §12. Do not reuse these values anywhere persistent.
+# Production deployments populate `SPECTRE_POSTGRES_URL`,
+# `SPECTRE_REDIS_URL`, and `SPECTRE_KAFKA_BROKERS` from Kubernetes
+# Secrets per ADR-0023 §10 / §12. Do not reuse these values
+# anywhere persistent.
 
 services:
   postgres:
@@ -67,6 +70,91 @@ services:
       timeout: 3s
       retries: 5
 
+  # Apache Kafka in KRaft mode (no ZooKeeper) — engine producer
+  # target for `OutputSink.Kafka` jobs (ADR-0023 §3 R4.4 addendum).
+  # Production parity with R7.1's Strimzi-managed Apache Kafka
+  # Helm chart; KRaft simplifies Compose by eliminating the
+  # ZooKeeper service.
+  #
+  # Single-broker single-controller — sufficient for v1alpha1
+  # local dev. The replication factors below are pinned to 1
+  # because there is no second broker; production `values.yaml`
+  # raises them to the cluster's RF (typically 3).
+  #
+  # KAFKA_AUTO_CREATE_TOPICS_ENABLE=true is a dev convenience.
+  # Production deployments disable auto-create and provision
+  # topics explicitly (Strimzi `KafkaTopic` CRs in R7.1).
+  kafka:
+    image: apache/kafka:3.7.1
+    container_name: spectre-kafka
+    restart: unless-stopped
+    # PLAINTEXT (9092 inside the Compose network) carries
+    # broker-to-broker + Compose-internal client traffic. HOST
+    # (9094 inside the container, mapped to 9092 on the host) is
+    # the host-port ingress for native binaries running outside
+    # Compose; it advertises as localhost:9092 so resolved
+    # bootstrap metadata is reachable from the host.
+    ports:
+      - "9092:9094"
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,HOST://0.0.0.0:9094"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,HOST://localhost:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_NUM_PARTITIONS: "8"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      CLUSTER_ID: "spectre-dev-cluster-id22"
+    volumes:
+      - spectre_kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list >/dev/null 2>&1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Redpanda Console — web UI over Apache Kafka API (works
+  # against any Kafka-compatible broker; the name is historical).
+  # Serves topic browsing, consumer-offset inspection, and
+  # message preview at http://localhost:8080. The UI is local-dev
+  # only; production observability lives in Strimzi / managed
+  # tooling per R7.1.
+  kafka-console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    container_name: spectre-kafka-console
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: "kafka:9092"
+      CONFIG_FILEPATH: ""
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --quiet --tries=1 --spider http://localhost:8080/admin/health || exit 1",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   spectre_postgres_data:
   spectre_redis_data:
+  spectre_kafka_data:
