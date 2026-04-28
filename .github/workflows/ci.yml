@@ -482,7 +482,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       # Build the engine image with the same Dockerfile contributors
       # use locally. No registry push — see ADR-0018 §5. The smoke test
       # runs the binary in the resulting image; image publishing is a
