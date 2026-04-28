@@ -19,18 +19,22 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/pashagolub/pgxmock/v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	spectrev1alpha2 "github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha2"
+	"github.com/FabioCaffarello/spectre/core/control-plane/internal/db"
 	"github.com/FabioCaffarello/spectre/core/control-plane/internal/runner"
 )
 
@@ -40,6 +44,10 @@ const testDefaultEndpoint = "127.0.0.1:9090"
 // supplied JobRunner, and the test default engine endpoint. The
 // runner is delivered through a fixed factory regardless of the
 // resolved endpoint — envtest does not dial real services.
+//
+// `DB` is left nil so the reconciler skips the R4.2 restart-recovery
+// query; the recovery-path tests construct their reconciler via
+// reconcilerForWithDB instead.
 func reconcilerFor(r runner.JobRunner) *ScrapeJobReconciler {
 	return &ScrapeJobReconciler{
 		Client:                k8sClient,
@@ -49,6 +57,15 @@ func reconcilerFor(r runner.JobRunner) *ScrapeJobReconciler {
 			return r
 		},
 	}
+}
+
+// reconcilerForWithDB is the recovery-path counterpart, binding a
+// pgxmock pool so the syncFromPostgres branch of the reconciler can
+// be exercised without a real Postgres.
+func reconcilerForWithDB(r runner.JobRunner, pool db.Pool) *ScrapeJobReconciler {
+	rec := reconcilerFor(r)
+	rec.DB = pool
+	return rec
 }
 
 // stubRunnerForTests is a fast StubRunner used by every test that
@@ -393,5 +410,161 @@ func TestFailedOnUnsupportedSink(t *testing.T) {
 	}
 	if got.Status.CompletedAt == nil {
 		t.Fatalf("CompletedAt = nil, want non-nil for terminal phase")
+	}
+}
+
+// R4.2 restart-recovery — the reconciler queries Postgres before
+// invoking the runner. A persisted terminal row syncs Status without
+// re-running; ErrJobNotFound falls through to the runner; other
+// errors mark the ScrapeJob Failed.
+
+// expectGetJob installs a pgxmock expectation matching syncFromPostgres's
+// SELECT against `jobs` for the given UID, returning either a
+// hydrated row of the supplied status or pgx.ErrNoRows / generic err.
+type recoveryRow struct {
+	status string
+	rows   *int64
+	errMsg *string
+}
+
+func expectGetJob(mock pgxmock.PgxPoolIface, jobUUID uuid.UUID, row *recoveryRow, returnErr error) {
+	q := mock.ExpectQuery(`SELECT id, status, driver, output_sink_kind`).
+		WithArgs(jobUUID)
+	if returnErr != nil {
+		q.WillReturnError(returnErr)
+		return
+	}
+	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	q.WillReturnRows(pgxmock.NewRows([]string{
+		"id", "status", "driver", "output_sink_kind",
+		"created_at", "started_at", "completed_at",
+		"rows_extracted", "error", "resolved_engine_endpoint",
+	}).AddRow(
+		jobUUID, row.status, "playwright", "stdout",
+		now, &now, &now,
+		row.rows, row.errMsg, (*string)(nil),
+	))
+}
+
+// driveToRunning runs Reconcile twice (empty→Pending, Pending→Running)
+// and returns the freshly-fetched ScrapeJob ready for the recovery
+// path test.
+func driveToRunning(t *testing.T, r *ScrapeJobReconciler, job *spectrev1alpha2.ScrapeJob) *spectrev1alpha2.ScrapeJob {
+	t.Helper()
+	_ = reconcileOnce(t, r, job)    // empty → Pending
+	got := reconcileOnce(t, r, job) // Pending → Running
+	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseRunning {
+		t.Fatalf("setup: Phase = %q, want Running", got.Status.Phase)
+	}
+	return got
+}
+
+func TestReconciler_RestartRecovery_CompletedSyncsStatus(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	job := createScrapeJob(t, validSpec())
+	r := reconcilerForWithDB(stubRunnerForTests(), mock)
+	got := driveToRunning(t, r, job)
+
+	jobUUID := uuid.MustParse(string(got.UID))
+	rows := int64(123)
+	expectGetJob(mock, jobUUID, &recoveryRow{status: "completed", rows: &rows}, nil)
+
+	got = reconcileOnce(t, r, job) // Running → Completed (synced from Postgres)
+
+	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseCompleted {
+		t.Fatalf("Phase = %q, want Completed (synced from Postgres)", got.Status.Phase)
+	}
+	if got.Status.RowsExtracted != 123 {
+		t.Fatalf("RowsExtracted = %d, want 123", got.Status.RowsExtracted)
+	}
+	if got.Status.CompletedAt == nil {
+		t.Fatal("CompletedAt = nil, want non-nil")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestReconciler_RestartRecovery_FailedSyncsStatus(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	job := createScrapeJob(t, validSpec())
+	r := reconcilerForWithDB(stubRunnerForTests(), mock)
+	got := driveToRunning(t, r, job)
+
+	jobUUID := uuid.MustParse(string(got.UID))
+	errMsg := "engine failed: adapter dial: connection refused"
+	expectGetJob(mock, jobUUID, &recoveryRow{status: "failed", errMsg: &errMsg}, nil)
+
+	got = reconcileOnce(t, r, job) // Running → Failed (synced from Postgres)
+
+	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseFailed {
+		t.Fatalf("Phase = %q, want Failed (synced from Postgres)", got.Status.Phase)
+	}
+	if !strings.Contains(got.Status.Error, "adapter dial") {
+		t.Fatalf("Error = %q, want adapter-dial substring", got.Status.Error)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestReconciler_RestartRecovery_NotFoundProceedsToRunner(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	job := createScrapeJob(t, validSpec())
+	r := reconcilerForWithDB(stubRunnerForTests(), mock)
+	got := driveToRunning(t, r, job)
+
+	jobUUID := uuid.MustParse(string(got.UID))
+	expectGetJob(mock, jobUUID, nil, pgx.ErrNoRows)
+
+	got = reconcileOnce(t, r, job) // Running → Completed (via StubRunner)
+
+	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseCompleted {
+		t.Fatalf("Phase = %q, want Completed (StubRunner ran)", got.Status.Phase)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestReconciler_PostgresUnavailable_MarksFailed(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	job := createScrapeJob(t, validSpec())
+	r := reconcilerForWithDB(stubRunnerForTests(), mock)
+	got := driveToRunning(t, r, job)
+
+	jobUUID := uuid.MustParse(string(got.UID))
+	expectGetJob(mock, jobUUID, nil, fmt.Errorf("postgres connection lost"))
+
+	got = reconcileOnce(t, r, job) // Running → Failed (Postgres error)
+
+	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseFailed {
+		t.Fatalf("Phase = %q, want Failed", got.Status.Phase)
+	}
+	if !strings.Contains(got.Status.Error, "restart recovery failed") {
+		t.Fatalf("Error = %q, want restart-recovery substring", got.Status.Error)
+	}
+	if !strings.Contains(got.Status.Error, "postgres connection lost") {
+		t.Fatalf("Error = %q, want underlying error substring", got.Status.Error)
 	}
 }

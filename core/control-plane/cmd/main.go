@@ -17,9 +17,11 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -37,6 +39,7 @@ import (
 
 	spectrev1alpha2 "github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha2"
 	"github.com/FabioCaffarello/spectre/core/control-plane/internal/controller"
+	"github.com/FabioCaffarello/spectre/core/control-plane/internal/db"
 	"github.com/FabioCaffarello/spectre/core/control-plane/internal/runner"
 	// +kubebuilder:scaffold:imports
 )
@@ -198,18 +201,34 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Postgres dial (ADR-0023 §6 + §12). Same SPECTRE_POSTGRES_URL
+	// the engine reads. A startup-time outage is a startup-time
+	// operator failure — visible to `kubectl get pod` as a crash
+	// loop, to `docker compose up` as non-zero exit. There is no
+	// "operator without Postgres" mode in v1alpha1.
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	database, err := db.FromEnv(dbCtx)
+	dbCancel()
+	if err != nil {
+		setupLog.Error(err, "Failed to dial Postgres")
+		os.Exit(1)
+	}
+	defer database.Close()
+	setupLog.Info("postgres ready")
+
 	// The reconciler constructs an EngineClientRunner per Reconcile
 	// (R3.2): each ScrapeJob's spec.engineRef may resolve to a
 	// different host:port, so the runner cannot be a long-lived
 	// field. The closure below binds the production runner type;
 	// envtest cases inject their own factory in suite_test.go. See
-	// ADR-0019 §5 (JobRunner seam, preserved across StubRunner /
-	// SubprocessRunner / EngineClientRunner) and ADR-0020 §5 (the
+	// ADR-0019 §5 (JobRunner seam, R4.2 addendum recording the
+	// jobID + outputSinkKind evolution) and ADR-0020 §5 (the
 	// refactor that retired SubprocessRunner).
 	if err := (&controller.ScrapeJobReconciler{
 		Client:                mgr.GetClient(),
 		Scheme:                mgr.GetScheme(),
 		DefaultEngineEndpoint: engineEndpoint,
+		DB:                    database.Pool,
 		RunnerFactory: func(endpoint string) runner.JobRunner {
 			return &runner.EngineClientRunner{EngineEndpoint: endpoint}
 		},
