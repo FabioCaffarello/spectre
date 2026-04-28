@@ -230,14 +230,36 @@ audit demonstrates the choice to defer is conscious.
 
 ### R4.2 / R4.3 / R4.4 — implementation cross-references
 
-These rows are forward-looking. R4.2 / R4.3 / R4.4 will land
-the corresponding source-code changes; the audit rows are
-recorded here so reviewers of those PRs can confirm the
-implementation tracks ADR-0023.
+R4.2 has landed; R4.3 and R4.4 remain forward-looking. The
+audit rows record what each PR delivers so reviewers can confirm
+the implementation tracks ADR-0023.
+
+> **Status (R4.2 complete):** PostgreSQL integrates end-to-end.
+> The engine (`core/engine/`) gains an embedded migration runner,
+> a `Database` wrapper around `sqlx::PgPool`, four typed query
+> functions, and a per-`RunJob` write path that inserts the
+> `jobs` row at status `'running'`, appends `job_rows` for
+> stdout-sinked jobs, and writes the terminal `mark_completed` /
+> `mark_failed` UPDATE. Compile-time-checked queries via
+> `sqlx::query!` macros with the `.sqlx/` offline cache committed
+> at `core/engine/.sqlx/` so the Dockerfile builds under
+> `SQLX_OFFLINE=1`. The control plane (`core/control-plane/`)
+> gains `pgx/v5` + pgxpool, a typed `Pool` interface that
+> pgxmock satisfies, `db.GetJob` / `db.CountJobRows`, and a
+> reconciler that queries `jobs` by `ScrapeJob.UID` on Running-
+> phase entry to sync terminal status without re-running. The
+> JobRunner interface (ADR-0019 §5) evolves to accept
+> `jobID uuid.UUID` and `outputSinkKind string`, plumbed
+> through `RunJobRequest.output_sink_kind` (engine.proto field
+> 3, non-breaking). `docker-compose.yml` at the repo root
+> brings up `postgres:16-alpine` for local dev; `.env.example`
+> documents the env var set; `compose-{up,down,logs,reset}`
+> recipes added to the justfile. Helm subchart wiring belongs
+> to R7.1 and is not in scope here.
 
 | PR | Surface | ADR-0023 reference |
 |----|---------|---------------------|
-| R4.2 | Engine `core/engine/migrations/` (sqlx versioned SQL files); engine Postgres write path; control-plane `pgx/v5` read path for `Status`; `SPECTRE_POSTGRES_URL` env var added to engine + operator Deployments; Helm subchart wiring for Bitnami Postgres. | §2 (schema) · §8 (library) · §11 (R4.2 first, smallest blast radius) · §12 (env var) · §13 (migration discipline) |
+| R4.2 | Engine `core/engine/migrations/` (sqlx versioned SQL files); engine Postgres write path; control-plane `pgx/v5` read path for `Status`; `SPECTRE_POSTGRES_URL` env var added to engine + operator Deployments; Helm subchart wiring for Bitnami Postgres (deferred to R7.1). | §2 (schema) · §8 (library) · §11 (R4.2 first, smallest blast radius) · §12 (env var) · §13 (migration discipline) |
 | R4.3 | Adapter Redis clients (`ioredis` / `redis-py` / `go-redis/v9`); `session:<adapter>:<session_id>` keyspace + `:ref` LRU sibling; 1-hour idle TTL; PUT-style overwrite atomicity; adapter startup validates `SPECTRE_REDIS_URL` and refuses to serve when unavailable; conformance suite preserves the 13 / 12 / 6 capability invariant byte-for-byte through the switch. | §4 (keyspace) · §5 (restart-invalidation contract — most consequential) · §8 (library) · §11 (R4.3 second, highest-risk PR) · §12 (env var) |
 | R4.4 | Engine `rdkafka` producer; topic `spectre.rows.<workspace>` with default workspace `default`; 8-partition default keyed by job UUID; one-message-per-row with `job_id` / `row_index` / `driver` / `timestamp` headers; reconciler removes the "kafka output sink not yet implemented" admission rejection so the v1alpha2 schema's `OutputSink.Kafka` becomes a runnable variant; admission gate falls back to "kafka not available" when broker is unreachable at engine startup. | §3 (topic / partitioning / message shape) · §6 (Kafka admission-gated) · §8 (library) · §11 (R4.4 last, depends on R4.2's `jobs` table) · §12 (env var) |
 
