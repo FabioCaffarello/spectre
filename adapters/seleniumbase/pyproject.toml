@@ -40,6 +40,13 @@ dependencies = [
     # protocol also accepts JPEG, and Pillow is the conventional
     # path. ADR-0015 §4 records the dependency rationale.
     "Pillow>=10.0",
+    # Redis client used by the SessionManager to externalise
+    # session metadata (ADR-0023 §4 + §5). The adapter PINGs Redis
+    # at startup and exits non-zero on failure (§6 — Redis
+    # required). Each non-Initialize RPC validates the
+    # adapter_instance_id against the stored value and surfaces
+    # foreign-instance sessions as gRPC UNAVAILABLE.
+    "redis>=5.0",
 ]
 
 [tool.uv.sources]
@@ -58,6 +65,11 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.8",
     "types-protobuf>=4.24",
+    # In-memory Redis fake for unit tests. Production Redis stays
+    # under the conformance suite (which exercises the real
+    # docker-compose service); fakeredis keeps unit tests fast and
+    # hermetic.
+    "fakeredis>=2.0",
 ]
 
 [build-system]
@@ -118,6 +130,17 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["PIL", "PIL.*"]
 ignore_missing_imports = true
+
+# redis-py and fakeredis: the bundled stubs claim every command
+# can be awaitable to accommodate the asyncio variant, which means
+# the sync code path looks like ``Awaitable[Any] | Any`` to mypy.
+# Treating them as Any-typed keeps the wrapper readable; the
+# ``RedisClient`` class in ``redis_client.py`` is the only file
+# that touches the boundary.
+[[tool.mypy.overrides]]
+module = ["redis", "redis.*", "fakeredis", "fakeredis.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
