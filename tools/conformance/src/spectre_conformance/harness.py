@@ -57,6 +57,7 @@ DIAGNOSTIC_TAIL_LINES = 50
 DEFAULT_AUTHORITY = "localhost"
 
 PORT_ENV_VAR = "SPECTRE_ADAPTER_GRPC_PORT"
+INSTANCE_ID_ENV_VAR = "SPECTRE_ADAPTER_INSTANCE_ID"
 
 
 def _allocate_free_port() -> int:
@@ -102,6 +103,13 @@ class DriverHarness:
     port: int = field(default_factory=_allocate_free_port)
     ready_timeout_s: float = DEFAULT_READY_TIMEOUT_S
     shutdown_timeout_s: float = DEFAULT_SHUTDOWN_TIMEOUT_S
+    # R4.3 / ADR-0023 §5: setting ``instance_id_override`` exports
+    # ``SPECTRE_ADAPTER_INSTANCE_ID`` into the subprocess so the
+    # harness can drive the §5 restart-invalidation conformance
+    # test (parallel adapter instances with distinct UUIDs). Leave
+    # ``None`` for a fresh per-process UUID — the production
+    # default and the right shape for every other test.
+    instance_id_override: str | None = None
 
     _process: subprocess.Popen[str] | None = field(default=None, init=False, repr=False)
     _stdout_lines: list[str] = field(default_factory=list, init=False, repr=False)
@@ -156,6 +164,8 @@ class DriverHarness:
             **self.extra_env,
             PORT_ENV_VAR: str(self.port),
         }
+        if self.instance_id_override is not None:
+            env[INSTANCE_ID_ENV_VAR] = self.instance_id_override
 
         self._process = subprocess.Popen(  # noqa: S603 - command is caller-supplied
             list(self.command),

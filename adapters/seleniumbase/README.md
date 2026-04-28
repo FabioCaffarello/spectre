@@ -100,6 +100,25 @@ seconds; in-flight RPCs that exceed it are aborted.
   conformance harness polls `Check` until it returns `SERVING`
   within a 10-second deadline; production deployments wire the
   same endpoint into Compose / Kubernetes readiness probes.
+- **Redis is required (R4.3).** The adapter externalises session
+  metadata to Redis under the `session:seleniumbase:<session_id>`
+  key (ADR-0023 §4). Set `SPECTRE_REDIS_URL` (default
+  `redis://127.0.0.1:6379/0`) and bring Redis up before the
+  adapter — `docker compose up -d redis` is the canonical local
+  path. The adapter PINGs Redis on startup and exits non-zero on
+  failure, in line with the
+  `depends_on.condition: service_healthy` contract.
+- **Restart invalidation via `adapter_instance_id`.** The adapter
+  generates a fresh UUID at process startup and stamps it on every
+  session metadata document. Every non-Initialize RPC re-reads the
+  metadata and compares the stored id; on mismatch the RPC fails
+  with gRPC `UNAVAILABLE` and the message _"session belongs to a
+  different adapter instance; client must re-Initialize"_. The
+  `SPECTRE_ADAPTER_INSTANCE_ID` env var lets the conformance suite
+  pin the value for deterministic testing — production deployments
+  must leave it unset. See
+  [ADR-0023 §5](../../docs/adr/0023-stateful-services-architecture.md)
+  for the full mechanism.
 - **Chrome and ChromeDriver are required.** The adapter does not
   bundle them. `seleniumbase install chromedriver` fetches the
   matching driver for the local Chrome install. If either is
@@ -109,7 +128,8 @@ seconds; in-flight RPCs that exceed it are aborted.
   headless=True, uc=False)`. UC (undetected) mode is a v1alpha2
   capability candidate.
 - **No mTLS or authentication in v1alpha1.** ADR-0022 §6 defers
-  transport security to v1alpha2.
+  transport security to v1alpha2; ADR-0023 §6 defers Redis
+  AUTH/TLS to the same milestone.
 - **Windows is not supported.** Inherited from ADR-0008.
 
 ## Container deployment

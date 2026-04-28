@@ -230,7 +230,7 @@ audit demonstrates the choice to defer is conscious.
 
 ### R4.2 / R4.3 / R4.4 — implementation cross-references
 
-R4.2 has landed; R4.3 and R4.4 remain forward-looking. The
+R4.2 and R4.3 have landed; R4.4 remains forward-looking. The
 audit rows record what each PR delivers so reviewers can confirm
 the implementation tracks ADR-0023.
 
@@ -257,10 +257,36 @@ the implementation tracks ADR-0023.
 > recipes added to the justfile. Helm subchart wiring belongs
 > to R7.1 and is not in scope here.
 
+> **Status (R4.3 complete):** Redis integrates end-to-end across
+> all three reference adapters. Each adapter externalises session
+> metadata to Redis under `session:<adapter>:<session_id>` per
+> ADR-0023 §4 with a 1-hour TTL refreshed by every successful
+> non-Initialize RPC. Each process generates a UUID at startup
+> (overridable via `SPECTRE_ADAPTER_INSTANCE_ID` for the
+> conformance suite only) and stamps it on the metadata document;
+> non-Initialize RPCs validate the stored `adapter_instance_id`
+> and surface foreign-instance sessions as gRPC `UNAVAILABLE` —
+> the §5 restart-invalidation contract. Initialize awaits the
+> Redis write before responding so the local registry never
+> drifts ahead of Redis; Close validates first, then evicts
+> locally and best-effort deletes the Redis key (TTL is the
+> safety net per phase prompt §4.6). Adapters PING Redis at
+> startup and exit non-zero on failure (§6). The Compose stack
+> gains `redis:7-alpine` from R4.3 Step 2 (already merged before
+> the per-adapter PRs); `.env.example` carries
+> `SPECTRE_REDIS_URL` and the testing-only
+> `SPECTRE_ADAPTER_INSTANCE_ID` knob. Conformance suite gains
+> three new tests (`test_session_restart_invalidation.py`) — one
+> per adapter — exercising the §5 contract via parallel adapter
+> instances with distinct instance_id_overrides. The 13/12/6
+> capability invariant holds byte-for-byte. Engine and control
+> plane are unchanged operationally (ADR-0023 §7 — only adapters
+> connect to Redis).
+
 | PR | Surface | ADR-0023 reference |
 |----|---------|---------------------|
 | R4.2 | Engine `core/engine/migrations/` (sqlx versioned SQL files); engine Postgres write path; control-plane `pgx/v5` read path for `Status`; `SPECTRE_POSTGRES_URL` env var added to engine + operator Deployments; Helm subchart wiring for Bitnami Postgres (deferred to R7.1). | §2 (schema) · §8 (library) · §11 (R4.2 first, smallest blast radius) · §12 (env var) · §13 (migration discipline) |
-| R4.3 | Adapter Redis clients (`ioredis` / `redis-py` / `go-redis/v9`); `session:<adapter>:<session_id>` keyspace + `:ref` LRU sibling; 1-hour idle TTL; PUT-style overwrite atomicity; adapter startup validates `SPECTRE_REDIS_URL` and refuses to serve when unavailable; conformance suite preserves the 13 / 12 / 6 capability invariant byte-for-byte through the switch. | §4 (keyspace) · §5 (restart-invalidation contract — most consequential) · §8 (library) · §11 (R4.3 second, highest-risk PR) · §12 (env var) |
+| R4.3 | Adapter Redis clients (`ioredis` / `redis-py` / `go-redis/v9`); `session:<adapter>:<session_id>` keyspace; 1-hour idle TTL refreshed on every non-Initialize RPC; `adapter_instance_id` per-process UUID stamped at Initialize and validated on every subsequent RPC; foreign-instance sessions surface as gRPC `UNAVAILABLE`; Close best-effort deletes the Redis key with TTL as safety net; adapter startup PINGs Redis and exits non-zero when unavailable (`SPECTRE_REDIS_URL`); conformance suite gains `test_session_restart_invalidation.py` (one test per adapter) and preserves the 13 / 12 / 6 capability invariant byte-for-byte. | §4 (keyspace) · §5 (incl. R4.3 addendum on `adapter_instance_id`) · §6 (Redis required) · §7 (only adapters touch Redis) · §8 (library) · §11 (R4.3 second, highest-risk PR) · §12 (env var) |
 | R4.4 | Engine `rdkafka` producer; topic `spectre.rows.<workspace>` with default workspace `default`; 8-partition default keyed by job UUID; one-message-per-row with `job_id` / `row_index` / `driver` / `timestamp` headers; reconciler removes the "kafka output sink not yet implemented" admission rejection so the v1alpha2 schema's `OutputSink.Kafka` becomes a runnable variant; admission gate falls back to "kafka not available" when broker is unreachable at engine startup. | §3 (topic / partitioning / message shape) · §6 (Kafka admission-gated) · §8 (library) · §11 (R4.4 last, depends on R4.2's `jobs` table) · §12 (env var) |
 
 ## Counts

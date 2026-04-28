@@ -80,6 +80,25 @@ sessions, and exit zero.
   out-of-range values. The conformance harness allocates a free
   ephemeral port at start time and injects it via env. Production
   deployments use the canonical port reserved by ADR-0021 §4.
+- **Redis is required (R4.3).** The adapter externalises session
+  metadata to Redis under the `session:playwright:<session_id>`
+  key (ADR-0023 §4). Set `SPECTRE_REDIS_URL` (default
+  `redis://127.0.0.1:6379/0`) and bring Redis up before the
+  adapter — `docker compose up -d redis` is the canonical local
+  path. The adapter PINGs Redis on startup and exits non-zero on
+  failure, in line with the
+  `depends_on.condition: service_healthy` contract.
+- **Restart invalidation via `adapter_instance_id`.** The adapter
+  generates a fresh UUID at process startup and stamps it on every
+  session metadata document. Every non-Initialize RPC re-reads the
+  metadata and compares the stored id; on mismatch the RPC fails
+  with gRPC `UNAVAILABLE` and the message _"session belongs to a
+  different adapter instance; client must re-Initialize"_. The
+  `SPECTRE_ADAPTER_INSTANCE_ID` env var lets the conformance suite
+  pin the value for deterministic testing — production deployments
+  must leave it unset. See
+  [ADR-0023 §5](../../docs/adr/0023-stateful-services-architecture.md)
+  for the full mechanism.
 - **Health check is the readiness signal.** The adapter registers
   `grpc.health.v1.Health` and starts in the `SERVING` state. The
   conformance harness polls `Check` until it returns `SERVING`
@@ -93,7 +112,8 @@ sessions, and exit zero.
   [ADR-0008](../../docs/adr/0008-driver-handshake-and-conformance-harness.md)
   and [ADR-0022](../../docs/adr/0022-tcp-grpc-transport.md).
 - **No mTLS or authentication in v1alpha1.** ADR-0022 §6 defers
-  transport security to v1alpha2.
+  transport security to v1alpha2; ADR-0023 §6 defers Redis
+  AUTH/TLS to the same milestone.
 
 ## Layout
 

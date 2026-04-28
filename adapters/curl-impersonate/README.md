@@ -78,6 +78,30 @@ ADR-0016 §1 records the rationale, summarised here:
   curl-impersonate via stdin/stdout pipes is a backwards-compatible
   v1alpha2 candidate if real throughput requirements surface.
 
+## Redis dependency (R4.3)
+
+The adapter externalises session metadata to Redis under the
+`session:curl-impersonate:<session_id>` key (ADR-0023 §4). Set
+`SPECTRE_REDIS_URL` (default `redis://127.0.0.1:6379/0`) and
+bring Redis up before the adapter — `docker compose up -d redis`
+is the canonical local path. The adapter PINGs Redis on startup
+and exits non-zero on failure, in line with the
+`depends_on.condition: service_healthy` contract.
+
+Each process generates a fresh UUID at startup and stamps it on
+every session metadata document. Every non-Initialize RPC re-reads
+the metadata and compares the stored id; on mismatch the RPC
+fails with gRPC `UNAVAILABLE` and the message _"session belongs
+to a different adapter instance; client must re-Initialize"_.
+The `SPECTRE_ADAPTER_INSTANCE_ID` env var lets the conformance
+suite pin the value for deterministic testing — production
+deployments must leave it unset. See
+[ADR-0023 §5](../../docs/adr/0023-stateful-services-architecture.md)
+for the full mechanism.
+
+ADR-0022 §6 defers transport security to v1alpha2; ADR-0023 §6
+defers Redis AUTH/TLS to the same milestone.
+
 ## Variant override
 
 The adapter invokes `curl_chrome116` by default. Operators can

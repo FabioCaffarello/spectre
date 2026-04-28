@@ -52,7 +52,17 @@ from .errors import (
     selenium_error_to_driver_error,
 )
 from .selectors import text_selector_to_xpath
-from .sessions import SessionManager, UnknownSessionError
+from .sessions import SessionManager, UnknownSessionError, Validation
+
+# R4.3 / ADR-0023 §5: gating every non-Initialize RPC against
+# Redis. ``different_instance`` and Redis-unreachable surface as
+# transport-level gRPC ``UNAVAILABLE``; ``unknown`` continues to
+# return the in-band ``CODE_INVALID_ARGUMENT`` envelope so the
+# behavior on a never-Initialized id is unchanged from PR9.
+DIFFERENT_INSTANCE_MESSAGE = (
+    "session belongs to a different adapter instance; client must re-Initialize"
+)
+REDIS_UNAVAILABLE_PREFIX = "redis unreachable"
 
 DEFAULT_NAVIGATE_TIMEOUT_MS = 30_000
 
@@ -101,6 +111,43 @@ def _is_valid_navigation_url(url: str) -> bool:
     except (ValueError, TypeError):
         return False
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+def _abort_unavailable(context: grpc.ServicerContext, details: str) -> None:
+    """Abort the RPC with gRPC ``UNAVAILABLE``.
+
+    Used for the §5 restart-invalidation case (``different_instance``)
+    and for Redis unreachable conditions during validation. The
+    conformance test in
+    ``tools/conformance/tests/test_session_restart_invalidation.py``
+    asserts on ``grpc.StatusCode.UNAVAILABLE`` precisely against
+    this code path.
+    """
+    context.abort(grpc.StatusCode.UNAVAILABLE, details)
+
+
+def _gate_session(
+    sessions: SessionManager,
+    session_id: str,
+    context: grpc.ServicerContext,
+) -> Validation | None:
+    """Validate ``session_id`` against Redis.
+
+    Returns the :class:`Validation` for the caller to inspect (it
+    will be ``ok`` or ``unknown``) or ``None`` if the call has
+    already aborted with ``UNAVAILABLE`` (``different_instance`` or
+    Redis-unreachable). The caller must check for ``None`` and
+    return early when this helper has aborted.
+    """
+    try:
+        result = sessions.validate(session_id)
+    except Exception as exc:  # noqa: BLE001 — any redis failure
+        _abort_unavailable(context, f"{REDIS_UNAVAILABLE_PREFIX}: {exc}")
+        return None
+    if result.kind == "different_instance":
+        _abort_unavailable(context, DIFFERENT_INSTANCE_MESSAGE)
+        return None
+    return result
 
 
 def _navigate_error(code: int, message: str) -> driver_pb2.NavigateResponse:
@@ -304,9 +351,20 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
         context: grpc.ServicerContext,
     ) -> driver_pb2.InitializeResponse:
         del request  # PR9 ignores the request payload — see ADR-0009 §1.
-        del context
         session_id = str(uuid.uuid4())
-        self._sessions.register(session_id)
+        # ADR-0023 §6 makes Redis required: a metadata-write failure
+        # surfaces at the transport layer so the caller sees the
+        # same gRPC ``UNAVAILABLE`` it would see on adapter startup.
+        # The local registry is only updated after a successful
+        # write — see ``SessionManager.register``.
+        try:
+            self._sessions.register(session_id)
+        except Exception as exc:  # noqa: BLE001 — any redis failure
+            _abort_unavailable(
+                context,
+                f"{REDIS_UNAVAILABLE_PREFIX}; cannot persist session metadata: {exc}",
+            )
+            return driver_pb2.InitializeResponse()
         capabilities = capabilities_pb2.Capabilities(
             names=list(CAPABILITY_NAMES),
             driver_version=DRIVER_VERSION,
@@ -325,14 +383,15 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
         request: driver_pb2.NavigateRequest,
         context: grpc.ServicerContext,
     ) -> driver_pb2.NavigateResponse:
-        del context
-
         if not request.session_id:
             return _navigate_error(
                 errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
                 "session_id is required",
             )
-        if not self._sessions.has(request.session_id):
+        gate = _gate_session(self._sessions, request.session_id, context)
+        if gate is None:
+            return driver_pb2.NavigateResponse()
+        if gate.kind == "unknown":
             return _navigate_error(
                 errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
                 f"unknown session_id {request.session_id!r}; call Initialize first",
@@ -400,14 +459,15 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
         request: extraction_pb2.QueryRequest,
         context: grpc.ServicerContext,
     ) -> extraction_pb2.QueryResponse:
-        del context
-
         if not request.session_id:
             return _query_error(
                 errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
                 "session_id is required",
             )
-        if not self._sessions.has(request.session_id):
+        gate = _gate_session(self._sessions, request.session_id, context)
+        if gate is None:
+            return extraction_pb2.QueryResponse()
+        if gate.kind == "unknown":
             return _query_error(
                 errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
                 f"unknown session_id {request.session_id!r}; call Initialize first",
@@ -460,14 +520,15 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
         request: extraction_pb2.ExtractRequest,
         context: grpc.ServicerContext,
     ) -> extraction_pb2.ExtractResponse:
-        del context
-
         if not request.session_id:
             return _extract_error(
                 errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
                 "session_id is required",
             )
-        if not self._sessions.has(request.session_id):
+        gate = _gate_session(self._sessions, request.session_id, context)
+        if gate is None:
+            return extraction_pb2.ExtractResponse()
+        if gate.kind == "unknown":
             return _extract_error(
                 errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
                 f"unknown session_id {request.session_id!r}; call Initialize first",
@@ -553,14 +614,15 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
         request: driver_pb2.ScreenshotRequest,
         context: grpc.ServicerContext,
     ) -> driver_pb2.ScreenshotResponse:
-        del context
-
         if not request.session_id:
             return _screenshot_error(
                 errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
                 "session_id is required",
             )
-        if not self._sessions.has(request.session_id):
+        gate = _gate_session(self._sessions, request.session_id, context)
+        if gate is None:
+            return driver_pb2.ScreenshotResponse()
+        if gate.kind == "unknown":
             return _screenshot_error(
                 errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
                 f"unknown session_id {request.session_id!r}; call Initialize first",
@@ -664,13 +726,11 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
     ) -> driver_pb2.CloseResponse:
         # PR9 wired a thin Close so the engine's executor could finish
         # navigate-only plans (examples/seleniumbase-navigate). PR10
-        # promotes it to the full contract: strict session_id
-        # validation, idempotent rejection of unknown / already-closed
-        # ids, ElementRegistry teardown for the session, and
-        # driver.quit() so no Chrome process leaks past the call. The
-        # session-manager call covers all four — see ADR-0010 §1 and
-        # ADR-0015 §1 for the lifecycle contract.
-        del context
+        # promotes it to the full contract; R4.3 adds the §5
+        # restart-invalidation gate so a Close from a foreign instance
+        # surfaces as ``UNAVAILABLE`` rather than tearing nothing down
+        # silently. The Redis-delete inside ``close_session`` is
+        # best-effort (§4.6); only the validate step is gated.
         if not request.session_id:
             return driver_pb2.CloseResponse(
                 error=errors_pb2.DriverError(
@@ -678,18 +738,17 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
                     message="session_id is required",
                 ),
             )
-        closed = self._sessions.close_session(request.session_id)
-        if not closed:
-            # Idempotent close: a second Close on the same id (or a
-            # Close against a never-Initialized id) returns
-            # CODE_INVALID_ARGUMENT. The first Close emptied the
-            # registry, so the second sees the unknown id path.
+        gate = _gate_session(self._sessions, request.session_id, context)
+        if gate is None:
+            return driver_pb2.CloseResponse()
+        if gate.kind == "unknown":
             return driver_pb2.CloseResponse(
                 error=errors_pb2.DriverError(
                     code=errors_pb2.DriverError.CODE_INVALID_ARGUMENT,
                     message=f"unknown session_id {request.session_id!r}",
                 ),
             )
+        self._sessions.close_session(request.session_id)
         return driver_pb2.CloseResponse()
 
 

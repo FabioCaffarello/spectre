@@ -1,9 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import RedisMock from "ioredis-mock";
 import type { Browser, BrowserContext, Locator, Page } from "playwright";
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  ADAPTER_NAME,
+  RedisClient,
+  type RedisClientLike,
+  type SessionMetadata,
+} from "./redis.js";
 import { SessionManager, UnknownSessionError } from "./sessions.js";
+
+type MockRedis = InstanceType<typeof RedisMock>;
+
+const TEST_INSTANCE_ID = "instance-aaaa";
 
 const fakeLocator = (tag: string): Locator =>
   ({ __id: tag }) as unknown as Locator;
@@ -40,13 +51,62 @@ const makeFakeBrowser = (): FakeBrowser => {
   return browser;
 };
 
+interface ManagerHarness {
+  browser: FakeBrowser;
+  factory: ReturnType<typeof vi.fn>;
+  redis: RedisClient;
+  raw: MockRedis;
+  mgr: SessionManager;
+}
+
+const makeManager = (instanceId: string = TEST_INSTANCE_ID): ManagerHarness => {
+  const browser = makeFakeBrowser();
+  const factory = vi.fn(async () => browser);
+  const raw = new RedisMock();
+  const redis = new RedisClient(raw as unknown as never);
+  const mgr = new SessionManager({ factory, redis, instanceId });
+  return { browser, factory, redis, raw, mgr };
+};
+
 describe("SessionManager", () => {
-  it("register followed by getOrCreatePage launches the browser lazily", async () => {
+  it("register writes the session metadata to Redis with the manager's instance id", async () => {
+    const { mgr, raw } = makeManager();
+    await mgr.register("s1");
+
+    expect(mgr.has("s1")).toBe(true);
+    const stored = await raw.get(`session:${ADAPTER_NAME}:s1`);
+    expect(stored).not.toBeNull();
+    const parsed = JSON.parse(stored ?? "{}") as SessionMetadata;
+    expect(parsed.session_id).toBe("s1");
+    expect(parsed.adapter).toBe(ADAPTER_NAME);
+    expect(parsed.adapter_instance_id).toBe(TEST_INSTANCE_ID);
+  });
+
+  it("register propagates Redis failures and leaves the session unregistered", async () => {
     const browser = makeFakeBrowser();
     const factory = vi.fn(async () => browser);
-    const mgr = new SessionManager(factory);
+    const failing: RedisClientLike = {
+      ping: async () => undefined,
+      setSession: async () => {
+        throw new Error("redis offline");
+      },
+      getSession: async () => null,
+      deleteSession: async () => undefined,
+      disconnect: async () => undefined,
+    };
+    const mgr = new SessionManager({
+      factory,
+      redis: failing,
+      instanceId: TEST_INSTANCE_ID,
+    });
 
-    mgr.register("s1");
+    await expect(mgr.register("s1")).rejects.toThrow(/redis offline/);
+    expect(mgr.has("s1")).toBe(false);
+  });
+
+  it("register followed by getOrCreatePage launches the browser lazily", async () => {
+    const { mgr, factory, browser } = makeManager();
+    await mgr.register("s1");
     expect(factory).not.toHaveBeenCalled();
     expect(mgr.has("s1")).toBe(true);
 
@@ -56,23 +116,17 @@ describe("SessionManager", () => {
   });
 
   it("rejects an unregistered session id with UnknownSessionError", async () => {
-    const browser = makeFakeBrowser();
-    const factory = vi.fn(async () => browser);
-    const mgr = new SessionManager(factory);
-
+    const { mgr, factory } = makeManager();
     expect(mgr.has("ghost")).toBe(false);
     await expect(mgr.getOrCreatePage("ghost")).rejects.toBeInstanceOf(
       UnknownSessionError,
     );
-    // Browser must not be launched for an unknown session.
     expect(factory).not.toHaveBeenCalled();
   });
 
   it("reuses the same Page for repeat calls with the same session id", async () => {
-    const browser = makeFakeBrowser();
-    const mgr = new SessionManager(async () => browser);
-
-    mgr.register("s1");
+    const { mgr, browser } = makeManager();
+    await mgr.register("s1");
     const first = await mgr.getOrCreatePage("s1");
     const second = await mgr.getOrCreatePage("s1");
 
@@ -81,11 +135,9 @@ describe("SessionManager", () => {
   });
 
   it("allocates a separate context per distinct session id", async () => {
-    const browser = makeFakeBrowser();
-    const mgr = new SessionManager(async () => browser);
-
-    mgr.register("a");
-    mgr.register("b");
+    const { mgr, browser } = makeManager();
+    await mgr.register("a");
+    await mgr.register("b");
     const a = await mgr.getOrCreatePage("a");
     const b = await mgr.getOrCreatePage("b");
 
@@ -94,13 +146,10 @@ describe("SessionManager", () => {
   });
 
   it("does not relaunch the browser across multiple sessions", async () => {
-    const browser = makeFakeBrowser();
-    const factory = vi.fn(async () => browser);
-    const mgr = new SessionManager(factory);
-
-    mgr.register("a");
-    mgr.register("b");
-    mgr.register("c");
+    const { mgr, factory } = makeManager();
+    await mgr.register("a");
+    await mgr.register("b");
+    await mgr.register("c");
     await mgr.getOrCreatePage("a");
     await mgr.getOrCreatePage("b");
     await mgr.getOrCreatePage("c");
@@ -109,11 +158,9 @@ describe("SessionManager", () => {
   });
 
   it("closeAll closes every context, the browser, and clears registrations", async () => {
-    const browser = makeFakeBrowser();
-    const mgr = new SessionManager(async () => browser);
-
-    mgr.register("a");
-    mgr.register("b");
+    const { mgr, browser } = makeManager();
+    await mgr.register("a");
+    await mgr.register("b");
     await mgr.getOrCreatePage("a");
     await mgr.getOrCreatePage("b");
 
@@ -128,17 +175,14 @@ describe("SessionManager", () => {
   });
 
   it("closeAll is safe to call before any session is allocated", async () => {
-    const factory = vi.fn(async () => makeFakeBrowser());
-    const mgr = new SessionManager(factory);
-
+    const { mgr, factory } = makeManager();
     await mgr.closeAll();
     expect(factory).not.toHaveBeenCalled();
   });
 
   it("closeAll is idempotent", async () => {
-    const browser = makeFakeBrowser();
-    const mgr = new SessionManager(async () => browser);
-    mgr.register("a");
+    const { mgr, browser } = makeManager();
+    await mgr.register("a");
     await mgr.getOrCreatePage("a");
 
     await mgr.closeAll();
@@ -148,39 +192,34 @@ describe("SessionManager", () => {
   });
 
   it("relaunches the browser on the next session after closeAll", async () => {
-    const factory = vi.fn(async () => makeFakeBrowser());
-    const mgr = new SessionManager(factory);
-
-    mgr.register("a");
+    const { mgr, factory } = makeManager();
+    await mgr.register("a");
     await mgr.getOrCreatePage("a");
     await mgr.closeAll();
 
-    mgr.register("a");
+    await mgr.register("a");
     await mgr.getOrCreatePage("a");
 
     expect(factory).toHaveBeenCalledTimes(2);
   });
 
-  it("register is a no-op for an already-registered id", () => {
-    const mgr = new SessionManager(async () => makeFakeBrowser());
-    mgr.register("a");
-    mgr.register("a");
+  it("register is a no-op for an already-registered id (after the first Redis write)", async () => {
+    const { mgr } = makeManager();
+    await mgr.register("a");
+    await mgr.register("a");
     expect(mgr.has("a")).toBe(true);
   });
 
   it("closeSession returns false for an unknown session id", async () => {
-    const browser = makeFakeBrowser();
-    const mgr = new SessionManager(async () => browser);
+    const { mgr, browser } = makeManager();
     expect(await mgr.closeSession("ghost")).toBe(false);
     expect(browser.close).not.toHaveBeenCalled();
   });
 
   it("closeSession evicts the session and closes its context, leaving the browser running", async () => {
-    const browser = makeFakeBrowser();
-    const mgr = new SessionManager(async () => browser);
-
-    mgr.register("a");
-    mgr.register("b");
+    const { mgr, browser } = makeManager();
+    await mgr.register("a");
+    await mgr.register("b");
     await mgr.getOrCreatePage("a");
     await mgr.getOrCreatePage("b");
 
@@ -199,21 +238,47 @@ describe("SessionManager", () => {
     expect(browser.close).not.toHaveBeenCalled();
   });
 
-  it("closeSession is safe to call before the session has navigated", async () => {
-    const browser = makeFakeBrowser();
-    const factory = vi.fn(async () => browser);
-    const mgr = new SessionManager(factory);
+  it("closeSession deletes the Redis key", async () => {
+    const { mgr, raw } = makeManager();
+    await mgr.register("a");
+    expect(await raw.get(`session:${ADAPTER_NAME}:a`)).not.toBeNull();
+    expect(await mgr.closeSession("a")).toBe(true);
+    expect(await raw.get(`session:${ADAPTER_NAME}:a`)).toBeNull();
+  });
 
-    mgr.register("a");
+  it("closeSession is safe to call before the session has navigated", async () => {
+    const { mgr, factory } = makeManager();
+    await mgr.register("a");
     expect(await mgr.closeSession("a")).toBe(true);
     expect(mgr.has("a")).toBe(false);
     expect(factory).not.toHaveBeenCalled();
   });
 
-  it("closeSession clears any element refs for the session", async () => {
+  it("closeSession swallows a Redis delete failure (best-effort, §4.6)", async () => {
     const browser = makeFakeBrowser();
-    const mgr = new SessionManager(async () => browser);
-    mgr.register("a");
+    const factory = vi.fn(async () => browser);
+    const flaky: RedisClientLike = {
+      ping: async () => undefined,
+      setSession: async () => undefined,
+      getSession: async () => null,
+      deleteSession: async () => {
+        throw new Error("redis blip");
+      },
+      disconnect: async () => undefined,
+    };
+    const mgr = new SessionManager({
+      factory,
+      redis: flaky,
+      instanceId: TEST_INSTANCE_ID,
+    });
+    await mgr.register("a");
+    await expect(mgr.closeSession("a")).resolves.toBe(true);
+    expect(mgr.has("a")).toBe(false);
+  });
+
+  it("closeSession clears any element refs for the session", async () => {
+    const { mgr } = makeManager();
+    await mgr.register("a");
     await mgr.getOrCreatePage("a");
     const ids = mgr.allocateRefs("a", [fakeLocator("x")]);
     const id = ids[0];
@@ -224,8 +289,8 @@ describe("SessionManager", () => {
   });
 
   it("bumpGeneration invalidates prior refs for the session", async () => {
-    const mgr = new SessionManager(async () => makeFakeBrowser());
-    mgr.register("a");
+    const { mgr } = makeManager();
+    await mgr.register("a");
     const ids = mgr.allocateRefs("a", [fakeLocator("x")]);
     const id = ids[0];
     if (!id) throw new Error("expected an allocated id");
@@ -235,17 +300,73 @@ describe("SessionManager", () => {
   });
 
   it("currentGeneration starts at zero and advances with bumpGeneration", () => {
-    const mgr = new SessionManager(async () => makeFakeBrowser());
+    const { mgr } = makeManager();
     expect(mgr.currentGeneration("a")).toBe(0);
     mgr.bumpGeneration("a");
     expect(mgr.currentGeneration("a")).toBe(1);
   });
 
   it("pageOf returns null for a session that has not navigated yet", async () => {
-    const mgr = new SessionManager(async () => makeFakeBrowser());
-    mgr.register("a");
+    const { mgr } = makeManager();
+    await mgr.register("a");
     expect(mgr.pageOf("a")).toBeNull();
     const page = await mgr.getOrCreatePage("a");
     expect(mgr.pageOf("a")).toBe(page);
+  });
+
+  // -- validate ---------------------------------------------------
+
+  it("validate returns ok and refreshes last_active_at for a same-instance session", async () => {
+    const { mgr, raw } = makeManager();
+    await mgr.register("s1");
+    const before = JSON.parse(
+      (await raw.get(`session:${ADAPTER_NAME}:s1`)) ?? "{}",
+    ) as SessionMetadata;
+
+    // Pause briefly so the timestamps differ at second-resolution.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const result = await mgr.validate("s1");
+    expect(result.kind).toBe("ok");
+
+    const after = JSON.parse(
+      (await raw.get(`session:${ADAPTER_NAME}:s1`)) ?? "{}",
+    ) as SessionMetadata;
+    expect(after.last_active_at >= before.last_active_at).toBe(true);
+    expect(after.adapter_instance_id).toBe(TEST_INSTANCE_ID);
+  });
+
+  it("validate returns 'unknown' when Redis has no entry for the session id", async () => {
+    const { mgr } = makeManager();
+    const result = await mgr.validate("never-existed");
+    expect(result.kind).toBe("unknown");
+  });
+
+  it("validate returns 'different-instance' when the stored adapter_instance_id differs", async () => {
+    const browser = makeFakeBrowser();
+    const factory = vi.fn(async () => browser);
+    const raw = new RedisMock();
+    const redis = new RedisClient(raw as unknown as never);
+
+    // Instance A writes the session, then we construct a manager
+    // that pretends to be a different instance reading the same
+    // Redis. This is the parallel-instance pattern the conformance
+    // test uses (Section 4.4 / phase prompt).
+    const mgrA = new SessionManager({
+      factory,
+      redis,
+      instanceId: "instance-aaaa",
+    });
+    await mgrA.register("s1");
+
+    const mgrB = new SessionManager({
+      factory,
+      redis,
+      instanceId: "instance-bbbb",
+    });
+    const result = await mgrB.validate("s1");
+    expect(result.kind).toBe("different-instance");
+    if (result.kind !== "different-instance") return;
+    expect(result.storedInstanceId).toBe("instance-aaaa");
   });
 });

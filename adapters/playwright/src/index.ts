@@ -2,27 +2,44 @@
 //
 // Spectre Playwright driver adapter — entry point.
 //
-// Resolves a TCP port from the SPECTRE_ADAPTER_GRPC_PORT env var
-// (ADR-0021 §4 — production default 9091, harness allocates a free
-// port at test time), starts the gRPC service on 0.0.0.0:<port>,
-// registers the gRPC standard health check, and shuts down cleanly
-// on SIGTERM or SIGINT. R2.2 retired the prior Unix-domain-socket
-// transport; readiness is now signalled by Health.Check responding
-// SERVING (ADR-0021 §6). The wire-level driver protocol contract is
-// unchanged — see ADR-0008 for the original handshake design and
-// ADR-0022 for the TCP transport contract.
+// Resolves a TCP port from `SPECTRE_ADAPTER_GRPC_PORT`, a Redis URL
+// from `SPECTRE_REDIS_URL`, and (optionally — production never sets
+// it) the `SPECTRE_ADAPTER_INSTANCE_ID` override used by the
+// restart-invalidation conformance test. Pings Redis on startup
+// (ADR-0023 §6 — Redis required) and exits non-zero on failure so
+// `docker compose --depends_on.condition: service_healthy` and
+// equivalent Helm readiness gates surface the dependency cleanly.
+// Then starts the gRPC service on `0.0.0.0:<port>`, registers the
+// gRPC standard health check (ADR-0021 §6), and shuts down on
+// SIGTERM/SIGINT.
+//
+// The wire-level driver protocol contract is unchanged — see
+// ADR-0008 for the original handshake design, ADR-0022 for the TCP
+// transport contract, and ADR-0023 §4/§5 for the Redis keyspace and
+// the restart-invalidation mechanism this adapter participates in.
 
 import { fileURLToPath } from "node:url";
 import { resolve as resolvePath } from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { file_spectre_driver_v1alpha1_driver } from "./proto/spectre/driver/v1alpha1/driver_pb.js";
-import { startServer } from "./server.js";
+import { RedisClient } from "./redis.js";
+import { defaultBrowserFactory, startServer } from "./server.js";
+import { SessionManager } from "./sessions.js";
 
 export const PROTOCOL_VERSION: string =
   file_spectre_driver_v1alpha1_driver.proto.package;
 export const ADAPTER_VERSION = "0.1.0-alpha.0";
 
 export const PORT_ENV_VAR = "SPECTRE_ADAPTER_GRPC_PORT";
+export const REDIS_URL_ENV_VAR = "SPECTRE_REDIS_URL";
+export const INSTANCE_ID_ENV_VAR = "SPECTRE_ADAPTER_INSTANCE_ID";
+
+// Local-dev default; ADR-0023 §9 (Compose) and the local justfile
+// both surface this URL via `.env.example`. Production deployments
+// must always set the env var explicitly — defaulting to localhost
+// here is purely a developer convenience.
+const DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0";
 
 export function identity(): string {
   return `spectre-playwright ${ADAPTER_VERSION} (driver protocol ${PROTOCOL_VERSION})`;
@@ -47,9 +64,54 @@ export function resolvePort(env: NodeJS.ProcessEnv): number {
   return port;
 }
 
+export function resolveRedisUrl(env: NodeJS.ProcessEnv): string {
+  const raw = env[REDIS_URL_ENV_VAR];
+  if (raw === undefined || raw === "") {
+    return DEFAULT_REDIS_URL;
+  }
+  return raw;
+}
+
+// Returns the value of `SPECTRE_ADAPTER_INSTANCE_ID` if set (test
+// hook only — see ADR-0023 §5 R4.3 addendum and the phase prompt
+// §4.1) or a freshly generated UUID per process start. The
+// generated value is the §5 restart-invalidation key: a Pod or
+// container restart yields a new UUID; sessions written by the
+// previous incarnation become foreign-instance and the next RPC
+// against them returns gRPC `UNAVAILABLE`.
+export function resolveInstanceId(env: NodeJS.ProcessEnv): string {
+  const raw = env[INSTANCE_ID_ENV_VAR];
+  if (raw !== undefined && raw !== "") {
+    return raw;
+  }
+  return randomUUID();
+}
+
 async function main(): Promise<void> {
   const port = resolvePort(process.env);
-  const handle = await startServer(port);
+  const redisUrl = resolveRedisUrl(process.env);
+  const instanceId = resolveInstanceId(process.env);
+
+  const redis = RedisClient.fromUrl(redisUrl);
+  try {
+    await redis.ping();
+  } catch (err) {
+    process.stderr.write(
+      `redis ping failed at ${redisUrl}: ${String(err instanceof Error ? err.message : err)}\n`,
+    );
+    process.exit(1);
+  }
+  process.stderr.write(
+    `redis ready at ${redisUrl} (adapter_instance_id=${instanceId})\n`,
+  );
+
+  const sessions = new SessionManager({
+    factory: defaultBrowserFactory,
+    redis,
+    instanceId,
+  });
+
+  const handle = await startServer(port, { sessions });
 
   process.stderr.write(
     `${identity()} listening on ${handle.host}:${handle.port}\n`,
@@ -62,6 +124,7 @@ async function main(): Promise<void> {
     process.stderr.write(`received ${signal}, shutting down\n`);
     handle
       .shutdown()
+      .then(() => redis.disconnect())
       .then(() => process.exit(0))
       .catch((err: unknown) => {
         process.stderr.write(`shutdown error: ${String(err)}\n`);
