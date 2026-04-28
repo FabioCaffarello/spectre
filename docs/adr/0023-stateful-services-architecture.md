@@ -584,3 +584,90 @@ contributor reading the codebase does not have to thread "what
 if Postgres is unavailable" through every code path. The
 trade-off is recorded honestly.
 
+## §7 — Network topology
+
+The post-R4 topology has eight long-lived services on the
+network: control-plane, engine, three adapters, Postgres,
+Redis, and (when an operator runs it) Kafka. The connection
+graph stays sparse — each service knows only about the
+dependencies it actually needs, and no service holds a channel
+it does not use.
+
+```
+┌──────────────────┐       ┌──────────────────┐
+│  control-plane   │──gRPC─▶│       engine      │
+│  (operator Pod)  │       │  (Rust service)  │
+└──────────────────┘       └──────────────────┘
+         │                          │   │
+         │ pgx/v5                   │   │ rdkafka
+         │                          │   │
+         ▼                          │   ▼
+┌──────────────────┐                │ ┌──────────────────┐
+│   PostgreSQL     │◀─sqlx──────────┘ │      Kafka       │
+│  (jobs, rows)    │                  │ (spectre.rows.*) │
+└──────────────────┘                  └──────────────────┘
+                                       (when operator runs it)
+
+┌──────────────────┐       ┌──────────────────┐
+│      engine      │──gRPC─▶│   adapter Pod    │
+│  (Rust service)  │       │ (3× per topology)│
+└──────────────────┘       └──────────────────┘
+                                    │
+                                    │ ioredis / redis-py / go-redis
+                                    ▼
+                           ┌──────────────────┐
+                           │      Redis       │
+                           │  (session:*)     │
+                           └──────────────────┘
+```
+
+Five connection patterns make up the graph:
+
+- **Engine → Postgres.** Read/write. The engine writes one row
+  to `jobs` per admission, mutates the status column on each
+  transition, and (for stdout-sinked jobs) appends to
+  `job_rows`. The pool is one connection at idle, scaling under
+  load to a configurable per-engine cap.
+- **Engine → Kafka.** Write only. One producer per engine,
+  publishing to `spectre.rows.<workspace>` for jobs whose
+  `output_sink_kind` is `'kafka'`. The producer is shared
+  across all jobs that need it; partition selection (§3) gives
+  per-job ordering without per-job producers.
+- **Engine → Adapters (3).** The pre-R4 transport, unchanged.
+  gRPC over TCP per ADR-0022; service discovery via env vars
+  per ADR-0021 §5; each adapter exposes the same Driver
+  Protocol surface ADR-0001 froze and ADR-0008 / ADR-0014 /
+  ADR-0016 instantiated.
+- **Adapters → Redis.** Read/write. Each adapter holds one
+  Redis client and writes session metadata on every state-
+  changing RPC. The `:ref` timestamp updates are read-mostly
+  for the eviction sweep.
+- **Control plane → Postgres.** Read only. The control plane
+  populates `Status` subresources from Postgres queries; no
+  writes flow this direction. Engine is the sole writer; the
+  control plane is one of two readers (the other is whatever
+  ad-hoc query an operator runs via `psql`).
+- **Control plane → Engine.** The pre-R4 path, unchanged. The
+  reconciler dials the resolved engine endpoint per ScrapeJob
+  and consumes the `RunJob` stream. ADR-0019 §5's
+  `EngineClientRunner` (R3.1) is preserved verbatim.
+
+Two non-connections are worth recording. **Adapters do not
+connect to Postgres.** Job state is the engine's concern;
+adapters do not know which job they are serving (the engine
+addresses them per-RPC, not per-job). **Adapters do not
+connect to Kafka.** Output streaming is the engine's concern;
+the engine consumes the adapter's RPC stream and writes onward
+to whichever sink the v1alpha2 schema selected. The adapter
+surface to the rest of the system is exactly what the Driver
+Protocol carries — nothing more — and the §1 frame "the
+protocol does not change" stays intact through R4.
+
+The control-plane → engine path is the seam ADR-0019 §5
+preserved through three runner implementations
+(`StubRunner`, `SubprocessRunner`, `EngineClientRunner`). R4
+does not touch it. The control plane gains a Postgres dial as
+a *new* dependency, not a replacement for the engine dial; the
+two paths coexist, with the engine dial driving execution and
+the Postgres dial serving status reads.
+
