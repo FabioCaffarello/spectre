@@ -295,7 +295,7 @@ jobs:
       - if: matrix.package == 'tools/conformance'
         name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
@@ -358,7 +358,7 @@ jobs:
       - if: matrix.package == 'tools/conformance'
         name: Cache curl-impersonate release
         id: curl-imp-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /opt/curl-impersonate
           key: curl-impersonate-${{ runner.os }}-${{ steps.curl-imp-pin.outputs.version }}
@@ -425,7 +425,7 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
@@ -466,7 +466,7 @@ jobs:
       # downloads. The cache key is keyed on go.sum so a controller-
       # runtime bump invalidates the cache automatically.
       - name: Cache kubebuilder tool chain
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: core/control-plane/bin
           key: kubebuilder-bin-${{ runner.os }}-${{ hashFiles('core/control-plane/go.sum') }}
@@ -560,7 +560,7 @@ jobs:
       # subsequent operator-image build can reuse them.
       - name: Cache Playwright base image
         id: pw-base-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/pw-base.tar
           key: pw-base-${{ runner.os }}-${{ steps.pw-base.outputs.digest }}
