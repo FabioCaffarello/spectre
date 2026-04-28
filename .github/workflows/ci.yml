@@ -681,7 +681,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Download operator + engine images
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: operator-image
           path: /tmp
