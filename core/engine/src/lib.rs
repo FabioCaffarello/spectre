@@ -62,6 +62,7 @@ pub mod db;
 pub mod dsl;
 pub mod error;
 pub mod executor;
+pub mod kafka;
 pub mod output;
 pub mod plan;
 pub mod registry;
