@@ -12,7 +12,9 @@ import {
 
 type MockRedis = InstanceType<typeof RedisMock>;
 
-const sampleMetadata = (overrides: Partial<SessionMetadata> = {}): SessionMetadata => ({
+const sampleMetadata = (
+  overrides: Partial<SessionMetadata> = {},
+): SessionMetadata => ({
   session_id: "session-1",
   adapter: ADAPTER_NAME,
   adapter_instance_id: "aaaa",

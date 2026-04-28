@@ -25,7 +25,7 @@ func sampleMetadata() SessionMetadata {
 
 func TestPing(t *testing.T) {
 	rdb, mock := redismock.NewClientMock()
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 	mock.ExpectPing().SetVal("PONG")
 
 	c := NewClient(rdb)
@@ -39,7 +39,7 @@ func TestPing(t *testing.T) {
 
 func TestSetSession(t *testing.T) {
 	rdb, mock := redismock.NewClientMock()
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	meta := sampleMetadata()
 	body, err := json.Marshal(meta)
@@ -59,7 +59,7 @@ func TestSetSession(t *testing.T) {
 
 func TestGetSessionExisting(t *testing.T) {
 	rdb, mock := redismock.NewClientMock()
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	meta := sampleMetadata()
 	body, err := json.Marshal(meta)
@@ -86,7 +86,7 @@ func TestGetSessionExisting(t *testing.T) {
 
 func TestGetSessionMissingReturnsNil(t *testing.T) {
 	rdb, mock := redismock.NewClientMock()
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	mock.ExpectGet("session:" + AdapterName + ":ghost").RedisNil()
 
@@ -105,7 +105,7 @@ func TestGetSessionMissingReturnsNil(t *testing.T) {
 
 func TestGetSessionRedisErrorPropagates(t *testing.T) {
 	rdb, mock := redismock.NewClientMock()
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	wanted := errors.New("network down")
 	mock.ExpectGet("session:" + AdapterName + ":session-1").SetErr(wanted)
@@ -121,7 +121,7 @@ func TestGetSessionRedisErrorPropagates(t *testing.T) {
 
 func TestDeleteSession(t *testing.T) {
 	rdb, mock := redismock.NewClientMock()
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	mock.ExpectDel("session:" + AdapterName + ":session-1").SetVal(1)
 
@@ -136,7 +136,7 @@ func TestDeleteSession(t *testing.T) {
 
 func TestDeleteSessionMissingIsNoop(t *testing.T) {
 	rdb, mock := redismock.NewClientMock()
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	// DEL on a missing key returns 0, not an error.
 	mock.ExpectDel("session:" + AdapterName + ":ghost").SetVal(0)

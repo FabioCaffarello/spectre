@@ -70,10 +70,7 @@ export class RedisClient implements RedisClientLike {
     await this.client.ping();
   }
 
-  async setSession(
-    sessionId: string,
-    value: SessionMetadata,
-  ): Promise<void> {
+  async setSession(sessionId: string, value: SessionMetadata): Promise<void> {
     await this.client.set(
       sessionKey(ADAPTER_NAME, sessionId),
       JSON.stringify(value),

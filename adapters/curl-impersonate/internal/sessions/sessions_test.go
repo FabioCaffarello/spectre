@@ -422,7 +422,7 @@ func TestCloseForgetsRegistryEntry(t *testing.T) {
 func TestSweepStaleRemovesPriorRunFiles(t *testing.T) {
 	dir := t.TempDir()
 	rdb, _ := redismock.NewClientMock()
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 	m := newManagerIn(dir, redisx.NewClient(rdb), testInstanceID)
 
 	stale := filepath.Join(dir, "spectre-curl-prior.cookies")

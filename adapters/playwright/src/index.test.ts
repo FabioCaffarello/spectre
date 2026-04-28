@@ -103,9 +103,9 @@ describe("resolveRedisUrl", () => {
 
 describe("resolveInstanceId", () => {
   it("uses the override when set", () => {
-    expect(
-      resolveInstanceId({ [INSTANCE_ID_ENV_VAR]: "instance-zzzz" }),
-    ).toBe("instance-zzzz");
+    expect(resolveInstanceId({ [INSTANCE_ID_ENV_VAR]: "instance-zzzz" })).toBe(
+      "instance-zzzz",
+    );
   });
 
   it("generates a UUID per call when the override is unset", () => {

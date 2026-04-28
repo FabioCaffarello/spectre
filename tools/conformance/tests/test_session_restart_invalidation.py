@@ -199,9 +199,7 @@ def test_playwright_session_invalidation_on_adapter_restart(
 ) -> None:
     """ADR-0023 §5 / R4.3 addendum — Playwright adapter."""
     if not PLAYWRIGHT_DIST.exists():
-        pytest.skip(
-            f"playwright adapter not built at {PLAYWRIGHT_DIST}; run `just pw-build` first"
-        )
+        pytest.skip(f"playwright adapter not built at {PLAYWRIGHT_DIST}; run `just pw-build` first")
 
     harness_a, harness_b = _harness_pair(
         command=["node", str(PLAYWRIGHT_DIST)],
@@ -283,9 +281,7 @@ def test_curl_impersonate_session_invalidation_on_adapter_restart(
     )
     with harness_a, harness_b:
         session_id = _initialize(harness_a)
-        _assert_redis_has_session(
-            redis_client, "curl-impersonate", session_id, INSTANCE_A
-        )
+        _assert_redis_has_session(redis_client, "curl-impersonate", session_id, INSTANCE_A)
 
         _navigate_expecting_unavailable(harness_b, session_id)
 
