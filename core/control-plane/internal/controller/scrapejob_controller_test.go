@@ -36,6 +36,7 @@ import (
 	spectrev1alpha2 "github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha2"
 	"github.com/FabioCaffarello/spectre/core/control-plane/internal/db"
 	"github.com/FabioCaffarello/spectre/core/control-plane/internal/runner"
+	enginev1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/engine/v1alpha1"
 )
 
 const testDefaultEndpoint = "127.0.0.1:9090"
@@ -84,6 +85,8 @@ func (e *errorRunner) Run(
 	_ string,
 	_ string,
 	_ string,
+	_ *enginev1alpha1.S3SinkConfig,
+	_ *enginev1alpha1.WebhookSinkConfig,
 	_ io.Writer,
 ) (int64, error) {
 	return 0, e.err
@@ -227,9 +230,11 @@ func TestIdempotencyOnCompleted(t *testing.T) {
 	}
 }
 
-// Output sink enforcement — Stdout (R3.2) and Kafka (R4.4) are
-// runtime-implemented; S3 and Webhook remain schema-only and the
-// reconciler rejects them at Pending → Running.
+// Output sink enforcement — every v1alpha2 OutputSink variant is
+// behaviourally implemented post-R5.1: Stdout (R3.2 / R4.2), Kafka
+// (R4.4), S3 + Webhook (R5.1). validateOutputSink is now an
+// emptiness check + defence-in-depth on the per-variant fields the
+// CRD's CEL rules already enforce at admission.
 
 func TestValidateOutputSink_StdoutAccepted(t *testing.T) {
 	if err := validateOutputSink(spectrev1alpha2.OutputSink{Stdout: &spectrev1alpha2.StdoutSink{}}); err != nil {
@@ -260,27 +265,58 @@ func TestValidateOutputSink_KafkaRejectsEmptyTopic(t *testing.T) {
 	}
 }
 
-func TestValidateOutputSink_S3Rejected(t *testing.T) {
+// TestValidateOutputSink_S3Accepted (R5.1): the engine ships an
+// `aws-sdk-s3` uploader and the reconciler forwards the per-job
+// S3 config via the engine's RunJobRequest.s3 field. R3.2's S3
+// rejection is gone; admission gating is engine-side per
+// ADR-0024 §5.
+func TestValidateOutputSink_S3Accepted(t *testing.T) {
 	err := validateOutputSink(spectrev1alpha2.OutputSink{
-		S3: &spectrev1alpha2.S3Sink{Bucket: "b", Key: "k"},
+		S3: &spectrev1alpha2.S3Sink{Bucket: "spectre-rows", Key: "scrapes/{{.JobID}}/rows.jsonl"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "s3") {
-		t.Fatalf("validateOutputSink(S3) = %v, want s3-rejection error", err)
-	}
-	if !strings.Contains(err.Error(), "R5.1") {
-		t.Fatalf("validateOutputSink(S3) error %q should reference R5.1", err)
+	if err != nil {
+		t.Fatalf("validateOutputSink(S3) = %v, want nil (R5.1 unblocks)", err)
 	}
 }
 
-func TestValidateOutputSink_WebhookRejected(t *testing.T) {
+func TestValidateOutputSink_S3RejectsEmptyBucket(t *testing.T) {
 	err := validateOutputSink(spectrev1alpha2.OutputSink{
-		Webhook: &spectrev1alpha2.WebhookSink{URL: "https://example.com/sink"},
+		S3: &spectrev1alpha2.S3Sink{Bucket: "", Key: "k"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "webhook") {
-		t.Fatalf("validateOutputSink(Webhook) = %v, want webhook-rejection error", err)
+	if err == nil || !strings.Contains(err.Error(), "bucket") {
+		t.Fatalf("validateOutputSink(S3, empty bucket) = %v, want bucket-required error", err)
 	}
-	if !strings.Contains(err.Error(), "R5.1") {
-		t.Fatalf("validateOutputSink(Webhook) error %q should reference R5.1", err)
+}
+
+func TestValidateOutputSink_S3RejectsEmptyKey(t *testing.T) {
+	err := validateOutputSink(spectrev1alpha2.OutputSink{
+		S3: &spectrev1alpha2.S3Sink{Bucket: "b", Key: ""},
+	})
+	if err == nil || !strings.Contains(err.Error(), "key") {
+		t.Fatalf("validateOutputSink(S3, empty key) = %v, want key-required error", err)
+	}
+}
+
+// TestValidateOutputSink_WebhookAccepted (R5.1): the engine ships
+// a `reqwest`-based webhook client and the reconciler forwards the
+// per-job webhook config via the engine's RunJobRequest.webhook
+// field. R3.2's webhook rejection is gone; admission gating is
+// per-job at the executor (ADR-0024 §5).
+func TestValidateOutputSink_WebhookAccepted(t *testing.T) {
+	err := validateOutputSink(spectrev1alpha2.OutputSink{
+		Webhook: &spectrev1alpha2.WebhookSink{URL: "https://example.com/sink", Method: "POST"},
+	})
+	if err != nil {
+		t.Fatalf("validateOutputSink(Webhook) = %v, want nil (R5.1 unblocks)", err)
+	}
+}
+
+func TestValidateOutputSink_WebhookRejectsEmptyURL(t *testing.T) {
+	err := validateOutputSink(spectrev1alpha2.OutputSink{
+		Webhook: &spectrev1alpha2.WebhookSink{URL: "", Method: "POST"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "url") {
+		t.Fatalf("validateOutputSink(Webhook, empty url) = %v, want url-required error", err)
 	}
 }
 
@@ -398,34 +434,15 @@ func TestStatusResolvedEngineEndpoint_DefaultFallback(t *testing.T) {
 	}
 }
 
-// TestFailedOnUnsupportedSink covers the full reconciler path for a
-// schema-only sink (S3 here, post-R4.4): the spec passes apiserver
-// admission (CEL allows exactly-one-of), but the reconciler rejects
-// it at Pending → Running with a Failed terminal phase. End-to-end
-// coverage of validateOutputSink integrated with the reconciler.
-// Kafka is no longer the example — R4.4 wired it; S3 and Webhook
-// are the remaining schema-only sinks until R5.1.
-func TestFailedOnUnsupportedSink(t *testing.T) {
-	spec := validSpec()
-	spec.OutputSink = spectrev1alpha2.OutputSink{
-		S3: &spectrev1alpha2.S3Sink{Bucket: "b", Key: "k"},
-	}
-	job := createScrapeJob(t, spec)
-	r := reconcilerFor(stubRunnerForTests())
-
-	_ = reconcileOnce(t, r, job)    // empty → Pending
-	got := reconcileOnce(t, r, job) // Pending → Failed (sink rejected)
-
-	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseFailed {
-		t.Fatalf("Phase = %q, want Failed", got.Status.Phase)
-	}
-	if !strings.Contains(got.Status.Error, "s3") || !strings.Contains(got.Status.Error, "R5.1") {
-		t.Fatalf("Error = %q, want s3/R5.1 substring", got.Status.Error)
-	}
-	if got.Status.CompletedAt == nil {
-		t.Fatalf("CompletedAt = nil, want non-nil for terminal phase")
-	}
-}
+// Note: TestFailedOnUnsupportedSink was deleted in R5.1. After
+// R5.1 wires S3 + Webhook end-to-end, every v1alpha2 OutputSink
+// variant is behaviourally implemented; the test's input set
+// (a schema variant the reconciler rejects) has gone to zero.
+// Preserving it would require fabricating an invalid sink (a
+// fifth variant), which is itself a schema violation. CHANGELOG
+// + ADR-0024 §1 record the deletion. The defence-in-depth
+// emptiness checks (S3/Webhook RejectsEmpty*) above continue to
+// cover the remaining negative-path surface.
 
 // TestRunningTransition_KafkaSinkAccepted (R4.4): a ScrapeJob with
 // the Kafka sink reaches Running phase (was Failed pre-R4.4 with
@@ -450,6 +467,60 @@ func TestRunningTransition_KafkaSinkAccepted(t *testing.T) {
 
 	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseRunning {
 		t.Fatalf("Phase = %q, want Running (R4.4 unblocks Kafka admission)", got.Status.Phase)
+	}
+}
+
+// TestRunningTransition_S3SinkAccepted (R5.1): a ScrapeJob with
+// the S3 sink reaches Running phase (was Failed pre-R5.1 with
+// "s3 output sink not yet implemented"). The runner is stubbed
+// because envtest does not dial a real engine; the test exercises
+// admission acceptance, not engine S3 uploading — that lives in
+// `core/engine/tests/s3_integration.rs` and the conformance
+// `test_s3_sink.py`.
+func TestRunningTransition_S3SinkAccepted(t *testing.T) {
+	spec := validSpec()
+	spec.OutputSink = spectrev1alpha2.OutputSink{
+		S3: &spectrev1alpha2.S3Sink{
+			Bucket:   "spectre-rows",
+			Key:      "scrapes/{{.JobID}}/rows.jsonl",
+			Endpoint: "http://minio:9000",
+			Region:   "us-east-1",
+		},
+	}
+	job := createScrapeJob(t, spec)
+	r := reconcilerFor(stubRunnerForTests())
+
+	_ = reconcileOnce(t, r, job)    // → Pending
+	got := reconcileOnce(t, r, job) // Pending → Running (R5.1 unblocks)
+
+	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseRunning {
+		t.Fatalf("Phase = %q, want Running (R5.1 unblocks S3 admission)", got.Status.Phase)
+	}
+}
+
+// TestRunningTransition_WebhookSinkAccepted (R5.1): a ScrapeJob
+// with the Webhook sink reaches Running phase (was Failed pre-R5.1
+// with "webhook output sink not yet implemented"). Same stub-runner
+// pattern as the Kafka and S3 cases. Engine-side webhook delivery
+// is exercised in `core/engine/tests/webhook_integration.rs` and
+// the conformance `test_webhook_sink.py`.
+func TestRunningTransition_WebhookSinkAccepted(t *testing.T) {
+	spec := validSpec()
+	spec.OutputSink = spectrev1alpha2.OutputSink{
+		Webhook: &spectrev1alpha2.WebhookSink{
+			URL:       "https://example.com/spectre",
+			Method:    "POST",
+			BatchSize: 0,
+		},
+	}
+	job := createScrapeJob(t, spec)
+	r := reconcilerFor(stubRunnerForTests())
+
+	_ = reconcileOnce(t, r, job)    // → Pending
+	got := reconcileOnce(t, r, job) // Pending → Running (R5.1 unblocks)
+
+	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseRunning {
+		t.Fatalf("Phase = %q, want Running (R5.1 unblocks Webhook admission)", got.Status.Phase)
 	}
 }
 

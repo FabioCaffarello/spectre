@@ -68,19 +68,25 @@ var _ JobRunner = (*EngineClientRunner)(nil)
 // per-call dial keeps connection state simple at the cost of a
 // sub-millisecond TCP+HTTP/2 setup per job.
 //
-// R4.2: jobID and outputSinkKind are forwarded verbatim into the
-// gRPC RunJobRequest so the engine can write the matching `jobs`
-// row (ADR-0023 §2). R4.4 adds kafkaTopic, also forwarded verbatim;
-// the engine ignores it for non-kafka sinks. The empty-uuid case
-// sends an empty job_id string; the engine then generates a fresh
-// UUID — kept so hand-written gRPC clients without UID provenance
-// still work.
+// Parameter forwarding contract:
+//   - jobID + outputSinkKind (R4.2) → RunJobRequest job_id + output_sink_kind.
+//   - kafkaTopic (R4.4) → RunJobRequest kafka_topic.
+//   - s3Config (R5.1) → RunJobRequest s3 nested message; nil for
+//     non-S3 sinks.
+//   - webhookConfig (R5.1) → RunJobRequest webhook nested message;
+//     nil for non-webhook sinks.
+//
+// The empty-uuid case sends an empty job_id string; the engine then
+// generates a fresh UUID — kept so hand-written gRPC clients
+// without UID provenance still work.
 func (r *EngineClientRunner) Run(
 	ctx context.Context,
 	jobID uuid.UUID,
 	jobDSL string,
 	outputSinkKind string,
 	kafkaTopic string,
+	s3Config *enginev1alpha1.S3SinkConfig,
+	webhookConfig *enginev1alpha1.WebhookSinkConfig,
 	writer io.Writer,
 ) (int64, error) {
 	if r.EngineEndpoint == "" {
@@ -109,6 +115,8 @@ func (r *EngineClientRunner) Run(
 		JobId:          jobIDStr,
 		OutputSinkKind: outputSinkKind,
 		KafkaTopic:     kafkaTopic,
+		S3:             s3Config,
+		Webhook:        webhookConfig,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("engine client runner: open RunJob: %w", err)

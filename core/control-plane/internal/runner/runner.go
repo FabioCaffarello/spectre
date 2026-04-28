@@ -32,6 +32,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	enginev1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/engine/v1alpha1"
 )
 
 // JobRunner executes a DSL job document and writes JSONL rows to the
@@ -40,16 +42,23 @@ import (
 // The reconciler does not discriminate between failure modes for
 // v1alpha1; any non-nil error transitions the ScrapeJob to Failed.
 //
-// R4.2 evolved the signature with `jobID` and `outputSinkKind`.
-// R4.4 evolves it again with `kafkaTopic`:
+// Parameter accumulation across phases:
+//
+//   - R4.2 added jobID + outputSinkKind.
+//
+//   - R4.4 added kafkaTopic.
+//
+//   - R5.1 adds s3Config + webhookConfig.
 //
 //   - jobID — the Kubernetes UID of the ScrapeJob, used as the
 //     `jobs.id` UUID in the engine's Postgres write path
 //     (ADR-0023 §2). The reconciler parses `ScrapeJob.UID`; runner
 //     implementations forward verbatim.
+//
 //   - outputSinkKind — one of "stdout" / "kafka" / "s3" / "webhook"
 //     derived from `Spec.OutputSink`. The engine writes this to
 //     `jobs.output_sink_kind` and gates `job_rows` appends on it.
+//
 //   - kafkaTopic — the topic name from `Spec.OutputSink.Kafka.Topic`
 //     when the sink is Kafka; empty for every other variant. The
 //     engine consumes this only when `outputSinkKind = "kafka"`
@@ -57,9 +66,19 @@ import (
 //     verbatim. An empty topic with `outputSinkKind = "kafka"`
 //     fails the job at the engine with `KAFKA_TOPIC_REQUIRED`.
 //
+//   - s3Config — the per-job S3 sink config (bucket / key /
+//     endpoint / region) from `Spec.OutputSink.S3` when the sink is
+//     S3; nil otherwise. ADR-0024 §3.
+//
+//   - webhookConfig — the per-job webhook sink config (url /
+//     method / batchSize) from `Spec.OutputSink.Webhook` when the
+//     sink is Webhook; nil otherwise. ADR-0024 §4.
+//
 // The R3.1 vindication of the abstraction holds in spirit — "run a
-// job, write output, return rows/error" is preserved. ADR-0019 §5's
-// R4.2 / R4.4 addenda document the evolutions.
+// job, write output, return rows/error" is preserved. The parameter
+// list now stands at 7; ADR-0019 §5 R5.1 addendum records the
+// trade-off and the deferred v1alpha2 RunRequest struct refactor.
+// ADR-0019 §5 R4.2 / R4.4 / R5.1 addenda track the evolutions.
 type JobRunner interface {
 	Run(
 		ctx context.Context,
@@ -67,6 +86,8 @@ type JobRunner interface {
 		jobDSL string,
 		outputSinkKind string,
 		kafkaTopic string,
+		s3Config *enginev1alpha1.S3SinkConfig,
+		webhookConfig *enginev1alpha1.WebhookSinkConfig,
 		writer io.Writer,
 	) (int64, error)
 }
@@ -75,10 +96,10 @@ type JobRunner interface {
 // envtest case in the suite. It sleeps for SleepDuration, honours
 // context cancellation, and returns (0, nil) on completion. It writes
 // nothing to the supplied writer because PR14 does not produce real
-// JSONL output. R4.2's interface evolution does not change StubRunner's
-// behaviour — the new parameters are accepted and ignored, since
-// the test surface verifies state-machine transitions, not engine
-// interaction.
+// JSONL output. The R4.2 / R4.4 / R5.1 interface evolutions do not
+// change StubRunner's behaviour — new parameters are accepted and
+// ignored, since the test surface verifies state-machine
+// transitions, not engine interaction.
 type StubRunner struct {
 	// SleepDuration is the simulated work time before Run returns.
 	// Tests use a short duration (~10ms); the deployed manager uses
@@ -94,6 +115,8 @@ func (r *StubRunner) Run(
 	_ string,
 	_ string,
 	_ string,
+	_ *enginev1alpha1.S3SinkConfig,
+	_ *enginev1alpha1.WebhookSinkConfig,
 	_ io.Writer,
 ) (int64, error) {
 	select {
