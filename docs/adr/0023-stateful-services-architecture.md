@@ -897,3 +897,104 @@ commitment is to the *deployment shape* (subchart-or-external,
 configurable via Helm values, credentials in Secrets); the
 operational specifics are R7.1's call.
 
+## §11 — Migration order across phases
+
+Phase R4 lands the stateful services in three PRs. The order
+is not arbitrary — it reflects the blast radius each PR carries
+and the dependency direction between them.
+
+### R4.2 first — Postgres
+
+R4.2 lands the engine's Postgres write path and the control
+plane's Postgres read path. Schema migrations (the §2 SQL)
+land here, with the engine running them at startup (§13).
+Existing functionality — stdout-sinked ScrapeJobs reaching
+`kubectl logs` — keeps working; the Postgres write becomes
+*additional* state rather than replacing anything. The blast
+radius is the smallest of the three: failure modes are confined
+to the engine's write path and the control plane's read path,
+both of which are new code paths and reviewable in isolation.
+
+R4.2 lands first because it has the most existing-behaviour
+preservation. A reviewer can read the diff and check that the
+stdout flow is unchanged — Postgres writes are
+additions to the engine's task graph, not replacements.
+
+### R4.3 second — Redis
+
+R4.3 externalises adapter session metadata. This is the
+**highest-risk PR of the entire refactor**. The architectural
+contract from §5 — restart invalidation — changes the
+relationship clients have with adapter sessions. Three
+adapters in three languages each get a Redis client, a write
+path, and the `Initialize`-rejection-on-startup model. The
+conformance suite (`tools/conformance/`) is the canonical
+verification surface; R4.3's prompt will require that the 13 /
+12 / 6 capability assertions stay byte-for-byte identical
+through the switch, just as ADR-0017's invariant has held
+through every prior refactor PR.
+
+R4.3 lands after R4.2 so the highest-risk PR rides on top of
+a known-good Postgres path. If R4.3 introduces a regression,
+the diff bisects against the R4.2 baseline cleanly — the new
+risk is localised to the adapter side.
+
+R4.3 carries its own rollout discipline. The R4.3 prompt will
+detail the per-adapter staging (Playwright first as the
+reference implementation, SeleniumBase and curl-impersonate
+following), the conformance-suite gating, and the contract-
+test expansion.
+
+### R4.4 last — Kafka
+
+R4.4 wires the engine's Kafka producer and removes the
+admission-time rejection from the v1alpha2 reconciler. The
+v1alpha2 schema's `OutputSink.Kafka` becomes a runnable
+variant.
+
+R4.4 lands last because it is the only PR among the three
+that strictly depends on prior R4 work. The Kafka producer
+runs alongside the Postgres write (engine writes one row to
+`jobs` for the job's metadata, regardless of sink; the row's
+`output_sink_kind` is `'kafka'` for these jobs). Without
+R4.2's Postgres path, R4.4 would either skip `jobs` writes
+for Kafka-sinked jobs (creating a coverage gap) or land its
+own Postgres path (duplicating R4.2's work).
+
+R4.4 also has the lowest existing-user impact of the three.
+No production user is exercising `OutputSink.Kafka` today
+(R3.2's reconciler rejects it at admission). R4.4's risk is
+confined to the new code path and to operators who explicitly
+opt into Kafka-sinked jobs once it lands.
+
+### Cross-ADR seams preserved
+
+Three existing ADRs interact with R4:
+
+- **ADR-0010 (element lifecycle).** Preserved. The session
+  metadata layer moves to Redis but the lifecycle contract —
+  `Initialize` → session_id → session-bound RPCs → `Close`
+  / TTL eviction — is byte-for-byte identical from the
+  client's perspective.
+- **ADR-0017 (capability semantic equivalence).**
+  Preserved. The 13 / 12 / 6 capability lists for Playwright /
+  SeleniumBase / curl-impersonate are unchanged; Kafka, S3,
+  and Webhook are *engine* capabilities (sink choices), not
+  *driver-protocol* capabilities (adapter operations).
+  ADR-0017's invariant remains the conformance-suite gate.
+- **ADR-0019 §6 (control plane reads stdout for output).**
+  Evolves. The control plane reads stdout when the sink is
+  `Stdout`; for Kafka, S3, and Webhook sinks the output flows
+  to the sink directly without the control plane consuming
+  the row stream. The §6 commitment is honoured for the
+  Stdout variant and superseded for the others by the
+  v1alpha2 schema R3.2 committed.
+- **ADR-0021 §5 (env-var convention).** Extended. The three
+  new URL env vars (`SPECTRE_POSTGRES_URL`,
+  `SPECTRE_KAFKA_BROKERS`, `SPECTRE_REDIS_URL`; see §12)
+  follow the convention ADR-0021 §5 established for the
+  service-discovery URLs.
+
+No existing ADR is superseded by ADR-0023. R4 is purely
+additive at the architectural layer; the existing seams stay.
+
