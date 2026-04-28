@@ -77,6 +77,13 @@ url = "2"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
+# ISO-8601 timestamps stamped on Kafka message headers (R4.4 —
+# ADR-0023 §3 specifies ISO-8601 for the `timestamp` header). Pulled
+# in only for `Utc::now()` + RFC3339 formatting; `default-features =
+# false` skips the `oldtime` legacy compatibility surface and the
+# wasm bindings.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
 # Postgres persistence (R4.2 — ADR-0023 §2). The engine writes one
 # row to `jobs` per RunJob and (for stdout-sinked jobs) one row to
 # `job_rows` per extracted row. Compile-time-checked queries via
@@ -96,6 +103,35 @@ sqlx = { version = "0.8", default-features = false, features = [
     "json",
     "macros",
     "migrate",
+] }
+
+# Kafka producer (R4.4 — ADR-0023 §3). rust-rdkafka wraps librdkafka,
+# the canonical Kafka client implementation in C. The engine uses a
+# single shared `FutureProducer` for the lifetime of the process and
+# publishes one message per extracted row when a job's sink is
+# `OutputSink.Kafka`.
+#
+# Feature choices, all deliberate:
+#
+# - `cmake-build` compiles librdkafka from source via cmake at build
+#   time. Removes the dependency on a system-provided librdkafka
+#   (which would have to be pinned in CI / the engine Dockerfile and
+#   would diverge across contributors). The Cargo cache amortises
+#   the cost across rebuilds.
+# - `ssl-vendored` vendors OpenSSL alongside librdkafka so future
+#   v1alpha2 SASL/mTLS work (ADR-0023 §10) requires no feature flag
+#   churn. The first clean build pays an extra 10-15 minutes for the
+#   OpenSSL compile; cached thereafter.
+# - `tokio` integrates `FutureProducer`'s delivery futures with
+#   the engine's tokio runtime.
+#
+# rdkafka uses OpenSSL via librdkafka — *deliberately* a separate
+# TLS stack from the rustls 0.23 sqlx pulls in. The two libraries
+# do not conflict (different language ecosystems, different ABIs).
+rdkafka = { version = "0.36", default-features = false, features = [
+    "cmake-build",
+    "ssl-vendored",
+    "tokio",
 ] }
 
 [build-dependencies]
