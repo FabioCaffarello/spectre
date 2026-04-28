@@ -65,12 +65,30 @@ output:
   path: ./stories.jsonl
 ```
 
+v1alpha1's runtime is a multi-process gRPC stack (R2.x →
+ADR-0020 / ADR-0022): an engine binary, one or more adapter
+binaries, the control-plane operator, and the stateful services
+the engine and operator persist to. Local development brings the
+stateful services up via Compose and runs the rest as native
+binaries:
+
 ```bash
 git clone https://github.com/FabioCaffarello/spectre && cd spectre
-just bootstrap
-just pw-install-browsers
-just spectre-build
-just spectre-run examples/hello-hackernews/job.yaml
+cp .env.example .env                  # Postgres URL + endpoint defaults
+just bootstrap                        # fetch every component's deps
+just pw-install-browsers              # Chromium for Playwright
+
+# Stateful services (R4.2 ships Postgres; R4.3/R4.4 add Redis + Kafka).
+just compose-up                       # postgres:16-alpine, healthchecked
+
+# Application services — one terminal each.
+just engine-run                       # gRPC service on :9090
+just pw-run 9091                      # Playwright adapter on :9091
+just op-run                           # operator (dials engine + Postgres)
+
+# In another terminal: apply a sample ScrapeJob CR.
+kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob.yaml
+kubectl get scrapejob -w
 ```
 
 > Contributors who prefer not to install Rust + Go + Node + Python
@@ -78,11 +96,13 @@ just spectre-run examples/hello-hackernews/job.yaml
 > [docs/architecture/development-environment.md](docs/architecture/development-environment.md)
 > for the recommended Devcontainer setup.
 
-`just spectre-build` produces `core/engine/target/release/spectre`.
-`spectre validate <job.yaml>` parses, plans, and checks declared
-capabilities without launching the driver — handy when iterating on
-YAML. See [ADR-0013](docs/adr/0013-cli-as-engine-binary.md) for why
-the CLI lives in the engine crate.
+R2.3 retired the standalone `spectre run` / `validate` CLI; the
+`spectre` binary is now the engine's gRPC service entry point
+(ADR-0020 §3 supersedes ADR-0013). Job execution flows from a
+ScrapeJob CR through the control plane's gRPC client, into the
+engine's `RunJob` stream, and out to the configured `OutputSink`.
+For Postgres specifics see
+[docs/architecture/postgres.md](docs/architecture/postgres.md).
 
 ## How Spectre compares
 

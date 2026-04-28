@@ -1,0 +1,42 @@
+# Spectre — local-development Compose stack.
+#
+# R4.2 lands the first slice: a single PostgreSQL service, the
+# durable store ADR-0023 §2 commits to. R4.3 will add Redis,
+# R4.4 will add Kafka (Redpanda), R6.2 will move engine /
+# adapters / control plane into Compose services here. For now
+# the application services still run as native binaries via the
+# `just engine-run` / `just pw-run` / `just op-run` recipes; the
+# binaries connect to this Postgres on localhost:5432.
+#
+# Usage:
+#   docker compose up -d        # start
+#   docker compose ps           # health
+#   docker compose down         # stop, keep volume
+#   docker compose down -v      # stop, drop volume (full reset)
+#
+# DEV-ONLY: the credentials below are visible in source control.
+# Production deployments populate `SPECTRE_POSTGRES_URL` from
+# Kubernetes Secrets per ADR-0023 §10 / §12. Do not reuse this
+# password anywhere persistent.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: spectre-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: spectre
+      POSTGRES_PASSWORD: spectre_dev_password
+      POSTGRES_DB: spectre
+    ports:
+      - "5432:5432"
+    volumes:
+      - spectre_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spectre -d spectre"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  spectre_postgres_data:

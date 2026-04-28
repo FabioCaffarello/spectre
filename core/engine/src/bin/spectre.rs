@@ -25,6 +25,7 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
+use spectre_engine::db::{Database, run_migrations};
 use spectre_engine::registry::AdapterRegistry;
 use spectre_engine::server::engine_server;
 use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
@@ -55,11 +56,26 @@ async fn run() -> Result<()> {
         .parse()
         .with_context(|| format!("invalid bind address for port {port}"))?;
 
+    // Postgres dial + migrations run before the gRPC service is
+    // registered. ADR-0023 §6 + §13: an unreachable database, a
+    // failed migration, or an absent SPECTRE_POSTGRES_URL is a
+    // startup-time engine failure (no degraded mode).
+    let db = Database::from_env()
+        .await
+        .context("postgres: dial / pool construction failed at startup")?;
+    run_migrations(&db.pool)
+        .await
+        .context("postgres: migration apply failed at startup")?;
+    info!(
+        max_conns = db.pool.options().get_max_connections(),
+        "postgres ready"
+    );
+
     let registry = AdapterRegistry::from_env();
     log_registry(&registry);
 
     let engine = Engine::with_registry(registry);
-    let svc = engine_server(engine);
+    let svc = engine_server(engine, db);
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter

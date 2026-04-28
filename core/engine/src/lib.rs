@@ -58,6 +58,7 @@ pub mod engine_proto {
 }
 
 pub mod client;
+pub mod db;
 pub mod dsl;
 pub mod error;
 pub mod executor;

@@ -7,6 +7,12 @@
 
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+# Load `.env` (gitignored) at recipe-evaluation time so SPECTRE_*
+# env vars (Postgres URL, endpoint defaults) reach the recipes
+# without each contributor needing to source it manually. R4.2 ships
+# `.env.example` as the template; missing `.env` is silently ignored.
+set dotenv-load := true
+
 default:
     @just --list --unsorted
 
@@ -32,6 +38,32 @@ build: engine-build cp-build curl-imp-build pw-build
 
 # Lint + test (CI-equivalent local run)
 check: lint test
+
+# ---------------------------------------------------------------------------
+# Compose stack (R4.2 — see ADR-0023 §9)
+# ---------------------------------------------------------------------------
+# v1alpha1's local-dev path runs application services as native
+# binaries (`just engine-run`, `just pw-run`, `just op-run`) and the
+# stateful services in Compose. R4.2 ships Postgres only; R4.3 adds
+# Redis, R4.4 adds Kafka (Redpanda), R6.2 moves the application
+# services into Compose too.
+
+# Bring up the Compose stack in the background.
+compose-up:
+    docker compose up -d
+
+# Stop the stack; preserve volumes.
+compose-down:
+    docker compose down
+
+# Tail the stack logs.
+compose-logs:
+    docker compose logs -f
+
+# Full reset: stop, drop volumes, restart. Useful when the schema
+# advances and you want a clean migration apply.
+compose-reset:
+    docker compose down -v && docker compose up -d
 
 # ---------------------------------------------------------------------------
 # Repository hygiene
@@ -106,6 +138,14 @@ engine-build:
 # build and Chromium; the test is `#[ignore]` by default. See ADR-0012.
 engine-integration-test: pw-build pw-install-browsers
     cd core/engine && PLAYWRIGHT_AVAILABLE=1 cargo test --test integration -- --ignored --nocapture
+
+# Run the engine's database integration tests. Requires a Postgres
+# reachable at SPECTRE_POSTGRES_URL (the same env var the engine
+# binary reads at startup, ADR-0023 §12). Bring one up via
+# `just compose-up` (R4.2). Tests are `#[ignore]` by default so
+# `just engine-test` stays DB-free.
+engine-db-test:
+    cd core/engine && SQLX_OFFLINE=true cargo test --test db_integration -- --ignored --nocapture
 
 # ---------------------------------------------------------------------------
 # spectre engine binary (core/engine/src/bin/spectre.rs)

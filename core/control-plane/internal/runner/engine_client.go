@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -66,7 +67,19 @@ var _ JobRunner = (*EngineClientRunner)(nil)
 // processes ScrapeJobs sequentially (MaxConcurrentReconciles=1) so
 // per-call dial keeps connection state simple at the cost of a
 // sub-millisecond TCP+HTTP/2 setup per job.
-func (r *EngineClientRunner) Run(ctx context.Context, jobDSL string, writer io.Writer) (int64, error) {
+//
+// R4.2: jobID and outputSinkKind are forwarded verbatim into the
+// gRPC RunJobRequest so the engine can write the matching `jobs`
+// row (ADR-0023 §2). The empty-uuid case sends an empty job_id
+// string; the engine then generates a fresh UUID — kept so
+// hand-written gRPC clients without UID provenance still work.
+func (r *EngineClientRunner) Run(
+	ctx context.Context,
+	jobID uuid.UUID,
+	jobDSL string,
+	outputSinkKind string,
+	writer io.Writer,
+) (int64, error) {
 	if r.EngineEndpoint == "" {
 		return 0, fmt.Errorf("engine client runner: engine endpoint is empty")
 	}
@@ -82,8 +95,17 @@ func (r *EngineClientRunner) Run(ctx context.Context, jobDSL string, writer io.W
 	}
 	defer func() { _ = conn.Close() }()
 
+	jobIDStr := ""
+	if jobID != uuid.Nil {
+		jobIDStr = jobID.String()
+	}
+
 	client := enginev1alpha1.NewEngineClient(conn)
-	stream, err := client.RunJob(ctx, &enginev1alpha1.RunJobRequest{JobDsl: jobDSL})
+	stream, err := client.RunJob(ctx, &enginev1alpha1.RunJobRequest{
+		JobDsl:         jobDSL,
+		JobId:          jobIDStr,
+		OutputSinkKind: outputSinkKind,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("engine client runner: open RunJob: %w", err)
 	}

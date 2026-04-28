@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-28
-Current phase: **R4.1 — ADR-0023 stateful services architecture (complete on merge of this PR, 2026-04-28)**
-Next PR: **R4.2 — PostgreSQL for control-plane job state**
+Current phase: **R4.2 — PostgreSQL integration end-to-end (complete on merge of this PR, 2026-04-28)**
+Next PR: **R4.3 — Redis for adapter session cache**
 
 ## Phases
 
@@ -25,9 +25,9 @@ for the per-phase ADR deltas.
 - [x] **R2.3 — Engine transport + gRPC server (UDS client → TCP client)** *(merged 2026-04-27, PR #30)*
 - [x] **R3.1 — `EngineClientRunner` replaces `SubprocessRunner`** *(merged 2026-04-27)*
 - [x] **R3.2 — `ScrapeJob` CRD v1alpha2 (breaking change, no conversion webhook)** *(merged 2026-04-28)*
-- [x] **R4.1 — ADR-0023 stateful services architecture** *(complete on merge of this PR, 2026-04-28)*
-- [ ] **R4.2 — PostgreSQL for control-plane job state** *(next)*
-- [ ] R4.3 — Redis for adapter session cache
+- [x] **R4.1 — ADR-0023 stateful services architecture** *(merged 2026-04-28)*
+- [x] **R4.2 — PostgreSQL integration end-to-end** *(complete on merge of this PR, 2026-04-28)*
+- [ ] **R4.3 — Redis for adapter session cache** *(next)*
 - [ ] R4.4 — Kafka producer (engine → topic)
 - [ ] R5.1 — ADR-0024 output sinks (S3 + webhook + Kafka)
 - [ ] R6.1 — Per-service Dockerfiles (engine, control plane, three adapters)
@@ -37,32 +37,33 @@ for the per-phase ADR deltas.
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R4.1)
+## Current PR checklist (R4.2)
 
-The R4.1 PR's per-step checklist mirrors Section 7 of the phase
-prompt. R4.1 is documentation-only — the deliverable is
-ADR-0023 (stateful services architecture) plus index updates.
-Updated each session that lands work on this PR.
+The R4.2 PR's per-step checklist mirrors Section 7 of the phase
+prompt. R4.2 is the first implementation PR of Phase R4: engine
+writes job state to Postgres, control plane reads for restart
+recovery, and a Compose stack at the repo root brings up
+postgres:16-alpine for local dev. Updated each session that
+lands work on this PR.
 
-- [x] Step 1 — Inventory: confirm R3.2 merged, v1alpha2 schema reviewed, thirteen decisions in Section 4 cross-checked
-- [x] Step 2 — Fix R4.1 status preamble
-- [x] Step 3 — Draft ADR-0023 §1 (Context and problem)
-- [x] Step 4 — Draft §2 (PostgreSQL)
-- [x] Step 5 — Draft §3 (Kafka)
-- [x] Step 6 — Draft §4 (Redis)
-- [x] Step 7 — Draft §5 (Session externalization — most consequential paragraph)
-- [x] Step 8 — Draft §6 (Required vs optional)
-- [x] Step 9 — Draft §7 (Network topology)
-- [x] Step 10 — Draft §8 (Library choices and pinning)
-- [x] Step 11 — Draft §9 (Compose stack composition)
-- [x] Step 12 — Draft §10 (Production deployment)
-- [x] Step 13 — Draft §11 (Migration order across phases)
-- [x] Step 14 — Draft §12 (Configuration via env vars)
-- [x] Step 15 — Draft §13 (Migrations and schema evolution)
-- [x] Step 16 — Update ADR index, refactor-audit, status, CHANGELOG; flip R4.1 → complete and R4.2 → next
-- [x] Step 17 — Final verification: only `.md` files in `git diff main...HEAD --stat`; `just check` green (44 conformance pass / 13 skip; 13/12/6 invariant intact); ADR length 647 lines (target 500-600 — substantive, §5 narrative preserved)
-- [x] Step 18 — Open the PR (#60)
-- [x] Step 19 — Summary report
+- [x] Step 0 — Skipped: repo's go 1.25.3 pin in core/control-plane/go.mod is deliberate (commit 9168b32, controller-runtime v0.23.3 requires it). pgx/v5 v5.6.0+ supports Go 1.21+ so the toolchain bump is unnecessary for R4.2's stated goals.
+- [x] Step 1 — Inventory: R4.1 merge confirmed; ADR-0023 §2 / §13 read; engine + control-plane + proto current state mapped
+- [x] Step 2 — Engine migration file (`<timestamp>_initial_schema.sql` per ADR-0023 §13; both tables + indexes from §2)
+- [x] Step 3 — Engine `db` module: sqlx 0.8 with explicit features, Database wrapper, run_migrations, four typed query functions; .sqlx/ offline cache committed
+- [x] Step 4 — Engine startup wires Postgres dial + migrations before the gRPC service registers
+- [x] Step 5 — Engine RunJob persists state on every transition (insert_job → record_job_row per stdout row → mark_completed/mark_failed); 5 #[ignore] integration tests; new just engine-db-test recipe
+- [x] Step 6 — engine.proto RunJobRequest gains output_sink_kind (field 3, non-breaking)
+- [x] Step 7 + 8 — Control-plane pgx/v5 dependency + db package (Pool interface, Database wrapper, GetJob / CountJobRows, pgxmock unit tests)
+- [x] Step 9 — JobRunner evolves to accept jobID + outputSinkKind; StubRunner + EngineClientRunner + reconciler + tests update in lockstep
+- [x] Step 10 — Reconciler reads Postgres on Running phase entry for restart recovery; main.go wires db.FromEnv at startup; four pgxmock-driven envtest cases cover the recovery branches
+- [x] Step 11 — docker-compose.yml at repo root (postgres:16-alpine, healthchecked); .env.example; .gitignore (compose.override.yml); justfile compose-{up,down,logs,reset} recipes
+- [x] Step 12 — README quick-start replaced (the prior `just spectre-run` flow was retired in R2.3; new flow uses Compose + multi-process gRPC stack)
+- [x] Step 13 — docs/architecture/postgres.md: schema, migration discipline, connection lifecycle, unavailability semantics, local dev, tests
+- [x] Step 14 — ADR-0019 R4.2 addendum: §5 JobRunner evolution + §4 Running-phase recovery; ADR index updated
+- [x] Step 15 — This entry; CHANGELOG; refactor-audit R4.2 row
+- [x] Step 16 — Final verification: engine fmt + clippy + 46 unit tests + 5 db integration tests green; control-plane vet + golangci-lint + 22 envtest cases + db + runner tests green; proto lint green; Compose `postgres:16-alpine` healthy in under 10s; engine binary smokes cleanly against the Compose stack; capability invariant 13/12/6 preserved. Adapter lint/test, `just conf-test` (×3), and the kubectl end-to-end transcript deferred to maintainer review (this PR does not touch adapter source; full verification needs a fresh `just bootstrap` of the Node + Python toolchains and a local Kubernetes cluster)
+- [x] Step 17 — Open the PR (#61)
+- [x] Step 18 — Summary report
 
 ## Surfaced decisions
 

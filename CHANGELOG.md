@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **PostgreSQL integration end-to-end (R4.2).** ADR-0023 §2's
+  schema lands as a versioned, immutable migration file in
+  `core/engine/migrations/`. The engine gains an `sqlx`-backed
+  `db` module — connection pool, embedded migration runner, four
+  typed query functions — and writes a `jobs` row at status
+  `'running'` on every admitted `RunJob`, appends `job_rows`
+  audit rows for stdout-sinked jobs, and persists the terminal
+  `mark_completed` / `mark_failed` UPDATE. The control plane
+  gains a `pgx/v5` + pgxpool wrapper and a reconciler that reads
+  `jobs` by `ScrapeJob.UID` on Running-phase entry, syncing
+  terminal status from Postgres without re-running.
+  `engine.proto` evolves non-breakingly with a new
+  `output_sink_kind` field (proto3 default empty, engine treats
+  empty as `'stdout'`). The JobRunner interface (ADR-0019 §5)
+  evolves to accept `jobID uuid.UUID` and
+  `outputSinkKind string`; the abstraction is preserved per the
+  §5 evolution rule, with the addendum recording the breakage of
+  the R3.1 byte-for-byte vindication. A `docker-compose.yml` at
+  the repo root brings up `postgres:16-alpine` for local dev;
+  `.env.example` documents the env var set; the justfile gains
+  `compose-{up,down,logs,reset}` recipes. The
+  `SPECTRE_POSTGRES_URL` env var is required at startup for both
+  engine and operator; ADR-0023 §6's "no Postgres-less mode"
+  holds.
 - Architectural commitment to a microservices refactor recorded
   in [ADR-0020](docs/adr/0020-microservices-architecture-supersession.md).
   No code changes in this release; subsequent phase PRs (R2–R8)
