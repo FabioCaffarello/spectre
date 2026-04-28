@@ -51,6 +51,26 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: scope
+    # tonic 0.13.x depends on `prost ^0.13`. PR #34 (prost 0.14) and
+    # PR #44 (tonic 0.13) merged independently and produced a diamond
+    # dependency that broke the engine's generated code; the fix
+    # (fix/engine-tonic-0.13-prost-0.14) re-pins both to the 0.13
+    # line. Hold the 0.14.x bumps here until the project migrates to
+    # tonic 0.14 + tonic-prost 0.14 (the prost integration moved out
+    # of tonic into a separate crate in 0.14, so the bump is a
+    # source-level migration, not a Cargo.toml edit). Removing this
+    # ignore block is the signal that the migration has happened.
+    ignore:
+      - dependency-name: "prost"
+        versions: ["0.14.x"]
+      - dependency-name: "prost-types"
+        versions: ["0.14.x"]
+      - dependency-name: "tonic"
+        versions: ["0.14.x"]
+      - dependency-name: "tonic-build"
+        versions: ["0.14.x"]
+      - dependency-name: "tonic-health"
+        versions: ["0.14.x"]
 
   - package-ecosystem: npm
     directory: /adapters/playwright
