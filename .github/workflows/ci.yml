@@ -148,7 +148,7 @@ jobs:
         working-directory: ${{ matrix.module }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           # Pin to the version declared in our go.mod files. Using
           # `stable` picks up newer toolchains whose modules can
@@ -330,7 +330,7 @@ jobs:
       # download the pinned curl-impersonate release tarball so
       # `curl_chrome116` is on PATH when the conformance suite runs.
       - if: matrix.package == 'tools/conformance'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.24"
       - if: matrix.package == 'tools/conformance'
@@ -453,7 +453,7 @@ jobs:
         working-directory: core/control-plane
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           # Match the toolchain kubebuilder v4 scaffolds in go.mod.
           # The control-plane is on its own track; the curl-impersonate
