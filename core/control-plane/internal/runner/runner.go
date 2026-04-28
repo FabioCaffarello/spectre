@@ -20,14 +20,18 @@ limitations under the License.
 // service and streams Row events back. PR14 ships StubRunner, which
 // sleeps for a configurable duration and returns no rows; the
 // envtest reconciler suite continues to use it. See ADR-0019 §5 for
-// the seam rationale and ADR-0020 §5 for the refactor that retired
-// SubprocessRunner (PR15) in favour of the gRPC client.
+// the seam rationale (with the R4.2 addendum recording the
+// `jobID` + `outputSinkKind` evolution) and ADR-0020 §5 for the
+// refactor that retired SubprocessRunner (PR15) in favour of the
+// gRPC client.
 package runner
 
 import (
 	"context"
 	"io"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // JobRunner executes a DSL job document and writes JSONL rows to the
@@ -35,15 +39,38 @@ import (
 // surface an error on validation, launch, runtime, or timeout failure.
 // The reconciler does not discriminate between failure modes for
 // v1alpha1; any non-nil error transitions the ScrapeJob to Failed.
+//
+// R4.2 evolves the signature with two new parameters:
+//
+//   - jobID — the Kubernetes UID of the ScrapeJob, used as the
+//     `jobs.id` UUID in the engine's Postgres write path
+//     (ADR-0023 §2). The reconciler parses `ScrapeJob.UID`; runner
+//     implementations forward verbatim.
+//   - outputSinkKind — one of "stdout" / "kafka" / "s3" / "webhook"
+//     derived from `Spec.OutputSink`. The engine writes this to
+//     `jobs.output_sink_kind` and gates `job_rows` appends on it.
+//
+// The R3.1 vindication of the abstraction holds in spirit — "run a
+// job, write output, return rows/error" is preserved. ADR-0019 §5's
+// R4.2 addendum documents the evolution.
 type JobRunner interface {
-	Run(ctx context.Context, jobDSL string, writer io.Writer) (int64, error)
+	Run(
+		ctx context.Context,
+		jobID uuid.UUID,
+		jobDSL string,
+		outputSinkKind string,
+		writer io.Writer,
+	) (int64, error)
 }
 
 // StubRunner is the JobRunner used by PR14's reconciler and by every
 // envtest case in the suite. It sleeps for SleepDuration, honours
 // context cancellation, and returns (0, nil) on completion. It writes
 // nothing to the supplied writer because PR14 does not produce real
-// JSONL output.
+// JSONL output. R4.2's interface evolution does not change StubRunner's
+// behaviour — the new parameters are accepted and ignored, since
+// the test surface verifies state-machine transitions, not engine
+// interaction.
 type StubRunner struct {
 	// SleepDuration is the simulated work time before Run returns.
 	// Tests use a short duration (~10ms); the deployed manager uses
@@ -53,7 +80,13 @@ type StubRunner struct {
 }
 
 // Run implements JobRunner.
-func (r *StubRunner) Run(ctx context.Context, _ string, _ io.Writer) (int64, error) {
+func (r *StubRunner) Run(
+	ctx context.Context,
+	_ uuid.UUID,
+	_ string,
+	_ string,
+	_ io.Writer,
+) (int64, error) {
 	select {
 	case <-time.After(r.SleepDuration):
 		return 0, nil

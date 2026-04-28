@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -133,7 +134,7 @@ func TestEngineClientRunner_StreamsRowsAndReturnsCount(t *testing.T) {
 	r := &EngineClientRunner{EngineEndpoint: "bufnet", dialFunc: dial}
 
 	var buf bytes.Buffer
-	rows, err := r.Run(context.Background(), "spectre: v1alpha1\n", &buf)
+	rows, err := r.Run(context.Background(), uuid.New(), "spectre: v1alpha1\n", "stdout", &buf)
 	if err != nil {
 		t.Fatalf("Run() returned error: %v", err)
 	}
@@ -158,7 +159,7 @@ func TestEngineClientRunner_FailedEventReturnsError(t *testing.T) {
 
 	r := &EngineClientRunner{EngineEndpoint: "bufnet", dialFunc: dial}
 
-	rows, err := r.Run(context.Background(), "spectre: v1alpha1\n", &bytes.Buffer{})
+	rows, err := r.Run(context.Background(), uuid.New(), "spectre: v1alpha1\n", "stdout", &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("Run() returned nil error, want non-nil")
 	}
@@ -187,7 +188,7 @@ func TestEngineClientRunner_HonoursContextCancellation(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	rows, err := r.Run(ctx, "spectre: v1alpha1\n", &bytes.Buffer{})
+	rows, err := r.Run(ctx, uuid.New(), "spectre: v1alpha1\n", "stdout", &bytes.Buffer{})
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -207,7 +208,7 @@ func TestEngineClientRunner_HonoursContextCancellation(t *testing.T) {
 
 func TestEngineClientRunner_RejectsEmptyEndpoint(t *testing.T) {
 	r := &EngineClientRunner{}
-	_, err := r.Run(context.Background(), "spectre: v1alpha1\n", &bytes.Buffer{})
+	_, err := r.Run(context.Background(), uuid.New(), "spectre: v1alpha1\n", "stdout", &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("Run() with empty EngineEndpoint returned nil, want non-nil error")
 	}
@@ -226,7 +227,7 @@ func TestEngineClientRunner_DialFailureSurfacesError(t *testing.T) {
 
 	r := &EngineClientRunner{EngineEndpoint: "127.0.0.1:9090", dialFunc: failingDial}
 
-	rows, err := r.Run(context.Background(), "spectre: v1alpha1\n", &bytes.Buffer{})
+	rows, err := r.Run(context.Background(), uuid.New(), "spectre: v1alpha1\n", "stdout", &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("Run() returned nil error, want dial error")
 	}
@@ -256,7 +257,7 @@ func TestEngineClientRunner_WriterErrorSurfacesAsRunError(t *testing.T) {
 
 	r := &EngineClientRunner{EngineEndpoint: "bufnet", dialFunc: dial}
 
-	_, err := r.Run(context.Background(), "spectre: v1alpha1\n",
+	_, err := r.Run(context.Background(), uuid.New(), "spectre: v1alpha1\n", "stdout",
 		&engineClientFailingWriter{err: io.ErrShortWrite})
 	if err == nil {
 		t.Fatal("Run() returned nil, want writer error")

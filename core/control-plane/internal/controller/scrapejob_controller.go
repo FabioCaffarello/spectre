@@ -22,6 +22,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -116,12 +117,27 @@ func (r *ScrapeJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		runCtx, cancel := context.WithTimeout(ctx, jobTimeout(&job))
 		defer cancel()
 
+		// R4.2: ADR-0023 §2's `jobs.id` is `UUID PRIMARY KEY`. We
+		// reuse `ScrapeJob.UID` (a Kubernetes-issued RFC 4122 UUID)
+		// rather than minting a separate identifier so a Postgres
+		// reader can correlate rows back to the CR by name. Parse
+		// failure is treated as an internal invariant violation —
+		// Kubernetes guarantees UID format — and surfaces as Failed.
+		jobUUID, err := uuid.Parse(string(job.UID))
+		if err != nil {
+			return ctrl.Result{}, r.transitionToFailed(
+				ctx, &job,
+				fmt.Sprintf("internal: ScrapeJob UID is not a UUID: %v", err),
+			)
+		}
+		sinkKind := outputSinkKind(job.Spec.OutputSink)
+
 		jr := r.RunnerFactory(job.Status.ResolvedEngineEndpoint)
 		// JSONL rows flow to the operator's stdout so they surface in
 		// `kubectl logs <operator-pod>` per ADR-0019 §6.
 		// EngineClientRunner forwards every Row event's json_line;
 		// StubRunner ignores the writer.
-		rows, runErr := jr.Run(runCtx, job.Spec.JobDSL, os.Stdout)
+		rows, runErr := jr.Run(runCtx, jobUUID, job.Spec.JobDSL, sinkKind, os.Stdout)
 
 		now := metav1.Now()
 		if runErr != nil {
@@ -203,6 +219,30 @@ func resolveEngineEndpoint(
 		return fmt.Sprintf("%s.%s.svc.cluster.local:%d", ref.Service.Name, ns, port), nil
 	}
 	return "", fmt.Errorf("EngineRef has neither Service nor Endpoint set")
+}
+
+// outputSinkKind maps the v1alpha2 OutputSink discriminated union
+// to the canonical string the engine writes to `jobs.output_sink_kind`
+// (ADR-0023 §2). Returns the empty string when no variant is set;
+// the CEL rule prevents that at admission, so callers should
+// already have run validateOutputSink. Kafka / S3 / Webhook return
+// their canonical value here even though validateOutputSink rejects
+// them today — the engine.proto field is forward-compatible
+// (R4.2 Step 6) and the kind plumbing lands now so R4.4 / R5.1's
+// reconciler diff is just removing rejection lines.
+func outputSinkKind(sink spectrev1alpha2.OutputSink) string {
+	switch {
+	case sink.Stdout != nil:
+		return "stdout"
+	case sink.Kafka != nil:
+		return "kafka"
+	case sink.S3 != nil:
+		return "s3"
+	case sink.Webhook != nil:
+		return "webhook"
+	default:
+		return ""
+	}
 }
 
 // validateOutputSink enforces R3.2's runtime sink grammar: only

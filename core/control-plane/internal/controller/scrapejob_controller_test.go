@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -60,7 +61,13 @@ func stubRunnerForTests() *runner.StubRunner {
 // Running → Failed transition without depending on context timeout.
 type errorRunner struct{ err error }
 
-func (e *errorRunner) Run(_ context.Context, _ string, _ io.Writer) (int64, error) {
+func (e *errorRunner) Run(
+	_ context.Context,
+	_ uuid.UUID,
+	_ string,
+	_ string,
+	_ io.Writer,
+) (int64, error) {
 	return 0, e.err
 }
 
