@@ -71,8 +71,15 @@ proto-breaking:
 # adapters/playwright/src/proto/. See ADR-0007 for rationale; Rust
 # bindings are produced lazily by core/engine/build.rs at cargo
 # invocation time and are not materialised by this recipe.
+#
+# Two invocations: the default template generates Go + Python + TS
+# for the public driver protocol (and the vendored grpc.health.v1).
+# The engine template generates Go only for the internal engine
+# protocol — Python and TS bindings are intentionally not produced
+# (R2.3; ADR-0020 §6).
 proto-generate: proto-bootstrap
-    cd proto && buf generate
+    cd proto && buf generate --path spectre/driver --path grpc
+    cd proto && buf generate --template buf.gen.engine.yaml --path spectre/engine
     bash tools/codegen/post-generate.sh
 
 # ---------------------------------------------------------------------------

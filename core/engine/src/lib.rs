@@ -42,6 +42,16 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/protocol_version.rs"));
 }
 
+/// Generated bindings for `spectre.engine.v1alpha1` — the internal
+/// Engine service the engine binary exposes (R2.3) and the control
+/// plane consumes (R3.1). Adapter authors do not implement this
+/// protocol; it is the wire boundary between the control plane and
+/// the engine, not between the engine and adapters.
+#[allow(missing_docs, clippy::all, clippy::pedantic, clippy::nursery)]
+pub mod engine_proto {
+    tonic::include_proto!("spectre.engine.v1alpha1");
+}
+
 pub mod client;
 pub mod dsl;
 pub mod error;

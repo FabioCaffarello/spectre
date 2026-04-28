@@ -1,0 +1,73 @@
+// Internal Engine service contract.
+//
+// This protocol is the wire boundary between the control plane and
+// the engine. It is `v1alpha1`: unstable and minimal. Adding fields
+// (or new RPCs) is non-breaking; renaming or removing them is not.
+//
+// Unlike `spectre.driver.v1alpha1` (which is a public protocol
+// adapter authors implement), this protocol is internal to the
+// project — only the engine implements the server side, and only the
+// control plane (R3.1) and tools that drive jobs end-to-end consume
+// it.
+//
+// The protocol intentionally exposes a single streaming RPC. Job
+// cancellation is achieved through gRPC stream cancellation.
+// Status, metrics, and listing are control-plane responsibilities;
+// the engine is stateless across calls in v1alpha1.
+
+syntax = "proto3";
+
+package spectre.engine.v1alpha1;
+
+option go_package = "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/engine/v1alpha1;enginev1alpha1";
+
+// Engine accepts a Spectre DSL document and streams JSONL row events
+// back as the executor produces them. The stream completes with a
+// terminal `Completed` event on success or a `Failed` event on
+// failure.
+service Engine {
+  rpc RunJob(RunJobRequest) returns (stream RunJobResponse);
+}
+
+message RunJobRequest {
+  // Inline DSL document — the same YAML the legacy `spectre run`
+  // CLI consumed. The engine parses, plans, resolves the requested
+  // driver, dials the adapter, and runs the plan.
+  string job_dsl = 1;
+
+  // Optional client-supplied correlation id. Included in engine
+  // logs and traces. The engine generates one if empty.
+  string job_id = 2;
+}
+
+message RunJobResponse {
+  oneof event {
+    // One JSONL row, encoded as the same string the legacy executor
+    // wrote to stdout via the JSONL output sink. Preserves DSL
+    // semantics so consumers that previously piped CLI stdout can
+    // forward the line unchanged.
+    Row row = 1;
+
+    // Terminal: the plan ran to completion.
+    Completed completed = 2;
+
+    // Terminal: the plan failed mid-execution. No further events
+    // follow.
+    Failed failed = 3;
+  }
+}
+
+message Row {
+  string json_line = 1;
+}
+
+message Completed {
+  int64 rows_extracted = 1;
+}
+
+message Failed {
+  // Maps to the engine's `EngineError` taxonomy. Stable across
+  // patch releases; new variants are additive.
+  string error_code = 1;
+  string error_message = 2;
+}
