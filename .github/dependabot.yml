@@ -18,6 +18,21 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: scope
+    # k8s.io v0.36.0 broke compilation against controller-runtime
+    # v0.23.3 (the latest tagged release as of 2026-04-28). PR #39
+    # merged the bump with red CI and #43 auto-closed; both are
+    # rolled back in fix/control-plane-k8s-0.35-pin. Hold the next
+    # 0.36.x wave here until kubernetes-sigs/controller-runtime
+    # cuts v0.24.0 with the upstream k8s 1.36 update merged on
+    # master (#3506, 2026-04-22). Removing this ignore block is
+    # the signal that the cap can lift.
+    ignore:
+      - dependency-name: "k8s.io/api"
+        versions: ["0.36.x"]
+      - dependency-name: "k8s.io/apimachinery"
+        versions: ["0.36.x"]
+      - dependency-name: "k8s.io/client-go"
+        versions: ["0.36.x"]
 
   - package-ecosystem: gomod
     directory: /adapters/curl-impersonate
