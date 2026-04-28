@@ -1,8 +1,8 @@
 # Sample ScrapeJob targeting the curl-impersonate adapter. The inline
 # DSL mirrors examples/curl-impersonate-extract/job.yaml. This driver
-# declares only the four-capability intersection (navigation, query_css,
-# extract_text, extract_attribute) per ADR-0017.
-apiVersion: spectre.io/v1alpha1
+# declares only the four-capability intersection (navigation,
+# query_css, extract_text, extract_attribute) per ADR-0017.
+apiVersion: spectre.io/v1alpha2
 kind: ScrapeJob
 metadata:
   name: curl-impersonate-extract
@@ -23,4 +23,10 @@ spec:
     output:
       format: jsonl
       path: ./links.jsonl
-  outputSink: stdout
+  engineRef:
+    service:
+      name: spectre-engine
+      namespace: spectre-system
+      port: 9090
+  outputSink:
+    stdout: {}

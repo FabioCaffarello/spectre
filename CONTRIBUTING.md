@@ -192,15 +192,17 @@ just op-run            # run the operator in the foreground; uses
                        # the workspace's release-build spectre binary
                        # and the workspace adapters/ directory
 # Apply a sample CR in another terminal:
-kubectl apply -f core/control-plane/config/samples/spectre_v1alpha1_scrapejob_hello-hackernews.yaml
+kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
 kubectl get scrapejob -w
 just op-uninstall-crds # tear down
 ```
 
-PR15 wired `SubprocessRunner`: a `ScrapeJob` whose `outputSink` is
-`stdout` produces real JSONL rows on the operator's stdout (or the
-foreground `op-run` terminal) and `RowsExtracted` reflects the
-engine's row count. See
+R3.1's `EngineClientRunner` dials the engine over gRPC; a v1alpha2
+`ScrapeJob` whose `outputSink.stdout` is set produces real JSONL
+rows on the operator's stdout (or the foreground `op-run`
+terminal) and `RowsExtracted` reflects the engine's row count.
+v1alpha2 added `EngineRef` (Service or Endpoint) and the
+`OutputSink` discriminated union; see
 [docs/architecture/control-plane.md](docs/architecture/control-plane.md)
 and [ADR-0019](docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md).
 

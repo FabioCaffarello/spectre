@@ -14,14 +14,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1alpha1 contains API Schema definitions for the spectre.io
-// v1alpha1 API group. The kubebuilder default would have produced
-// "spectre.spectre.io" by concatenating --group and --domain; we
-// override to "spectre.io" so the API group matches the project's
-// canonical domain. See ADR-0019.
+// Package v1alpha2 contains API Schema definitions for the spectre.io
+// v1alpha2 API group. v1alpha2 supersedes v1alpha1 with two
+// substantive additions — `Spec.EngineRef` (Kubernetes Service or
+// direct host:port) and `Spec.OutputSink` (a discriminated union over
+// Stdout / Kafka / S3 / Webhook variants, CEL-validated). Per master
+// strategy §3.3 the migration is a breaking change without a
+// conversion webhook (no production users to migrate); v1alpha1 is
+// deleted entirely. See ADR-0019 (R3.2 addendum) and ADR-0020 §5.
 // +kubebuilder:object:generate=true
 // +groupName=spectre.io
-package v1alpha1
+package v1alpha2
 
 import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -31,7 +34,7 @@ import (
 var (
 	// SchemeGroupVersion is group version used to register these objects.
 	// This name is used by applyconfiguration generators (e.g. controller-gen).
-	SchemeGroupVersion = schema.GroupVersion{Group: "spectre.io", Version: "v1alpha1"}
+	SchemeGroupVersion = schema.GroupVersion{Group: "spectre.io", Version: "v1alpha2"}
 
 	// GroupVersion is an alias for SchemeGroupVersion, for backward compatibility.
 	GroupVersion = SchemeGroupVersion

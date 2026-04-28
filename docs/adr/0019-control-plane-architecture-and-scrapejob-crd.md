@@ -579,3 +579,94 @@ The refactor's phase R3 contains the implementation work that
 deletes `SubprocessRunner` and lands `EngineClientRunner`. See
 [ADR-0020](0020-microservices-architecture-supersession.md) §5
 for the full phase sequence.
+
+## Update (R3.2)
+
+The `ScrapeJob` CRD evolved to `spectre.io/v1alpha2`. The schema
+adds:
+
+- **`Spec.EngineRef`** (optional, CEL-validated): a discriminated
+  union over `Service` (Kubernetes Service reference rendered as
+  `<name>.<namespace>.svc.cluster.local:<port>`) and `Endpoint`
+  (direct host:port string). When `EngineRef` is `nil` the
+  reconciler falls back to the operator's startup-time
+  `--engine-endpoint` / `SPECTRE_ENGINE_ENDPOINT` configuration.
+  The CEL rule (`exactly one of service, endpoint must be set`)
+  enforces the discriminated-union shape at admission.
+- **`Spec.OutputSink`** (required, CEL-validated): a
+  discriminated union over `Stdout`, `Kafka`, `S3`, and `Webhook`
+  variants. The CEL rule (`exactly one of stdout, kafka, s3,
+  webhook must be set`) enforces the shape at admission. R3.2
+  implements only `Stdout`; `Kafka`, `S3`, and `Webhook` exist as
+  schema fields for v1alpha2 forward-compatibility (R4.4 wires
+  Kafka; R5.1 wires S3 and Webhook), but the reconciler rejects
+  them at the `Pending → Running` boundary with explicit "not yet
+  implemented" errors. The schema-ahead-of-functionality pattern
+  is documented honestly in
+  `config/samples/spectre_v1alpha2_scrapejob_kafka_NOT_YET_IMPLEMENTED.yaml`
+  and in the architecture guide.
+- **`Status.ResolvedEngineEndpoint`** (debug aid): records the
+  host:port the operator actually dialed for this job. Useful for
+  detecting `EngineRef` resolution fall-backs.
+
+Per master strategy §3.3, the migration is a breaking change
+without a conversion webhook. The `api/v1alpha1/` directory was
+deleted entirely; v1alpha1 ScrapeJob CRs in clusters on upgrade
+are orphaned. The upgrade procedure (`kubectl delete scrapejob
+--all` → install v1alpha2 CRD → apply v1alpha2 CRs) is documented
+in `CHANGELOG.md` and `docs/architecture/control-plane.md`.
+
+CEL `XValidation` (stable in Kubernetes 1.25+) replaces the
+custom-admission-webhook escape hatch the discriminated-union
+shape would otherwise require. No webhook server, no TLS / cert
+plumbing; the apiserver enforces the rules. Spectre's target
+environments (kind / Compose for local testing, Kubernetes 1.31+
+for production; envtest pinned to a matching version) all
+support CEL validation.
+
+§-by-§ status:
+
+- **§1** (kubebuilder over operator-sdk or controller-runtime
+  direct): preserved. v1alpha2 was authored against the same
+  scaffold.
+- **§2** (`ScrapeJob` is the only CRD): preserved. v1alpha2
+  remains the only registered API; `ScrapeFleet` and
+  `ScrapeSchedule` remain deferred to post-Phase-3 work.
+- **§3** (Adapter execution model — subprocess inside operator
+  pod): superseded by ADR-0020 §3 (already noted in the R1.1
+  addendum); R3.2 makes no further changes to this axis.
+- **§4** (`ScrapeJob` status as state machine, not condition
+  arbiter): preserved byte-for-byte. The phase enum is still the
+  source of truth; `Status.ResolvedEngineEndpoint` joins as a
+  diagnostic field that complements (does not replace) the
+  phase.
+- **§5** (`JobRunner` interface boundary): preserved. The
+  interface signature is byte-for-byte unchanged; what changed
+  is *where* the runner is constructed. R3.1 instantiated a
+  single long-lived `EngineClientRunner` in `main.go` and
+  injected it into the reconciler; R3.2 moves construction
+  inside `Reconcile` because each ScrapeJob's resolved endpoint
+  may differ. The reconciler now accepts a `RunnerFactory`
+  closure (`func(endpoint string) runner.JobRunner`) and a
+  `DefaultEngineEndpoint` string instead of a single `Runner`
+  field; production wires the factory to a closure returning
+  `EngineClientRunner`, and envtest cases continue to inject
+  `StubRunner`. The vindication noted in the R3.1 addendum
+  stands: the `JobRunner` signature has now been preserved
+  through three implementations and one construction-site
+  refactor.
+- **§6** (`OutputSink` accepts only `"stdout"`): honoured at the
+  runtime level. v1alpha2 replaces the string `outputSink` with
+  a typed discriminated union, and the reconciler accepts only
+  the `Stdout` variant. The other three variants exist in the
+  schema but reject at admission; the v1alpha1 commitment that
+  "the field's grammar remains forward-compatible; the runtime
+  grows S3, webhook, and Kafka sinks under ADR-0024 in R5"
+  carries forward verbatim — only the field's shape became
+  typed.
+
+The `JobRunner` seam's stability through this construction-site
+refactor reinforces the original §5 claim. Future runner
+substitutions (e.g. a streaming-status variant if `ScrapeFleet`
+needs aggregated row counts) can land without touching the
+reconciler control flow.

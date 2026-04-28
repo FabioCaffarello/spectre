@@ -21,10 +21,13 @@ spec:
     - jsonPath: .status.rowsExtracted
       name: Rows
       type: integer
+    - jsonPath: .status.resolvedEngineEndpoint
+      name: Engine
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1alpha2
     schema:
       openAPIV3Schema:
         description: ScrapeJob is the Schema for the scrapejobs API.
@@ -49,37 +52,164 @@ spec:
           spec:
             description: spec defines the desired state of ScrapeJob
             properties:
-              adapterImage:
+              engineRef:
                 description: |-
-                  adapterImage is an optional override for the adapter container
-                  image. Reserved for future per-job-Pod execution (ADR-0019 §3
-                  "v1alpha2 escape hatch"); v1alpha1 ignores this field. When the
-                  field is empty the operator uses whatever adapter binary it was
-                  deployed with.
-                type: string
+                  engineRef identifies the engine service the operator dials
+                  for this job. Exactly one of Service or Endpoint must be set
+                  (CEL-validated). When unset, the operator falls back to its
+                  startup-time `--engine-endpoint` / `SPECTRE_ENGINE_ENDPOINT`
+                  configuration.
+                properties:
+                  endpoint:
+                    description: |-
+                      Endpoint is a direct host:port string. Useful for testing or
+                      for engines outside the cluster. Mutually exclusive with
+                      Service.
+                    type: string
+                  service:
+                    description: |-
+                      Service references a Kubernetes Service in the specified
+                      Namespace. The operator resolves to
+                      `<service>.<namespace>.svc.cluster.local:<port>`. Mutually
+                      exclusive with Endpoint.
+                    properties:
+                      name:
+                        description: Name of the Kubernetes Service.
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: |-
+                          Namespace of the Kubernetes Service. Defaults to the
+                          ScrapeJob's own namespace if empty.
+                        type: string
+                      port:
+                        default: 9090
+                        description: |-
+                          Port number of the Service. Defaults to 9090 (the engine's
+                          canonical port from ADR-0021).
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                    required:
+                    - name
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one of service, endpoint must be set
+                  rule: '(has(self.service) ? 1 : 0) + (has(self.endpoint) ? 1 : 0)
+                    == 1'
               jobDSL:
                 description: |-
-                  jobDSL is the inline YAML body of the DSL job document the
-                  engine will execute. Must be non-empty; the reconciler rejects
-                  empty values with a Failed phase. The DSL grammar itself is
-                  documented in ADR-0012.
+                  jobDSL is the inline YAML document describing the scrape job.
+                  The engine parses, plans, resolves the requested driver, and
+                  runs the plan. The DSL grammar is documented in ADR-0012.
                 minLength: 1
                 type: string
               outputSink:
                 description: |-
-                  outputSink declares where the engine's JSONL output is sent.
-                  v1alpha1 accepts only "stdout" (the operator's stdout, visible
-                  in `kubectl logs`); empty is treated as "stdout". Other syntaxes
-                  (s3://, pvc://, webhook://, kafka://) are reserved for v1alpha2
-                  — the schema accepts the string but the reconciler rejects them
-                  at validation time. See ADR-0019 §6.
-                type: string
+                  outputSink describes where the engine's JSONL row events
+                  land. Exactly one of Stdout, Kafka, S3, or Webhook must be
+                  set (CEL-validated). R3.2 implements only Stdout; the others
+                  fail at admission with "not yet implemented" until R4.4 /
+                  R5.1 wire them.
+                properties:
+                  kafka:
+                    description: |-
+                      Kafka publishes JSONL rows to a Kafka topic. R4.4 wires the
+                      Kafka producer; R3.2 admission rejects with "kafka output
+                      sink not yet implemented".
+                    properties:
+                      brokers:
+                        description: Brokers is the list of Kafka broker host:port
+                          addresses.
+                        items:
+                          type: string
+                        minItems: 1
+                        type: array
+                      topic:
+                        description: Topic is the Kafka topic the engine publishes
+                          to.
+                        minLength: 1
+                        type: string
+                    required:
+                    - brokers
+                    - topic
+                    type: object
+                  s3:
+                    description: |-
+                      S3 uploads JSONL output to an S3-compatible bucket. R5.1
+                      wires the S3 client; R3.2 admission rejects with "s3 output
+                      sink not yet implemented".
+                    properties:
+                      bucket:
+                        description: Bucket is the S3 bucket name.
+                        minLength: 1
+                        type: string
+                      endpoint:
+                        description: |-
+                          Endpoint overrides the default S3 endpoint (for MinIO, R2,
+                          etc).
+                        type: string
+                      key:
+                        description: |-
+                          Key is the object key within the bucket. Supports
+                          `{{.JobID}}` template substitution at upload time.
+                        type: string
+                      region:
+                        default: us-east-1
+                        description: Region is the AWS region. Defaults to us-east-1.
+                        type: string
+                    required:
+                    - bucket
+                    - key
+                    type: object
+                  stdout:
+                    description: |-
+                      Stdout writes JSONL rows to the operator's stdout, surfaced
+                      via `kubectl logs <operator-pod>`.
+                    type: object
+                  webhook:
+                    description: |-
+                      Webhook POSTs JSONL rows to an HTTP endpoint. R5.1 wires the
+                      webhook client; R3.2 admission rejects with "webhook output
+                      sink not yet implemented".
+                    properties:
+                      batchSize:
+                        default: 0
+                        description: |-
+                          BatchSize is the number of rows per HTTP request. Zero means
+                          one row per request.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      method:
+                        default: POST
+                        description: Method is the HTTP method.
+                        enum:
+                        - POST
+                        - PUT
+                        type: string
+                      url:
+                        description: URL is the HTTP endpoint that receives JSONL
+                          rows.
+                        pattern: ^https?://.+$
+                        type: string
+                    required:
+                    - url
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one of stdout, kafka, s3, webhook must be set
+                  rule: '(has(self.stdout) ? 1 : 0) + (has(self.kafka) ? 1 : 0) +
+                    (has(self.s3) ? 1 : 0) + (has(self.webhook) ? 1 : 0) == 1'
               resources:
                 description: |-
-                  resources is the resource requests/limits hint forwarded to the
-                  execution context. v1alpha1's single-Pod execution model
-                  (ADR-0019 §3) cannot enforce per-job limits at the OS level;
-                  the field is recorded for future per-Pod-per-job execution.
+                  resources is a hint forwarded to the engine. The operator
+                  does not enforce limits in v1alpha2 (the engine runs in its
+                  own Pod with its own resources); the field exists for
+                  forward-compatibility with per-job Pods (a future runtime
+                  model evolution).
                 properties:
                   claims:
                     description: |-
@@ -138,23 +268,25 @@ spec:
                     type: object
                 type: object
               timeoutSeconds:
+                default: 600
                 description: |-
-                  timeoutSeconds bounds the entire job runtime. Defaults to 600
-                  (10 minutes) when omitted. The reconciler propagates this as a
-                  context deadline to the JobRunner.
+                  timeoutSeconds bounds the entire job runtime. Defaults to
+                  600 (10 minutes). The reconciler propagates this as a
+                  context deadline to the engine client.
                 format: int32
                 minimum: 1
                 type: integer
             required:
             - jobDSL
+            - outputSink
             type: object
           status:
             description: status defines the observed state of ScrapeJob
             properties:
               completedAt:
                 description: |-
-                  completedAt is the timestamp at which the job transitioned to a
-                  terminal phase (Completed or Failed).
+                  completedAt is the timestamp at which the job transitioned
+                  to a terminal phase (Completed or Failed).
                 format: date-time
                 type: string
               conditions:
@@ -222,25 +354,31 @@ spec:
                 x-kubernetes-list-type: map
               error:
                 description: |-
-                  error captures the failure reason when phase is Failed. Empty
-                  otherwise.
+                  error captures the failure reason when phase is Failed.
+                  Structured failure information lives in Conditions.
                 type: string
               phase:
                 description: |-
-                  phase is the current lifecycle phase. See ADR-0019 §4 for the
-                  state-machine semantics: phase is the source of truth, not a
-                  derived view of conditions.
+                  phase is the current lifecycle phase. The state machine
+                  (Pending → Running → Completed | Failed) is unchanged from
+                  v1alpha1; see ADR-0019 §4.
                 enum:
                 - Pending
                 - Running
                 - Completed
                 - Failed
                 type: string
+              resolvedEngineEndpoint:
+                description: |-
+                  resolvedEngineEndpoint records the host:port the operator
+                  actually dialed for this job. Useful for debugging EngineRef
+                  resolution issues — if the spec used a Service form but the
+                  status shows the default endpoint, resolution fell back.
+                type: string
               rowsExtracted:
                 description: |-
                   rowsExtracted is the total number of JSONL rows the engine
-                  produced. PR14's StubRunner always reports 0; PR15+ reports the
-                  real count.
+                  produced.
                 format: int64
                 type: integer
               startedAt:

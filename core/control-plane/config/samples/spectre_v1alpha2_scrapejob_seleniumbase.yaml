@@ -1,7 +1,8 @@
-# Sample ScrapeJob targeting the SeleniumBase adapter. The inline DSL
-# mirrors examples/seleniumbase-extract/job.yaml — the same shape as
-# the Playwright sample, swapping only the driver field.
-apiVersion: spectre.io/v1alpha1
+# Sample ScrapeJob targeting the SeleniumBase adapter. The inline
+# DSL mirrors examples/seleniumbase-extract/job.yaml — the only
+# differences from the Playwright sample are the `driver:` field
+# and the metadata.name.
+apiVersion: spectre.io/v1alpha2
 kind: ScrapeJob
 metadata:
   name: seleniumbase-extract
@@ -22,4 +23,10 @@ spec:
     output:
       format: jsonl
       path: ./links.jsonl
-  outputSink: stdout
+  engineRef:
+    service:
+      name: spectre-engine
+      namespace: spectre-system
+      port: 9090
+  outputSink:
+    stdout: {}

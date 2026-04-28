@@ -141,7 +141,59 @@ audit demonstrates the choice to defer is conscious.
 | `core/control-plane/cmd/main.go` references to `SubprocessRunner` | ~~Deferred~~ retired in R3.1. The `--engine-binary` and `--adapters-path` flags were replaced with `--engine-endpoint`. |
 | `core/control-plane/Dockerfile` (operator image bundling adapters) | ~~Deferred to R6.1~~ unbundled in R3.1. The image is now a Go static binary on `gcr.io/distroless/static:nonroot` (~50 MB). Per-service Dockerfiles for the engine and the three adapters land in R6.1. |
 | `.github/workflows/ci.yml` (operator-image build / load) | ~~Deferred~~ R3.1 retired the bundled-image smoke tests and the gated `operator-smoke-kind` end-to-end job; both come back in their multi-service forms in R6.2 / R7.2. |
-| `examples/curl-impersonate-extract/job.yaml`, `examples/curl-impersonate-fetch/job.yaml`, `examples/seleniumbase-extract/job.yaml`, `examples/seleniumbase-navigate/job.yaml` | These are `ScrapeJob` CRDs aimed at the operator. They get touched in R3.2 (CRD v1alpha2). |
+| `examples/curl-impersonate-extract/job.yaml`, `examples/curl-impersonate-fetch/job.yaml`, `examples/seleniumbase-extract/job.yaml`, `examples/seleniumbase-navigate/job.yaml` | ~~Touched in R3.2~~ verified in R3.2 to be inline DSL documents (no `apiVersion` / `kind`), not `ScrapeJob` CRs. They are embedded into a CR's `spec.jobDSL` field; the CR samples updated in R3.2 live under `core/control-plane/config/samples/spectre_v1alpha2_*.yaml`. The two `*-fetch` / `*-navigate` directories were already retired in R2.3. |
+
+## R3.2 — `ScrapeJob` CRD v1alpha2
+
+> **Status (R3.2 complete):** the `ScrapeJob` CRD evolved from
+> `spectre.io/v1alpha1` to `spectre.io/v1alpha2`. The new spec
+> introduces `EngineRef` (Service-or-Endpoint discriminated
+> union, CEL-validated) and `OutputSink` (Stdout / Kafka / S3 /
+> Webhook discriminated union, CEL-validated; only Stdout is
+> wired in v1alpha2 — Kafka / S3 / Webhook are schema-only and
+> the reconciler rejects them at admission with explicit "not
+> yet implemented" messages). `Status.ResolvedEngineEndpoint`
+> records the host:port the operator dialed. The `api/v1alpha1/`
+> directory is deleted entirely; per master strategy §3.3 the
+> migration is a breaking change without a conversion webhook
+> (no production users to migrate). The reconciler constructs an
+> `EngineClientRunner` per-reconcile from the resolved endpoint
+> rather than receiving a single long-lived `JobRunner` field;
+> `cmd/main.go` passes `DefaultEngineEndpoint` instead of
+> `Runner` and the `--engine-endpoint` flag survives as the
+> nil-`EngineRef` fallback. Sample manifests under
+> `core/control-plane/config/samples/spectre_v1alpha1_*.yaml`
+> are deleted; the `_v1alpha2_*.yaml` replacements (plus
+> `_kafka_NOT_YET_IMPLEMENTED.yaml` documenting the schema gap)
+> take their place. The CEL `XValidation` rules appear in the
+> regenerated `config/crd/bases/spectre.io_scrapejobs.yaml`
+> under each variant's `x-kubernetes-validations`. ADR-0019 §1,
+> §2, §4, §5, §6 carry an R3.2 addendum recording that v1alpha2
+> is now the only registered version.
+
+### `core/control-plane/`
+
+| File | Change |
+|------|--------|
+| `api/v1alpha1/{groupversion_info.go,scrapejob_types.go,zz_generated.deepcopy.go}` | Deleted entirely. v1alpha1 is no longer a registered API. |
+| `api/v1alpha2/{groupversion_info.go,scrapejob_types.go,zz_generated.deepcopy.go}` | Created. Hosts the `ScrapeJob` / `ScrapeJobList` / `ScrapeJobSpec` / `ScrapeJobStatus` / `EngineRef` / `EngineServiceRef` / `OutputSink` / `StdoutSink` / `KafkaSink` / `S3Sink` / `WebhookSink` types. |
+| `internal/controller/scrapejob_controller.go` | Imports `api/v1alpha2`; new helpers `resolveEngineEndpoint` and `validateOutputSink`; `DefaultEngineEndpoint` field replaces `Runner` field; `EngineClientRunner` constructed per `Reconcile`; `Status.ResolvedEngineEndpoint` populated when transitioning to Running. |
+| `internal/controller/scrapejob_controller_test.go` | Imports v1alpha2; existing transition tests updated; new tests cover EngineRef Service / Endpoint / nil-fallback and OutputSink Stdout-accepted / Kafka-rejected / S3-rejected / Webhook-rejected. |
+| `internal/controller/suite_test.go` | Registers v1alpha2 in the envtest scheme. |
+| `cmd/main.go` | Passes `DefaultEngineEndpoint` to the reconciler instead of `Runner`. The `--engine-endpoint` flag's help text describes its role as the nil-`EngineRef` fallback. |
+| `PROJECT` | `resources` block lists v1alpha2 as the registered API path; v1alpha1 entry removed. |
+| `config/crd/bases/spectre.io_scrapejobs.yaml` | Regenerated for v1alpha2. CEL rules appear under `spec.engineRef.x-kubernetes-validations` and `spec.outputSink.x-kubernetes-validations`. |
+| `config/samples/spectre_v1alpha1_scrapejob_*.yaml` | Deleted. |
+| `config/samples/spectre_v1alpha2_scrapejob*.yaml` | Created (`scrapejob.yaml`, `scrapejob_endpoint.yaml`, `scrapejob_seleniumbase.yaml`, `scrapejob_curl-impersonate.yaml`, `scrapejob_kafka_NOT_YET_IMPLEMENTED.yaml`). |
+| `config/samples/kustomization.yaml` | References v1alpha2 samples. |
+
+### Cross-cutting
+
+| File | Change |
+|------|--------|
+| `docs/architecture/control-plane.md` | Rewritten for v1alpha2: EngineRef pattern, OutputSink discriminated union, sink-implementation status table, CEL validation explanation, upgrade procedure. |
+| `docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md` | R3.2 addendum recording v1alpha2 as the only registered version; §1, §2, §4 carry forward; §3 was already superseded by ADR-0020; §5 (`JobRunner`) preserved (vindicated R3.1); §6 (OutputSink stdout-only commitment) honoured at the runtime level — Kafka / S3 / Webhook reject at admission. |
+| `CHANGELOG.md` | Unreleased entry recording the breaking schema change and the schema-ahead-of-functionality deferral for Kafka / S3 / Webhook. |
 
 ## Counts
 
