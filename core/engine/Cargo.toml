@@ -29,7 +29,7 @@ path = "src/bin/spectre.rs"
 # crate see the same protobuf types. R2.3 added `tonic-health` for
 # the standard health-check service the engine registers alongside
 # its `spectre.engine.v1alpha1.Engine` server (ADR-0021 §6).
-prost = "0.13"
+prost = "0.14"
 prost-types = "0.14"
 tonic = { version = "0.12", default-features = false, features = ["codegen", "prost", "transport"] }
 tonic-health = { version = "0.12", default-features = false }
