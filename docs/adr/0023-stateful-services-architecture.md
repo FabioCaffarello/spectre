@@ -376,3 +376,132 @@ the adapters do. The full library matrix lives in §8.
 Redis is the answer. R4.3 wires the adapter clients per the §8
 library matrix; R7.1 packages the Bitnami Redis subchart.
 
+## §5 — The session externalization problem
+
+Adapter sessions cannot be Redis-cached. A "session", at the
+runtime level, is a Playwright `BrowserContext`, a SeleniumBase
+`SB` instance, or a curl-impersonate `*http.Client` — a live
+process-bound object holding sockets, file descriptors, and
+language-runtime memory that does not survive serialisation.
+Move that object to Redis and the deserialised side has bytes,
+not behaviour. The metadata that *describes* the session — the
+session_id, the cookie-jar path, the navigation history's
+last URL, the generation counter — is serialisable. The session
+itself is not. R4.3 externalises the metadata; the runtime stays
+process-local. That asymmetry is the architectural problem this
+ADR records, and the consequence — what happens on adapter Pod
+restart — has three reasonable answers and one chosen direction.
+
+### Option A — restart invalidation (chosen)
+
+When an adapter Pod restarts, every session it held becomes
+invalid. The Redis metadata persists; the adapter, on startup,
+sees session keys whose corresponding runtime objects do not
+exist in its memory, and it does not attempt to reconstitute
+them. Clients that hold session_ids from before the restart see
+`UNAVAILABLE` (or `FAILED_PRECONDITION` on the first session-
+bound RPC after restart) and re-call `Initialize` to allocate
+fresh session_ids backed by fresh runtime objects.
+
+The cost is borne by the client. A client mid-job sees a session
+fail and must restart its work from the beginning of its session
+boundary. For Spectre's primary use case — engine driving an
+adapter for a single ScrapeJob's duration — the cost is
+"restart the job", and v1alpha2's reconciler already retries
+failed jobs on the next reconcile cycle. For consumers running
+longer-lived sessions (the conformance suite, an interactive
+debugging tool), the cost is one round of `Initialize` and the
+loss of in-session state (visited URLs, accumulated cookies).
+The cost is real and bounded.
+
+The benefit is a contract a reader can hold in their head:
+*session_ids are valid until the adapter Pod restarts*. Nothing
+more. No subtle "sometimes it survives, sometimes it doesn't"
+matrix. No promises about partial recovery the implementation
+cannot keep. The contract matches what the runtime actually
+delivers.
+
+### Option B — sticky sessions (rejected)
+
+Route every RPC for a given session_id to the specific adapter
+Pod that allocated it. Realised via client-side affinity (the
+client remembers `(session_id, pod_address)` and dials directly)
+or via Service-level routing (a session-aware proxy or a Service
+with `sessionAffinity: ClientIP`).
+
+This preserves session liveness across most operational events
+— routine reschedules, rolling deployments, scale-up — at the
+cost of two architectural compromises. First, the client must
+know about Pod-level addressing, not just Service-level
+addressing; the v1alpha1 transport contract (ADR-0022) is
+plaintext gRPC over a single Service endpoint, and sticky
+sessions would push Pod identity into the client's discovery
+contract. Second, horizontal scaling of the adapter Pool gets
+constrained — a client that pinned to Pod A cannot fail over to
+Pod B if Pod A crashes, so the Service's redundancy guarantee
+is reduced from "any Pod can serve any RPC" to "any Pod can
+serve any *new* RPC". The architectural surface a sticky-session
+contract adds — proxy logic, client-side address caching,
+re-pinning on Pod death — is non-trivial, and the recovery
+semantics it preserves are partial: the cost is paid every day
+for a benefit that the failure case (Pod crash) still does not
+fully cover.
+
+### Option C — warm recovery (rejected)
+
+On adapter Pod startup, the new Pod reads Redis, sees session
+keys for the adapter, and attempts to reconstitute the runtime
+state — replay the cookie-jar, restore the navigation history,
+re-allocate browser contexts pointed at the last-visited URLs.
+Clients that held session_ids from before the restart see their
+sessions "still working", with the URL they were on and the
+cookies they had accumulated.
+
+The architectural problem is what "still working" hides. Browser
+state is not the cookies and URL alone. It is the JavaScript
+heap, the WebSocket connections, the per-tab event-listener
+graph, the rendering engine's per-page caches. Replaying
+cookies and the URL gives a client *some* of what they had —
+enough to feel like the session survived — and silently misses
+the rest. A client that was mid-form-fill, mid-CAPTCHA, mid-
+single-page-app navigation finds the recovered session is
+plausibly different in ways the contract does not specify and
+the implementation cannot fully enumerate. Worse, the partial
+recovery creates a false sense of resilience: operators see
+"sessions survive Pod restart" in the docs and design retry
+budgets accordingly, then run into the cases warm recovery does
+not cover and have no honest contract to fall back on.
+
+The complexity cost is real too. Each of the three adapters has
+a different runtime model — Playwright's CDP-driven Chromium
+process tree, SeleniumBase's Python-driven WebDriver session,
+curl-impersonate's Go-driven HTTP client — and warm recovery
+needs a per-adapter implementation of "given this Redis blob,
+materialise an equivalent runtime". Three implementations,
+three failure surfaces, and the union of "sessions sometimes
+survive, sometimes silently degrade" replaces the simple
+restart-invalidation contract.
+
+### The choice and its cost
+
+ADR-0023 commits to restart invalidation (Option A). The
+contract is "session_ids are valid for the lifetime of the
+adapter Pod that allocated them". Clients re-call `Initialize`
+on `UNAVAILABLE`. The Redis metadata persists across restart
+not as a recovery surface but as an indexable record of what
+sessions existed — useful for debugging, useful for v1alpha2
+contracts that may build on it (multi-tenant accounting,
+session-level audit), and useful as the data structure
+sticky-session and warm-recovery options would build on if
+v1alpha2 deliberately revisits the choice.
+
+The cost — clients restarting jobs on adapter Pod restart — is
+the cost the runtime imposes regardless of how the metadata
+layer is organised. Restart invalidation makes that cost visible
+and contractual. Sticky sessions hide it (until they don't);
+warm recovery hides it (and creates harder-to-debug failures
+when the recovery is incomplete). v1alpha2 may revisit the
+choice if real users run longer-lived sessions whose restart
+cost is operationally significant; v1alpha1 commits to the
+honest contract.
+
