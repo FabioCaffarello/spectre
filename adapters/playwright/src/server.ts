@@ -14,7 +14,7 @@
 
 import { create } from "@bufbuild/protobuf";
 import { DurationSchema } from "@bufbuild/protobuf/wkt";
-import { type ConnectRouter } from "@connectrpc/connect";
+import { Code, ConnectError, type ConnectRouter } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import { randomUUID } from "node:crypto";
 import * as http2 from "node:http2";
@@ -64,6 +64,7 @@ import {
   QueryResponseSchema,
   SelectorKind,
 } from "./proto/spectre/driver/v1alpha1/extraction_pb.js";
+import { type RedisClientLike } from "./redis.js";
 import {
   type BrowserFactory,
   SessionManager,
@@ -96,7 +97,7 @@ const JPEG_QUALITY_DEFAULT = 80;
 // the message actually exceeds the limit.
 const SCREENSHOT_PAYLOAD_WARN_BYTES = 3 * 1024 * 1024;
 
-const defaultBrowserFactory: BrowserFactory = () => chromium.launch();
+export const defaultBrowserFactory: BrowserFactory = () => chromium.launch();
 
 const waitConditionToPlaywright = (
   wait: WaitCondition,
@@ -247,12 +248,67 @@ const isValidNavigationUrl = (url: string): boolean => {
   }
 };
 
+// R4.3 / ADR-0023 §5: every non-Initialize RPC validates the session
+// against Redis before doing any work. The result is one of:
+//
+//   - "ok"      → Redis has the session and `adapter_instance_id`
+//                 matches; caller proceeds with the RPC.
+//   - "unknown" → Redis has no entry for this id (never created or
+//                 TTL-expired). Caller maps to the existing
+//                 in-band `INVALID_ARGUMENT` envelope.
+//
+// Restart-invalidation ("different-instance") and Redis-unreachable
+// surface as transport-level gRPC `UNAVAILABLE` (Code.Unavailable),
+// thrown synchronously here. The conformance test in
+// `tools/conformance/tests/test_session_restart_invalidation.py`
+// asserts on `grpc.StatusCode.UNAVAILABLE` precisely against this
+// throw path.
+type SessionGate = { kind: "ok" } | { kind: "unknown" };
+
+const gateSession = async (
+  sessions: SessionManager,
+  sessionId: string,
+): Promise<SessionGate> => {
+  let result;
+  try {
+    result = await sessions.validate(sessionId);
+  } catch (err) {
+    throw new ConnectError(
+      `redis unreachable: ${err instanceof Error ? err.message : String(err)}`,
+      Code.Unavailable,
+    );
+  }
+  if (result.kind === "different-instance") {
+    throw new ConnectError(
+      "session belongs to a different adapter instance; client must re-Initialize",
+      Code.Unavailable,
+    );
+  }
+  return result;
+};
+
+const unknownSessionResponse = (sessionId: string): string =>
+  `unknown session_id ${JSON.stringify(sessionId)}; call Initialize first`;
+
 export const createDriverService = (
   sessions: SessionManager,
 ): DriverServiceImpl => ({
   async initialize(_req: InitializeRequest): Promise<InitializeResponse> {
     const sessionId = randomUUID();
-    sessions.register(sessionId);
+    // ADR-0023 §6 makes Redis required: if the metadata write fails
+    // we surface the failure at the transport layer so the caller
+    // sees the same gRPC `UNAVAILABLE` it would see on adapter
+    // startup. The local `registered` set is only updated after a
+    // successful Redis write (see `SessionManager.register`), so
+    // there is nothing to roll back here.
+    try {
+      await sessions.register(sessionId);
+    } catch (err) {
+      throw new ConnectError(
+        `redis unreachable; cannot persist session metadata: ${err instanceof Error ? err.message : String(err)}`,
+        Code.Unavailable,
+      );
+    }
     const capabilities = create(CapabilitiesSchema, {
       names: [...CAPABILITY_NAMES],
       driverVersion: DRIVER_VERSION,
@@ -270,10 +326,11 @@ export const createDriverService = (
         "session_id is required",
       );
     }
-    if (!sessions.has(req.sessionId)) {
+    const gate = await gateSession(sessions, req.sessionId);
+    if (gate.kind === "unknown") {
       return errorResponse(
         DriverError_Code.INVALID_ARGUMENT,
-        `unknown session_id ${JSON.stringify(req.sessionId)}; call Initialize first`,
+        unknownSessionResponse(req.sessionId),
       );
     }
     if (!req.url) {
@@ -337,10 +394,11 @@ export const createDriverService = (
         "session_id is required",
       );
     }
-    if (!sessions.has(req.sessionId)) {
+    const gate = await gateSession(sessions, req.sessionId);
+    if (gate.kind === "unknown") {
       return queryError(
         DriverError_Code.INVALID_ARGUMENT,
-        `unknown session_id ${JSON.stringify(req.sessionId)}; call Initialize first`,
+        unknownSessionResponse(req.sessionId),
       );
     }
     if (req.kind === SelectorKind.UNSPECIFIED) {
@@ -394,10 +452,11 @@ export const createDriverService = (
         "session_id is required",
       );
     }
-    if (!sessions.has(req.sessionId)) {
+    const gate = await gateSession(sessions, req.sessionId);
+    if (gate.kind === "unknown") {
       return extractError(
         DriverError_Code.INVALID_ARGUMENT,
-        `unknown session_id ${JSON.stringify(req.sessionId)}; call Initialize first`,
+        unknownSessionResponse(req.sessionId),
       );
     }
     const opaqueId = req.element?.opaqueId ?? "";
@@ -479,10 +538,11 @@ export const createDriverService = (
         "session_id is required",
       );
     }
-    if (!sessions.has(req.sessionId)) {
+    const gate = await gateSession(sessions, req.sessionId);
+    if (gate.kind === "unknown") {
       return screenshotError(
         DriverError_Code.INVALID_ARGUMENT,
-        `unknown session_id ${JSON.stringify(req.sessionId)}; call Initialize first`,
+        unknownSessionResponse(req.sessionId),
       );
     }
     if (req.scope === ScreenshotScope.UNSPECIFIED) {
@@ -586,13 +646,21 @@ export const createDriverService = (
         "session_id is required",
       );
     }
-    const closed = await sessions.closeSession(req.sessionId);
-    if (!closed) {
+    // Close still validates the session against Redis: a Close from
+    // a foreign instance would otherwise tear down nothing locally
+    // (no browser to close) yet succeed silently. Restart-
+    // invalidation surfaces to the client as `UNAVAILABLE` here for
+    // the same reason it does on Navigate. The Redis-delete inside
+    // `closeSession` is best-effort (§4.6); only the validate step
+    // is gated.
+    const gate = await gateSession(sessions, req.sessionId);
+    if (gate.kind === "unknown") {
       return closeError(
         DriverError_Code.INVALID_ARGUMENT,
         `unknown session_id ${JSON.stringify(req.sessionId)}`,
       );
     }
+    await sessions.closeSession(req.sessionId);
     return create(CloseResponseSchema);
   },
 });
@@ -636,6 +704,12 @@ export interface StartServerOptions {
   browserFactory?: BrowserFactory;
   sessions?: SessionManager;
   host?: string;
+  // Optional alternative to passing a fully-constructed
+  // `SessionManager`: provide a Redis client and the adapter's
+  // `instance_id` and `startServer` will assemble one with the
+  // default browser factory (or `browserFactory` if supplied).
+  redis?: RedisClientLike;
+  instanceId?: string;
 }
 
 export async function startServer(
@@ -644,9 +718,20 @@ export async function startServer(
 ): Promise<ServerHandle> {
   const host = options.host ?? "0.0.0.0";
 
-  const sessions =
-    options.sessions ??
-    new SessionManager(options.browserFactory ?? defaultBrowserFactory);
+  let sessions = options.sessions;
+  if (!sessions) {
+    if (!options.redis || !options.instanceId) {
+      throw new Error(
+        "startServer requires either an explicit `sessions` SessionManager " +
+          "or both `redis` and `instanceId` so it can construct one",
+      );
+    }
+    sessions = new SessionManager({
+      factory: options.browserFactory ?? defaultBrowserFactory,
+      redis: options.redis,
+      instanceId: options.instanceId,
+    });
+  }
   const impl = createDriverService(sessions);
 
   const handler = connectNodeAdapter({ routes: driverRoutes(impl) });

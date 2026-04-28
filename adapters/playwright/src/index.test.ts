@@ -1,21 +1,43 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create } from "@bufbuild/protobuf";
+import RedisMock from "ioredis-mock";
 import type { Browser, BrowserContext, Page } from "playwright";
+import { ConnectError, Code } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 
 import { CAPABILITY_NAMES, DRIVER_VERSION } from "./capabilities.js";
 import {
   ADAPTER_VERSION,
+  INSTANCE_ID_ENV_VAR,
   PORT_ENV_VAR,
   PROTOCOL_VERSION,
+  REDIS_URL_ENV_VAR,
   identity,
+  resolveInstanceId,
   resolvePort,
+  resolveRedisUrl,
 } from "./index.js";
 import { InitializeRequestSchema } from "./proto/spectre/driver/v1alpha1/driver_pb.js";
 import { DriverError_Code } from "./proto/spectre/driver/v1alpha1/errors_pb.js";
+import { RedisClient } from "./redis.js";
 import { createDriverService } from "./server.js";
 import { SessionManager } from "./sessions.js";
+
+const TEST_INSTANCE_ID = "instance-aaaa";
+
+const newSessions = (
+  factory: () => Promise<Browser>,
+  instanceId: string = TEST_INSTANCE_ID,
+): SessionManager => {
+  const raw = new RedisMock();
+  const redis = new RedisClient(raw as unknown as never);
+  return new SessionManager({ factory, redis, instanceId });
+};
+
+const browserFactory = vi.fn(async (): Promise<Browser> => {
+  throw new Error("browser factory should not be invoked in unit tests");
+});
 
 describe("identity", () => {
   it("contains the protocol version", () => {
@@ -61,15 +83,44 @@ describe("resolvePort", () => {
   });
 });
 
-describe("createDriverService", () => {
-  const browserFactory = vi.fn(async (): Promise<Browser> => {
-    throw new Error("browser factory should not be invoked in unit tests");
+describe("resolveRedisUrl", () => {
+  it("returns the env value when set", () => {
+    expect(
+      resolveRedisUrl({ [REDIS_URL_ENV_VAR]: "redis://example:6380/2" }),
+    ).toBe("redis://example:6380/2");
   });
-  const newService = () =>
-    createDriverService(new SessionManager(browserFactory));
 
+  it("falls back to the local default when the env var is unset", () => {
+    expect(resolveRedisUrl({})).toBe("redis://127.0.0.1:6379/0");
+  });
+
+  it("falls back to the local default when the env var is the empty string", () => {
+    expect(resolveRedisUrl({ [REDIS_URL_ENV_VAR]: "" })).toBe(
+      "redis://127.0.0.1:6379/0",
+    );
+  });
+});
+
+describe("resolveInstanceId", () => {
+  it("uses the override when set", () => {
+    expect(
+      resolveInstanceId({ [INSTANCE_ID_ENV_VAR]: "instance-zzzz" }),
+    ).toBe("instance-zzzz");
+  });
+
+  it("generates a UUID per call when the override is unset", () => {
+    const a = resolveInstanceId({});
+    const b = resolveInstanceId({});
+    expect(a).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(a).not.toBe(b);
+  });
+});
+
+describe("createDriverService", () => {
   it("Initialize returns a session id, registers it, and returns the declared capabilities", async () => {
-    const sessions = new SessionManager(browserFactory);
+    const sessions = newSessions(browserFactory);
     const service = createDriverService(sessions);
     const response = await service.initialize(
       create(InitializeRequestSchema, {
@@ -91,7 +142,7 @@ describe("createDriverService", () => {
     const factory = vi.fn(async (): Promise<Browser> => {
       throw new Error("must not launch");
     });
-    const service = createDriverService(new SessionManager(factory));
+    const service = createDriverService(newSessions(factory));
 
     const response = await service.navigate({
       $typeName: "spectre.driver.v1alpha1.NavigateRequest",
@@ -105,8 +156,52 @@ describe("createDriverService", () => {
     expect(factory).not.toHaveBeenCalled();
   });
 
+  it("Navigate throws Code.Unavailable when the session belongs to a different adapter instance", async () => {
+    // Two managers, same Redis backing store: A registers a
+    // session, the B-flavoured service navigates with A's id and
+    // hits the §5 restart-invalidation path. The conformance test
+    // exercises the same code path against real adapter
+    // subprocesses.
+    const raw = new RedisMock();
+    const sharedRedis = new RedisClient(raw as unknown as never);
+    const factory = vi.fn(async (): Promise<Browser> => {
+      throw new Error("must not launch");
+    });
+    const sessionsA = new SessionManager({
+      factory,
+      redis: sharedRedis,
+      instanceId: "instance-aaaa",
+    });
+    const sessionsB = new SessionManager({
+      factory,
+      redis: sharedRedis,
+      instanceId: "instance-bbbb",
+    });
+    const initResp = await createDriverService(sessionsA).initialize(
+      create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
+    );
+
+    let raised: unknown;
+    try {
+      await createDriverService(sessionsB).navigate({
+        $typeName: "spectre.driver.v1alpha1.NavigateRequest",
+        sessionId: initResp.sessionId,
+        url: "http://127.0.0.1/",
+        wait: 0,
+      } as never);
+    } catch (err) {
+      raised = err;
+    }
+    expect(raised).toBeInstanceOf(ConnectError);
+    expect((raised as ConnectError).code).toBe(Code.Unavailable);
+    expect((raised as ConnectError).rawMessage).toMatch(
+      /different adapter instance/,
+    );
+    expect(factory).not.toHaveBeenCalled();
+  });
+
   it("Navigate returns CODE_INVALID_ARGUMENT for a missing url", async () => {
-    const sessions = new SessionManager(browserFactory);
+    const sessions = newSessions(browserFactory);
     const service = createDriverService(sessions);
     const init = await service.initialize(
       create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
@@ -124,7 +219,7 @@ describe("createDriverService", () => {
   });
 
   it("Navigate returns CODE_INVALID_ARGUMENT for a non-http(s) url", async () => {
-    const sessions = new SessionManager(browserFactory);
+    const sessions = newSessions(browserFactory);
     const service = createDriverService(sessions);
     const init = await service.initialize(
       create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
@@ -141,8 +236,37 @@ describe("createDriverService", () => {
     expect(response.error?.message).toMatch(/http\(s\)/);
   });
 
+  it("Initialize throws Code.Unavailable when the Redis write fails", async () => {
+    const factory = vi.fn(async (): Promise<Browser> => {
+      throw new Error("must not launch");
+    });
+    const sessions = new SessionManager({
+      factory,
+      redis: {
+        ping: async () => undefined,
+        setSession: async () => {
+          throw new Error("redis offline");
+        },
+        getSession: async () => null,
+        deleteSession: async () => undefined,
+        disconnect: async () => undefined,
+      },
+      instanceId: TEST_INSTANCE_ID,
+    });
+    let raised: unknown;
+    try {
+      await createDriverService(sessions).initialize(
+        create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
+      );
+    } catch (err) {
+      raised = err;
+    }
+    expect(raised).toBeInstanceOf(ConnectError);
+    expect((raised as ConnectError).code).toBe(Code.Unavailable);
+  });
+
   it("screenshot returns CODE_INVALID_ARGUMENT for an unknown session id", async () => {
-    const service = newService();
+    const service = createDriverService(newSessions(browserFactory));
     const response = await service.screenshot({
       $typeName: "spectre.driver.v1alpha1.ScreenshotRequest",
       sessionId: "ghost",
@@ -154,7 +278,7 @@ describe("createDriverService", () => {
   });
 
   it("screenshot returns CODE_INVALID_ARGUMENT for SCREENSHOT_SCOPE_UNSPECIFIED", async () => {
-    const sessions = new SessionManager(browserFactory);
+    const sessions = newSessions(browserFactory);
     const service = createDriverService(sessions);
     const init = await service.initialize(
       create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
@@ -170,7 +294,7 @@ describe("createDriverService", () => {
   });
 
   it("screenshot returns CODE_INVALID_ARGUMENT for ELEMENT scope without an element", async () => {
-    const sessions = new SessionManager(browserFactory);
+    const sessions = newSessions(browserFactory);
     const service = createDriverService(sessions);
     const init = await service.initialize(
       create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
@@ -188,9 +312,6 @@ describe("createDriverService", () => {
   });
 
   it("screenshot does not bump the session generation (read-only contract — ADR-0011 decision 4)", async () => {
-    // A fake browser whose page returns a fixed PNG buffer from
-    // `screenshot()`. Just enough surface for the handler to walk
-    // through the VIEWPORT path without a real Chromium.
     const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
     const fakePage = {
       screenshot: vi.fn(async () => PNG_HEADER),
@@ -203,15 +324,12 @@ describe("createDriverService", () => {
       newContext: vi.fn(async () => fakeContext),
       close: vi.fn(async () => undefined),
     } as unknown as Browser;
-    const sessions = new SessionManager(async () => fakeBrowser);
+    const sessions = newSessions(async () => fakeBrowser);
     const service = createDriverService(sessions);
 
     const init = await service.initialize(
       create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
     );
-    // Mimic a post-Navigate state: the page is open and the
-    // generation counter has been bumped to 1. Screenshot must not
-    // touch either.
     await sessions.getOrCreatePage(init.sessionId);
     sessions.bumpGeneration(init.sessionId);
     const generationBefore = sessions.currentGeneration(init.sessionId);
@@ -231,7 +349,7 @@ describe("createDriverService", () => {
   });
 
   it("close returns CODE_INVALID_ARGUMENT for an unknown session id", async () => {
-    const service = newService();
+    const service = createDriverService(newSessions(browserFactory));
     const response = await service.close({
       $typeName: "spectre.driver.v1alpha1.CloseRequest",
       sessionId: "ghost",
@@ -241,7 +359,7 @@ describe("createDriverService", () => {
   });
 
   it("query returns CODE_INVALID_ARGUMENT for SELECTOR_KIND_UNSPECIFIED", async () => {
-    const sessions = new SessionManager(browserFactory);
+    const sessions = newSessions(browserFactory);
     const service = createDriverService(sessions);
     const init = await service.initialize(
       create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),
@@ -258,7 +376,7 @@ describe("createDriverService", () => {
   });
 
   it("extract returns CODE_INVALID_ARGUMENT for an empty opaque_id", async () => {
-    const sessions = new SessionManager(browserFactory);
+    const sessions = newSessions(browserFactory);
     const service = createDriverService(sessions);
     const init = await service.initialize(
       create(InitializeRequestSchema, { protocolVersion: PROTOCOL_VERSION }),

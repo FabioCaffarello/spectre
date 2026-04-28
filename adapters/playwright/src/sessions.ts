@@ -2,47 +2,70 @@
 //
 // Session manager for the Playwright adapter.
 //
-// Owns the lazy `Browser` launch and the per-session `BrowserContext`
-// + `Page` allocation, plus the per-session `ElementRegistry` that
-// backs `Query` and `Extract`. The contract:
+// Owns the lazy `Browser` launch, the per-session `BrowserContext`
+// + `Page` allocation, and the per-session `ElementRegistry` that
+// backs `Query` and `Extract`. R4.3 externalises session metadata
+// to Redis (ADR-0023 §4 + §5): `register` writes the metadata,
+// `validate` reads it on every non-Initialize RPC, `closeSession`
+// deletes the key. The runtime objects (`Browser`, `BrowserContext`,
+// `Page`, ElementRegistry entries) stay process-local — the §5
+// restart-invalidation contract makes Pod restart equivalent to
+// session loss for clients.
 //
-//   - `register(sessionId)` — `Initialize` calls this to declare the
-//     id. No browser work happens here; the registration is metadata
-//     only. Calling it twice with the same id is a no-op.
-//   - `has(sessionId)` — true once `register` has been called for the
-//     id and `closeSession`/`closeAll` have not yet evicted it. Used
-//     by every RPC to reject unknown ids with
-//     `CODE_INVALID_ARGUMENT`.
-//   - `getOrCreatePage(sessionId)` — first call for a registered id
-//     launches the shared `Browser` (if not already) and creates a
-//     fresh `BrowserContext` + `Page`. Subsequent calls with the same
-//     id return the same `Page`. Throws if the id is not registered.
-//   - `bumpGeneration(sessionId)` — invalidates every prior
-//     `ElementRef` for the session by incrementing its generation
-//     counter and clearing the registry entries. Called after every
-//     successful `Navigate`. See ADR-0010.
-//   - `currentGeneration(sessionId)` — returns the session's current
-//     generation counter; used by `Query` and `Extract`.
-//   - `allocateRefs(sessionId, locators)` — allocates UUIDs for the
-//     locators in the session's registry.
-//   - `lookupRef(sessionId, id)` — resolves a UUID back to a locator,
-//     or returns a `"stale"`/`"unknown"` status the handler can map
-//     to a clean `DriverError`.
-//   - `closeSession(sessionId)` — closes the per-session
-//     `BrowserContext` (and its `Page`), evicts the session entry,
-//     and forgets all ElementRefs for the session. Does *not* close
-//     the shared `Browser`; other sessions continue.
+// Contract (R4.3):
+//
+//   - `register(sessionId)` — `Initialize` calls this. Writes a
+//     `SessionMetadata` document to Redis with the current
+//     `adapter_instance_id` and adds the id to the local
+//     registered set. Throws if Redis is unreachable; the caller
+//     maps the failure to gRPC `UNAVAILABLE`.
+//   - `validate(sessionId)` — every non-Initialize RPC calls this
+//     before doing any work. Returns one of three kinds:
+//       * `ok` — Redis has the session and the stored
+//         `adapter_instance_id` matches; TTL refreshed and
+//         `last_active_at` updated.
+//       * `unknown` — Redis has no entry for this session_id
+//         (never created or TTL-expired). Caller maps to
+//         `INVALID_ARGUMENT` per ADR-0009 §2.
+//       * `different-instance` — Redis has the session but it
+//         belongs to a different adapter instance (the §5
+//         restart-invalidation case). Caller raises gRPC
+//         `UNAVAILABLE` with the message "session belongs to a
+//         different adapter instance; client must re-Initialize".
+//   - `has(sessionId)` — true once `register` has been called for
+//     the id locally and `closeSession`/`closeAll` have not yet
+//     evicted it. Used for cheap membership checks where Redis
+//     is not authoritative (the `closeSession` early-out path).
+//   - `getOrCreatePage(sessionId)` — first call for a registered
+//     id launches the shared `Browser` (if not already) and
+//     creates a fresh `BrowserContext` + `Page`. Subsequent calls
+//     with the same id return the same `Page`.
+//   - `pageOf(sessionId)` — returns the live `Page` for a session
+//     if one exists, or null if the session is registered but has
+//     not yet navigated.
+//   - `bumpGeneration` / `currentGeneration` / `allocateRefs` /
+//     `lookupRef` — element-registry delegation, unchanged from
+//     PR5/ADR-0010.
+//   - `closeSession(sessionId)` — deletes the Redis key
+//     (best-effort), evicts the local registration, forgets all
+//     ElementRefs, and closes the per-session `BrowserContext`.
 //   - `closeAll()` — closes every page, every context, the shared
-//     `Browser`, and clears every registration. Idempotent.
+//     `Browser`, and clears every local registration. Idempotent.
+//     Does not enumerate Redis keys for deletion — restart
+//     invalidation handles abandoned keys via TTL expiry.
 //
-// The class is constructed with a `BrowserFactory` so unit tests can
-// mock the Playwright surface without launching a real browser. See
-// ADR-0009 for the lifecycle rationale and ADR-0010 for the element
-// lifecycle.
+// The class is constructed with a `BrowserFactory`, a
+// `RedisClient`, and the adapter's `instanceId`. Unit tests pass
+// an `ioredis-mock` instance and any `instanceId` string.
 
 import type { Browser, BrowserContext, Locator, Page } from "playwright";
 
 import { ElementRegistry, type RefLookup } from "./elements.js";
+import {
+  ADAPTER_NAME,
+  type RedisClientLike,
+  type SessionMetadata,
+} from "./redis.js";
 
 export type BrowserFactory = () => Promise<Browser>;
 
@@ -60,23 +83,81 @@ export class UnknownSessionError extends Error {
   }
 }
 
+export type ValidationResult =
+  | { kind: "ok"; metadata: SessionMetadata }
+  | { kind: "unknown" }
+  | { kind: "different-instance"; storedInstanceId: string };
+
+export interface SessionManagerOptions {
+  factory: BrowserFactory;
+  redis: RedisClientLike;
+  instanceId: string;
+}
+
 export class SessionManager {
   private readonly factory: BrowserFactory;
+  private readonly redis: RedisClientLike;
+  private readonly instanceId: string;
   private browserPromise: Promise<Browser> | null = null;
   private readonly registered = new Set<string>();
   private readonly sessions = new Map<string, Session>();
   private readonly elements = new ElementRegistry();
 
-  constructor(factory: BrowserFactory) {
-    this.factory = factory;
+  constructor(options: SessionManagerOptions) {
+    this.factory = options.factory;
+    this.redis = options.redis;
+    this.instanceId = options.instanceId;
   }
 
-  register(sessionId: string): void {
+  /** Returns the adapter_instance_id this manager writes to Redis.
+   * Exposed for tests; the value is generated once at startup and
+   * never changes. */
+  get adapterInstanceId(): string {
+    return this.instanceId;
+  }
+
+  async register(sessionId: string): Promise<void> {
+    const now = new Date().toISOString();
+    const metadata: SessionMetadata = {
+      session_id: sessionId,
+      adapter: ADAPTER_NAME,
+      adapter_instance_id: this.instanceId,
+      created_at: now,
+      last_active_at: now,
+      metadata: {},
+    };
+    // Writes Redis first; if it fails the caller exits Initialize
+    // with UNAVAILABLE and the local set is never updated. Order
+    // matters: a Redis failure must leave the SessionManager
+    // unaware of the id so a retry produces a fresh write rather
+    // than the appearance of a registered-but-not-stored session.
+    await this.redis.setSession(sessionId, metadata);
     this.registered.add(sessionId);
   }
 
   has(sessionId: string): boolean {
     return this.registered.has(sessionId);
+  }
+
+  async validate(sessionId: string): Promise<ValidationResult> {
+    const metadata = await this.redis.getSession(sessionId);
+    if (metadata === null) {
+      return { kind: "unknown" };
+    }
+    if (metadata.adapter_instance_id !== this.instanceId) {
+      return {
+        kind: "different-instance",
+        storedInstanceId: metadata.adapter_instance_id,
+      };
+    }
+    // Refresh `last_active_at` and the TTL via a SET-with-EX
+    // round-trip. ADR-0023 §5 R4.3 addendum and the phase prompt
+    // §4.5 commit to last-write-wins: a second concurrent
+    // validate call may overwrite the timestamp by a few ms,
+    // which is harmless.
+    metadata.last_active_at = new Date().toISOString();
+    await this.redis.setSession(sessionId, metadata);
+    return { kind: "ok", metadata };
   }
 
   async getOrCreatePage(sessionId: string): Promise<Page> {
@@ -122,6 +203,13 @@ export class SessionManager {
     }
     this.registered.delete(sessionId);
     this.elements.forgetSession(sessionId);
+    // Best-effort delete; the TTL is the safety net if Redis is
+    // briefly unreachable. ADR-0023 §5 / phase prompt §4.6.
+    await this.redis.deleteSession(sessionId).catch((err: unknown) => {
+      process.stderr.write(
+        `redis delete failed for session ${sessionId}: ${String(err)}\n`,
+      );
+    });
     const session = this.sessions.get(sessionId);
     if (session) {
       this.sessions.delete(sessionId);
