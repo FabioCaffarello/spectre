@@ -179,6 +179,21 @@ engine-db-test:
 engine-kafka-test:
     cd core/engine && cargo test --test kafka_integration -- --ignored --nocapture
 
+# Run the engine's S3 uploader integration tests. Requires an
+# S3-compatible endpoint reachable at SPECTRE_S3_ENDPOINT (the
+# same env var the engine binary reads at startup, ADR-0024 §3).
+# Bring up MinIO via `just compose-up` (R5.1). Tests are
+# `#[ignore]` by default so `just engine-test` stays MinIO-free.
+engine-s3-test:
+    cd core/engine && cargo test --test s3_integration -- --ignored --nocapture
+
+# Run the engine's webhook client integration tests. No external
+# dependency — the test server runs in-process via axum. ADR-0024
+# §4. Tests run unconditionally as part of `just engine-test`;
+# this recipe gives them a discoverable surface.
+engine-webhook-test:
+    cd core/engine && cargo test --test webhook_integration -- --nocapture
+
 # ---------------------------------------------------------------------------
 # spectre engine binary (core/engine/src/bin/spectre.rs)
 # ---------------------------------------------------------------------------
