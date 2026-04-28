@@ -90,11 +90,11 @@ impl S3Uploader {
             builder = builder.endpoint_url(endpoint);
         }
 
-        if let (Some(access), Some(secret)) =
-            (cfg.access_key_id.as_deref(), cfg.secret_access_key.as_deref())
-        {
-            let creds =
-                Credentials::new(access, secret, None, None, STATIC_CREDENTIALS_PROVIDER);
+        if let (Some(access), Some(secret)) = (
+            cfg.access_key_id.as_deref(),
+            cfg.secret_access_key.as_deref(),
+        ) {
+            let creds = Credentials::new(access, secret, None, None, STATIC_CREDENTIALS_PROVIDER);
             builder = builder.credentials_provider(creds);
         }
 
@@ -185,7 +185,10 @@ mod tests {
     fn render_key_substitutes_job_id() {
         let id = Uuid::parse_str("3f2504e0-4f89-11d3-9a0c-0305e82c3301").unwrap();
         let rendered = render_key("scrapes/{{.JobID}}/rows.jsonl", id);
-        assert_eq!(rendered, "scrapes/3f2504e0-4f89-11d3-9a0c-0305e82c3301/rows.jsonl");
+        assert_eq!(
+            rendered,
+            "scrapes/3f2504e0-4f89-11d3-9a0c-0305e82c3301/rows.jsonl"
+        );
     }
 
     #[test]

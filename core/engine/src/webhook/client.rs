@@ -124,10 +124,10 @@ impl WebhookClient {
         driver: &str,
     ) -> Result<WebhookSession<'_>, WebhookError> {
         let mut base_headers = HeaderMap::new();
-        let job_id_value =
-            HeaderValue::from_str(job_id).map_err(|e| WebhookError::InvalidHeader(e.to_string()))?;
-        let driver_value =
-            HeaderValue::from_str(driver).map_err(|e| WebhookError::InvalidHeader(e.to_string()))?;
+        let job_id_value = HeaderValue::from_str(job_id)
+            .map_err(|e| WebhookError::InvalidHeader(e.to_string()))?;
+        let driver_value = HeaderValue::from_str(driver)
+            .map_err(|e| WebhookError::InvalidHeader(e.to_string()))?;
         let job_id_name = HeaderName::from_static(HEADER_JOB_ID);
         let driver_name = HeaderName::from_static(HEADER_DRIVER);
         base_headers.insert(job_id_name, job_id_value);
@@ -377,9 +377,15 @@ mod tests {
             3,
         )
         .expect("config");
-        let mut sess = client.session(cfg, "job-uuid", "playwright").expect("session");
-        sess.push_row(r#"{"row":1}"#.to_owned()).await.expect("push 1");
-        sess.push_row(r#"{"row":2}"#.to_owned()).await.expect("push 2");
+        let mut sess = client
+            .session(cfg, "job-uuid", "playwright")
+            .expect("session");
+        sess.push_row(r#"{"row":1}"#.to_owned())
+            .await
+            .expect("push 1");
+        sess.push_row(r#"{"row":2}"#.to_owned())
+            .await
+            .expect("push 2");
         // Two rows buffered; no flush yet.
         assert_eq!(sess.batch_len(), 2);
     }

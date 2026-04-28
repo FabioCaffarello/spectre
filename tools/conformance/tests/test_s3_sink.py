@@ -216,7 +216,7 @@ def test_s3_sink_uploads_jsonl_with_rendered_key(
 
     engine_endpoint = engine_with_s3
     job_id = uuid.uuid4()
-    key_template = f"conformance/{{{{.JobID}}}}/rows.jsonl"
+    key_template = "conformance/{{.JobID}}/rows.jsonl"
     expected_key = f"conformance/{job_id}/rows.jsonl"
     job_dsl = (
         "spectre: v1alpha1\n"
@@ -286,9 +286,7 @@ def test_s3_sink_uploads_jsonl_with_rendered_key(
     body = s3.get_object(Bucket=DEFAULT_S3_BUCKET, Key=expected_key)["Body"].read()
     body_text = body.decode()
     lines = [line for line in body_text.split("\n") if line]
-    assert len(lines) == rows_seen, (
-        f"object body has {len(lines)} JSONL lines, want {rows_seen}"
-    )
+    assert len(lines) == rows_seen, f"object body has {len(lines)} JSONL lines, want {rows_seen}"
 
     # Each line should parse as JSON and contain a non-empty `text` field.
     import json

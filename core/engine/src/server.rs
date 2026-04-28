@@ -453,8 +453,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
                         error = %e,
                         "kafka publish failed; aborting drain",
                     );
-                    sink_publish_error =
-                        Some(("KAFKA_PUBLISH_FAILED".to_owned(), e.to_string()));
+                    sink_publish_error = Some(("KAFKA_PUBLISH_FAILED".to_owned(), e.to_string()));
                 }
             }
         }
@@ -476,8 +475,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
                         error = %e,
                         "webhook publish failed; aborting drain",
                     );
-                    sink_publish_error =
-                        Some(("WEBHOOK_POST_FAILED".to_owned(), e.to_string()));
+                    sink_publish_error = Some(("WEBHOOK_POST_FAILED".to_owned(), e.to_string()));
                 }
             }
         }
@@ -522,8 +520,9 @@ async fn stream_run_job(args: StreamRunJobArgs) {
             if let (Some(uploader), Some(cfg)) = (s3.as_ref(), s3_config.as_ref()) {
                 let key = crate::s3::render_key(&cfg.key, job_uuid);
                 let endpoint_label = uploader.endpoint_label().to_owned();
-                if let Err(e) =
-                    uploader.upload_jsonl(&cfg.bucket, &key, s3_buffer.clone()).await
+                if let Err(e) = uploader
+                    .upload_jsonl(&cfg.bucket, &key, s3_buffer.clone())
+                    .await
                 {
                     warn!(
                         job_id = %job_uuid,
@@ -533,8 +532,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
                         error = %e,
                         "s3 upload failed",
                     );
-                    sink_publish_error =
-                        Some(("S3_UPLOAD_FAILED".to_owned(), e.to_string()));
+                    sink_publish_error = Some(("S3_UPLOAD_FAILED".to_owned(), e.to_string()));
                 } else {
                     info!(
                         job_id = %job_uuid,
@@ -555,8 +553,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
                         error = %e,
                         "webhook finalise failed",
                     );
-                    sink_publish_error =
-                        Some(("WEBHOOK_POST_FAILED".to_owned(), e.to_string()));
+                    sink_publish_error = Some(("WEBHOOK_POST_FAILED".to_owned(), e.to_string()));
                 }
             }
         }

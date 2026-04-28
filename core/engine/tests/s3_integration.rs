@@ -122,7 +122,10 @@ async fn upload_jsonl_round_trips_payload() {
         .send()
         .await
         .expect("head_object");
-    assert_eq!(head.content_type().unwrap_or_default(), "application/x-ndjson");
+    assert_eq!(
+        head.content_type().unwrap_or_default(),
+        "application/x-ndjson"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

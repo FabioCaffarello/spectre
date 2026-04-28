@@ -64,7 +64,9 @@ async fn spawn_server() -> (String, Captured, tokio::sync::oneshot::Sender<()>) 
         .route("/spectre", post(capture_handler))
         .with_state(captured.clone());
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let addr: SocketAddr = listener.local_addr().expect("addr");
     let url = format!("http://{addr}/spectre");
 
@@ -95,8 +97,12 @@ async fn per_row_post_carries_header_schema() {
         .session(cfg, "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "playwright")
         .expect("session");
 
-    sess.push_row(r#"{"row":1}"#.to_owned()).await.expect("push 1");
-    sess.push_row(r#"{"row":2}"#.to_owned()).await.expect("push 2");
+    sess.push_row(r#"{"row":1}"#.to_owned())
+        .await
+        .expect("push 1");
+    sess.push_row(r#"{"row":2}"#.to_owned())
+        .await
+        .expect("push 2");
     sess.finalise().await.expect("finalise");
 
     let received = captured.requests.lock().await;
@@ -149,12 +155,18 @@ async fn batched_post_emits_ceil_n_over_batch_requests() {
     // Push 7 rows; expect ceil(7/3) = 3 requests with body row
     // counts [3, 3, 1].
     for i in 0..7 {
-        sess.push_row(format!(r#"{{"i":{i}}}"#)).await.expect("push");
+        sess.push_row(format!(r#"{{"i":{i}}}"#))
+            .await
+            .expect("push");
     }
     sess.finalise().await.expect("finalise");
 
     let received = captured.requests.lock().await;
-    assert_eq!(received.len(), 3, "expected 3 batched POSTs for 7 rows / batch=3");
+    assert_eq!(
+        received.len(),
+        3,
+        "expected 3 batched POSTs for 7 rows / batch=3"
+    );
 
     let row_counts: Vec<&str> = received
         .iter()
@@ -179,10 +191,13 @@ async fn batched_post_emits_ceil_n_over_batch_requests() {
 
     // First request body has 3 newline-separated rows.
     let first_body = std::str::from_utf8(&received[0].body).expect("utf-8");
-    assert_eq!(first_body, r#"{"i":0}
+    assert_eq!(
+        first_body,
+        r#"{"i":0}
 {"i":1}
 {"i":2}
-"#);
+"#
+    );
 }
 
 #[derive(Clone)]
@@ -213,8 +228,12 @@ async fn spawn_flaky_server(
         attempts: Arc::clone(&attempts),
         fail_count,
     };
-    let app = Router::new().route("/spectre", post(flaky_handler)).with_state(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let app = Router::new()
+        .route("/spectre", post(flaky_handler))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let addr: SocketAddr = listener.local_addr().expect("addr");
     let url = format!("http://{addr}/spectre");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -237,12 +256,20 @@ async fn retries_on_transient_5xx_then_succeeds() {
 
     let client = WebhookClient::new();
     let cfg = WebhookConfig::parse(&url, "POST", 0).expect("config");
-    let mut sess = client.session(cfg, "job-retry", "playwright").expect("session");
+    let mut sess = client
+        .session(cfg, "job-retry", "playwright")
+        .expect("session");
 
-    sess.push_row(r#"{"row":1}"#.to_owned()).await.expect("push retried row");
+    sess.push_row(r#"{"row":1}"#.to_owned())
+        .await
+        .expect("push retried row");
     sess.finalise().await.expect("finalise");
 
-    assert_eq!(attempts.load(Ordering::SeqCst), 3, "expected 2 retries before success");
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        3,
+        "expected 2 retries before success"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -253,7 +280,9 @@ async fn retries_exhaust_yields_post_failed() {
 
     let client = WebhookClient::new();
     let cfg = WebhookConfig::parse(&url, "POST", 0).expect("config");
-    let mut sess = client.session(cfg, "job-fail", "playwright").expect("session");
+    let mut sess = client
+        .session(cfg, "job-fail", "playwright")
+        .expect("session");
 
     let result = sess.push_row(r#"{"row":1}"#.to_owned()).await;
     let err = result.expect_err("must fail after retries exhaust");
@@ -262,7 +291,10 @@ async fn retries_exhaust_yields_post_failed() {
         msg.contains("after 3 attempts"),
         "expected 'after 3 attempts' in error, got: {msg}",
     );
-    assert!(msg.contains("503"), "expected status 503 in error, got: {msg}");
+    assert!(
+        msg.contains("503"),
+        "expected status 503 in error, got: {msg}"
+    );
     assert_eq!(
         attempts.load(Ordering::SeqCst),
         3,
@@ -301,7 +333,9 @@ async fn spawn_fixed_status_server(
             }),
         )
         .with_state(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let addr: SocketAddr = listener.local_addr().expect("addr");
     let url = format!("http://{addr}/spectre");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -325,7 +359,9 @@ async fn fatal_4xx_does_not_retry() {
 
     let client = WebhookClient::new();
     let cfg = WebhookConfig::parse(&url, "POST", 0).expect("config");
-    let mut sess = client.session(cfg, "job-fatal", "playwright").expect("session");
+    let mut sess = client
+        .session(cfg, "job-fatal", "playwright")
+        .expect("session");
 
     let result = sess.push_row(r#"{"row":1}"#.to_owned()).await;
     let err = result.expect_err("must fail fast on 4xx");
@@ -351,7 +387,9 @@ async fn put_method_routes_to_put_handler() {
     let app = Router::new()
         .route("/spectre", put(capture_handler))
         .with_state(captured.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let addr: SocketAddr = listener.local_addr().expect("addr");
     let url = format!("http://{addr}/spectre");
     let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -366,8 +404,12 @@ async fn put_method_routes_to_put_handler() {
 
     let client = WebhookClient::new();
     let cfg = WebhookConfig::parse(&url, "PUT", 0).expect("config");
-    let mut sess = client.session(cfg, "job-put", "playwright").expect("session");
-    sess.push_row(r#"{"row":1}"#.to_owned()).await.expect("push");
+    let mut sess = client
+        .session(cfg, "job-put", "playwright")
+        .expect("session");
+    sess.push_row(r#"{"row":1}"#.to_owned())
+        .await
+        .expect("push");
     sess.finalise().await.expect("finalise");
 
     let received = captured.requests.lock().await;

@@ -36,6 +36,7 @@ ADR references:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import socket
 import subprocess
@@ -141,7 +142,7 @@ class WebhookReceiver:
         body = await request.read()
         self.requests.append(
             {
-                "headers": {k: v for k, v in request.headers.items()},
+                "headers": dict(request.headers.items()),
                 "body": body.decode("utf-8", errors="replace"),
             },
         )
@@ -183,10 +184,8 @@ class WebhookReceiver:
             await self._runner.cleanup()
 
         future = asyncio.run_coroutine_threadsafe(shutdown(), self._loop)
-        try:
+        with contextlib.suppress(Exception):
             future.result(timeout=5.0)
-        except Exception:
-            pass
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5.0)
 
@@ -315,7 +314,11 @@ def test_webhook_sink_per_row_post_with_header_schema(
     job_id = uuid.uuid4()
 
     rows_seen, completed_count, failure_detail = _run_webhook_job(
-        engine_for_webhook, dsl, job_id, receiver.url, batch_size=0,
+        engine_for_webhook,
+        dsl,
+        job_id,
+        receiver.url,
+        batch_size=0,
     )
 
     assert failure_detail is None, f"engine reported Failed: {failure_detail}"
@@ -336,8 +339,9 @@ def test_webhook_sink_per_row_post_with_header_schema(
         assert headers.get("x-spectre-driver") == "playwright", (
             f"X-Spectre-Driver = {headers.get('x-spectre-driver')!r}, want playwright"
         )
-        assert headers.get("x-spectre-row-count") == "1", (
-            f"X-Spectre-Row-Count for per-row mode must be 1, got {headers.get('x-spectre-row-count')!r}"
+        row_count_header = headers.get("x-spectre-row-count")
+        assert row_count_header == "1", (
+            f"X-Spectre-Row-Count for per-row mode must be 1, got {row_count_header!r}"
         )
         # Per-row mode never sets x-spectre-batch-size.
         assert "x-spectre-batch-size" not in headers, (
@@ -364,7 +368,11 @@ def test_webhook_sink_batches_rows_when_batch_size_set(
     job_id = uuid.uuid4()
 
     rows_seen, completed_count, failure_detail = _run_webhook_job(
-        engine_for_webhook, dsl, job_id, receiver.url, batch_size=2,
+        engine_for_webhook,
+        dsl,
+        job_id,
+        receiver.url,
+        batch_size=2,
     )
 
     assert failure_detail is None, f"engine reported Failed: {failure_detail}"
