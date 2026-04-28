@@ -154,7 +154,68 @@ services:
       timeout: 3s
       retries: 5
 
+  # MinIO — S3-compatible object store for OutputSink.S3 jobs
+  # (R5.1 — ADR-0024 §3). Single-node single-drive for dev;
+  # production deployments replace with real S3 or a clustered
+  # MinIO. Port 9000 is the S3 API; port 9001 is the embedded
+  # web console (object browser, bucket policies, IAM). Unlike
+  # Kafka, MinIO embeds its own UI — no separate console
+  # service is required.
+  #
+  # Credentials are visible in source control for dev
+  # convenience; production deployments populate
+  # SPECTRE_S3_ACCESS_KEY_ID + SPECTRE_S3_SECRET_ACCESS_KEY (or
+  # leave them unset to use the AWS default credential chain)
+  # per ADR-0023 §10 / ADR-0024 §3.
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z
+    container_name: spectre-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # MinIO Console UI
+    environment:
+      MINIO_ROOT_USER: spectre_dev_access
+      MINIO_ROOT_PASSWORD: spectre_dev_secret_key
+      MINIO_BROWSER_REDIRECT_URL: "http://localhost:9001"
+    volumes:
+      - spectre_minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc alias set local http://localhost:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1 && mc ready local || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # MinIO bucket bootstrap — runs once on stack-up and pre-
+  # creates the `spectre-rows` bucket so the engine integration
+  # tests, conformance tests, and sample manifests do not need
+  # a "create bucket if not exists" preamble. `mc` is the MinIO
+  # client CLI shipping its own image; the container exits zero
+  # after `mc mb`. ADR-0024 §3 documents that production
+  # deployments pre-create buckets via Terraform / Crossplane
+  # / manual console action — auto-create-from-engine is
+  # explicitly out of scope for v1alpha1.
+  minio-bootstrap:
+    image: quay.io/minio/mc:latest
+    container_name: spectre-minio-bootstrap
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing local/spectre-rows &&
+        echo "bucket spectre-rows ready"
+    environment:
+      MINIO_ROOT_USER: spectre_dev_access
+      MINIO_ROOT_PASSWORD: spectre_dev_secret_key
+
 volumes:
   spectre_postgres_data:
   spectre_redis_data:
   spectre_kafka_data:
+  spectre_minio_data:

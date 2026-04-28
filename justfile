@@ -89,6 +89,22 @@ kafka-consume TOPIC:
         --from-beginning \
         --property print.headers=true
 
+# Open the MinIO Console UI for the local S3-compatible object
+# store. Linux uses `xdg-open`; macOS uses `open`. Falls back to
+# printing the URL when no opener is available (e.g. headless
+# dev container). Default credentials are
+# spectre_dev_access / spectre_dev_secret_key (visible in
+# docker-compose.yml; dev-only).
+minio-console:
+    @if command -v open >/dev/null; then open http://localhost:9001; \
+    elif command -v xdg-open >/dev/null; then xdg-open http://localhost:9001; \
+    else echo "open http://localhost:9001 in your browser"; fi
+
+# List objects in the spectre-rows bucket via docker exec —
+# useful for sanity-checking the engine's S3 uploads.
+minio-ls:
+    docker exec spectre-minio mc ls --recursive local/spectre-rows
+
 # ---------------------------------------------------------------------------
 # Repository hygiene
 # ---------------------------------------------------------------------------
