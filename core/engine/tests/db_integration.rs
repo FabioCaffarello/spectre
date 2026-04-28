@@ -48,23 +48,16 @@ async fn insert_job_creates_running_row() {
     let pool = pool().await;
     let id = Uuid::new_v4();
 
-    jobs::insert_job(
-        &pool,
-        id,
-        "spectre: v1alpha1",
-        "playwright",
-        "stdout",
-    )
-    .await
-    .expect("insert_job");
+    jobs::insert_job(&pool, id, "spectre: v1alpha1", "playwright", "stdout")
+        .await
+        .expect("insert_job");
 
-    let row: (String, String, String) = sqlx::query_as(
-        "SELECT status, driver, output_sink_kind FROM jobs WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_one(&pool)
-    .await
-    .expect("select");
+    let row: (String, String, String) =
+        sqlx::query_as("SELECT status, driver, output_sink_kind FROM jobs WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("select");
     assert_eq!(row.0, "running");
     assert_eq!(row.1, "playwright");
     assert_eq!(row.2, "stdout");
@@ -111,13 +104,12 @@ async fn mark_completed_finalises_running_row() {
 
     jobs::mark_completed(&pool, id, 42).await.expect("mark");
 
-    let row: (String, Option<i64>, Option<String>) = sqlx::query_as(
-        "SELECT status, rows_extracted, error FROM jobs WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_one(&pool)
-    .await
-    .expect("select");
+    let row: (String, Option<i64>, Option<String>) =
+        sqlx::query_as("SELECT status, rows_extracted, error FROM jobs WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("select");
     assert_eq!(row.0, "completed");
     assert_eq!(row.1, Some(42));
     assert_eq!(row.2, None);

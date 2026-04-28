@@ -7,6 +7,12 @@
 
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+# Load `.env` (gitignored) at recipe-evaluation time so SPECTRE_*
+# env vars (Postgres URL, endpoint defaults) reach the recipes
+# without each contributor needing to source it manually. R4.2 ships
+# `.env.example` as the template; missing `.env` is silently ignored.
+set dotenv-load := true
+
 default:
     @just --list --unsorted
 
