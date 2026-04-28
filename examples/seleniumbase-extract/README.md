@@ -4,92 +4,88 @@ A minimal Spectre job that drives the SeleniumBase adapter
 against [example.com](https://example.com), queries every link
 on the page, and extracts each link's visible text and `href`.
 
-> **Status:** runnable via `spectre run job.yaml` once the
-> SeleniumBase adapter has been bootstrapped (`just sb-bootstrap`)
-> and Chrome plus ChromeDriver are installed locally
-> (`seleniumbase install chromedriver`). PR10 closes the
-> SeleniumBase adapter at the v1alpha1 unary surface; see
-> [ADR-0015](../../docs/adr/0015-seleniumbase-element-lifecycle-and-screenshot-coverage.md)
-> for the deviations from the Playwright contract and the
-> [roadmap](../../docs/roadmap.md) for the full Phase 2 picture.
+> **Status (R2.3 era).** The `spectre run` CLI surface this
+> example documented in PR10 was retired by R2.3 (ADR-0020 §3).
+> End-to-end invocation is currently a manual `grpcurl` flow:
+> start the engine, start the SeleniumBase adapter, send the
+> inline DSL. R3.1 replaces this with `kubectl apply -f
+> scrapejob.yaml` against a Helm-installed cluster; R6.2
+> replaces it with `docker compose up` plus a
+> `just example-seleniumbase-extract` recipe.
 
 ## Why a separate example
 
-`hello-hackernews` exercises the same DSL against the Playwright
-adapter. Running this example side by side validates the
-project's central thesis — *one CLI, one protocol, two
-runtimes in two languages* — without changing the job shape:
-only the `driver:` field differs.
+`hello-hackernews` exercises the same DSL shape against the
+Playwright adapter. Running this example against the same
+engine validates the project's central thesis — *one engine,
+one protocol, two runtimes in two languages* — without
+changing the job shape: only the `driver:` field differs.
 
 ## Run it
 
-From the repository root:
+The pieces, three terminals (or three `tmux` panes — the engine
+and adapter are both long-running services):
 
 ```bash
-just sb-bootstrap                                      # uv sync the adapter
-seleniumbase install chromedriver                      # one-time, see notes below
-just spectre-build
-just spectre-run examples/seleniumbase-extract/job.yaml --verbose
-```
+# Terminal 1 — engine gRPC service on 127.0.0.1:9090
+just engine-run
 
-Or, with the binary on `$PATH`:
+# Terminal 2 — SeleniumBase adapter gRPC service on 127.0.0.1:9092
+just sb-install-chromedriver   # one-time, see notes below
+just sb-run 9092
 
-```bash
-spectre run examples/seleniumbase-extract/job.yaml --verbose
+# Terminal 3 — submit the job
+grpcurl -plaintext \
+    -import-path proto -proto spectre/engine/v1alpha1/engine.proto \
+    -d "$(jq -n --arg dsl "$(cat examples/seleniumbase-extract/job.yaml)" '{job_dsl: $dsl}')" \
+    127.0.0.1:9090 \
+    spectre.engine.v1alpha1.Engine/RunJob
 ```
 
 The adapter launches Chrome in headless mode on the first
 `Navigate` call (lazy launch; ADR-0009 §1, ADR-0014 §2). The
-job writes one JSON object per link to `links.jsonl`, resolved
-relative to this directory. With `--verbose`, the engine prints
-the compiled `Plan` to stderr so you can see the protocol-level
-RPC sequence: `Initialize → Navigate → Query → ExtractEach →
-Close`.
+engine streams `RunJobResponse` events back: one `row.json_line`
+per link on example.com, then a terminal `completed.rows_extracted`.
 
-To inspect the plan without running anything:
-
-```bash
-spectre validate examples/seleniumbase-extract/job.yaml
-```
-
-Expected output (one line per link):
+Expected `row.json_line` (one line; example.com currently has a
+single link):
 
 ```json
 {"text":"Learn more","url":"https://iana.org/domains/example"}
 ```
 
-(example.com currently has a single link; the job is structured
-so adding a richer target — your own page, a documentation site —
-is one YAML edit away.)
+The job is structured so adding a richer target — your own
+page, a documentation site — is one YAML edit away.
 
 ## What it does
 
-1. Engine parses `job.yaml` into a validated `Job`, then compiles
-   it to a `Plan`: `Initialize → Navigate → Query → ExtractEach →
-   Close`. The plan is identical to the one the engine produces
-   for `hello-hackernews`; only the driver name differs.
-2. Engine launches the SeleniumBase adapter as a subprocess
-   (reading `adapters/seleniumbase/driver.yaml`), polls the gRPC
-   standard health check until SERVING (ADR-0021 §6), and dials
-   the TCP listener over gRPC (ADR-0022). The engine-side TCP
-   dial lands in R2.3; until then the `spectre run` flow against
-   this example is broken — see `KNOWN_BREAKAGE.md` at the repo
-   root.
-3. Engine sends the RPC sequence. `Query(a)` returns one
+1. The engine parses `job.yaml` into a validated `Job`, then
+   compiles it to a `Plan`:
+   `Initialize → Navigate → Query → ExtractEach → Close`. The
+   plan is identical to the one the engine produces for
+   `hello-hackernews`; only the driver name differs.
+2. The engine resolves `driver: seleniumbase` to
+   `SPECTRE_SELENIUMBASE_ENDPOINT` (default `127.0.0.1:9092`)
+   via `AdapterRegistry`, dials the TCP listener over gRPC
+   (ADR-0022), and waits for `grpc.health.v1.Health.Check` to
+   return `SERVING` (ADR-0021 §6).
+3. The engine sends the RPC sequence. `Query(a)` returns one
    `ElementRef` per link; `ExtractEach` reads `textContent` and
    the `href` attribute from each one. The handlers go through
    Selenium's `WebElement.get_attribute("textContent")` /
    `get_attribute("href")` — see ADR-0015 §4 for the
    mode-by-mode mapping.
-4. Each result row is written to `links.jsonl` as soon as its
-   `Extract` returns.
+4. Each `Extract` response becomes a `RunJobResponse.Row` event
+   on the wire.
 
 ## Operator notes
 
 - **Chrome and ChromeDriver are required.** SeleniumBase's
-  `install chromedriver` recipe fetches the matching driver for
-  the local Chrome install. If either is missing, `Navigate`
-  surfaces `CODE_INTERNAL` with a hint pointing at the recipe.
+  `install chromedriver` recipe (wrapped by
+  `just sb-install-chromedriver`) fetches the matching driver
+  for the local Chrome install. If either is missing,
+  `Navigate` surfaces `CODE_INTERNAL` with a hint pointing at
+  the recipe.
 - **Headless mode is the default.** PR10 keeps PR9's headless
   factory; tweak the factory in
   `adapters/seleniumbase/src/spectre_seleniumbase/server.py` if
@@ -111,6 +107,6 @@ is one YAML edit away.)
   SeleniumBase adapter. ADR-0015 §5 records the rationale.
 - Network interception, cookies, header overrides — Phase 2
   follow-ups.
-- Distributed execution via the control plane — Phase 3.
+- Distributed execution via the control plane (R3.1).
 
 See the [roadmap](../../docs/roadmap.md) for when each lands.

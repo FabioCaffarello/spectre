@@ -1,87 +1,88 @@
 # hello-hackernews
 
 A minimal Spectre job that fetches the Hacker News front page and
-extracts the title and URL of each story.
+extracts the title and URL of each story. The Phase 1 reference
+example.
 
-> **Status:** runnable via `spectre run job.yaml`. ADR-0013 made
-> the engine binary the `spectre` CLI; this example is the
-> canonical input to `spectre run`. See the
-> [roadmap](../../docs/roadmap.md) for the full Phase 1 picture.
+> **Status (R2.3 era).** The `spectre run` CLI surface this
+> example documented in PR8 was retired by R2.3 (ADR-0020 §3).
+> End-to-end invocation is currently a manual `grpcurl` flow:
+> start the engine, start the Playwright adapter, send the
+> inline DSL. R3.1 replaces this with `kubectl apply -f
+> scrapejob.yaml` against a Helm-installed cluster; R6.2 replaces
+> it with `docker compose up` plus a `just example-hello-hackernews`
+> recipe.
 
 ## Run it
 
-From the repository root:
+The pieces, three terminals (or three `tmux` panes — the engine
+and adapter are both long-running services):
 
 ```bash
-just spectre-build
-just spectre-run examples/hello-hackernews/job.yaml --verbose
-```
+# Terminal 1 — engine gRPC service on 127.0.0.1:9090
+just engine-run
 
-Or, with the binary on `$PATH`:
+# Terminal 2 — Playwright adapter gRPC service on 127.0.0.1:9091
+just pw-run 9091
 
-```bash
-spectre run examples/hello-hackernews/job.yaml --verbose
+# Terminal 3 — submit the job
+grpcurl -plaintext \
+    -import-path proto -proto spectre/engine/v1alpha1/engine.proto \
+    -d "$(jq -n --arg dsl "$(cat examples/hello-hackernews/job.yaml)" '{job_dsl: $dsl}')" \
+    127.0.0.1:9090 \
+    spectre.engine.v1alpha1.Engine/RunJob
 ```
 
 The first run installs the Chromium binary the Playwright adapter
 needs (~150 MB; cached afterwards). Run `just pw-install-browsers`
 ahead of time to avoid the wait on the first run.
 
-The job writes one JSON object per story to `stories.jsonl`,
-resolved relative to this directory (the directory containing
-`job.yaml`). With `--verbose`, the engine prints the compiled
-`Plan` to stderr before execution so you can see the protocol-level
-RPC sequence. To pipe the output instead, set `output.path: '-'`
-in the YAML or pass `--output=-` to override it for one run.
+The engine streams `RunJobResponse` events back: one
+`row.json_line` per story, then a terminal `completed.rows_extracted`
+with the total count. With `RUST_LOG=info` set on the engine, the
+compiled `Plan` is logged to stderr before execution.
 
-To inspect the plan without running anything (useful when editing
-the YAML), use `spectre validate`:
-
-```bash
-spectre validate examples/hello-hackernews/job.yaml
-```
-
-Expected output (one line per story):
-
-```json
-{"title": "Show HN: A new ...", "url": "https://..."}
-{"title": "Open-source ...",    "url": "https://..."}
-```
+Tools required for the manual flow: `grpcurl`, `jq`. Both are
+available via Homebrew (`brew install grpcurl jq`) and standard
+Linux package managers. The ugly heredoc + `jq` is honest about
+the transitional state — R6.2 will replace it with a single
+`just` recipe.
 
 ## What it does
 
-1. Engine parses `job.yaml` into a validated `Job`, then compiles it
-   to a `Plan`: `Initialize → Navigate → Query → ExtractEach → Close`.
-2. Engine launches the Playwright adapter as a subprocess (reading
-   `adapters/playwright/driver.yaml`), polls the gRPC standard
-   health check until SERVING (ADR-0021 §6), and dials the TCP
-   listener over gRPC (ADR-0022). The engine-side TCP dial lands
-   in R2.3; until then the `spectre run` flow against this example
-   is broken — see `KNOWN_BREAKAGE.md` at the repo root.
-3. Engine sends the RPC sequence. `Query(.titleline > a)` returns
-   one `ElementRef` per story; `ExtractEach` reads `textContent` and
-   the `href` attribute from each one.
-4. Each result row is written to `stories.jsonl` as soon as its
-   `Extract` returns — long-running jobs produce visible progress
-   and a panic mid-job preserves prior rows.
+1. The engine parses `job.yaml` into a validated `Job`, then
+   compiles it to a `Plan`:
+   `Initialize → Navigate → Query → ExtractEach → Close`.
+2. The engine resolves `driver: playwright` to
+   `SPECTRE_PLAYWRIGHT_ENDPOINT` (default `127.0.0.1:9091`) via
+   `AdapterRegistry`, dials the TCP listener over gRPC
+   (ADR-0022), and waits for the `grpc.health.v1.Health` check
+   to return `SERVING` (ADR-0021 §6).
+3. The engine sends the RPC sequence. `Query(.titleline > a)`
+   returns one `ElementRef` per story; `ExtractEach` reads
+   `textContent` and the `href` attribute from each one.
+4. Each `Extract` response becomes a `RunJobResponse.Row` event
+   on the wire — long-running jobs produce visible progress and
+   a stream cancellation preserves rows already delivered.
 
 ## Why Hacker News
 
-It is one of the few legitimate browsable targets with stable HTML,
-no anti-automation friction, and a visible API contract. This
-example is not a useful HN scraper — production HN access should
-use the [official API](https://github.com/HackerNews/API). The
-example exists to demonstrate the smallest interesting Spectre job.
+It is one of the few legitimate browsable targets with stable
+HTML, no anti-automation friction, and a visible API contract.
+This example is not a useful HN scraper — production HN access
+should use the [official API](https://github.com/HackerNews/API).
+The example exists to demonstrate the smallest interesting
+Spectre job.
 
-The DOM selector `.titleline > a` has been stable on HN for years;
-if HN changes their structure the example may break and this README
-will need updating. The engine itself is unaffected.
+The DOM selector `.titleline > a` has been stable on HN for
+years; if HN changes their structure the example may break and
+this README will need updating. The engine itself is unaffected.
 
 ## What this example does NOT exercise
 
-- Pagination (planned for `parameterized-search`).
+- Pagination.
 - JavaScript execution (`js_execution` capability).
 - Network interception or screenshots.
-- Distributed execution via the control plane.
+- Distributed execution via the control plane (R3.1).
 
 See the [roadmap](../../docs/roadmap.md) for when each lands.

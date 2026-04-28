@@ -82,10 +82,11 @@ standard health check (`grpc.health.v1.Health/Check`) returning
 Chrome sessions, and exit zero. The shutdown deadline is 5
 seconds; in-flight RPCs that exceed it are aborted.
 
-> The R6.2 Compose stack will replace `just sb-run` as the canonical
-> local-dev path. Until then this recipe survives as a convenience.
-> The R2.2-R2.3 sequence breaks `spectre run` end-to-end because the
-> engine still dials UDS — see `KNOWN_BREAKAGE.md` at the repo root.
+> The R6.2 Compose stack will replace `just sb-run` as the
+> canonical local-dev path. Until then this recipe survives as a
+> convenience. The engine talks to this adapter over TCP gRPC
+> after R2.3 (ADR-0022); the engine binary itself is also a gRPC
+> service after R2.3 (`just engine-run`).
 
 ### Constraints
 
@@ -256,8 +257,8 @@ with `CODE_CAPABILITY_MISSING` and the message
 `the seleniumbase driver does not declare screenshot_full_page`.
 The engine planner is the primary line of defence: a job whose
 required capabilities include `screenshot_full_page` against
-this driver will fail at `spectre validate` time, before any
-Chrome process launches. ADR-0015 §5 records the rationale and
+this driver fails at plan time, before any Chrome process
+launches. ADR-0015 §5 records the rationale and
 the v1alpha2 path forward (likely a Chromium-specific
 `screenshot_full_page_cdp` sub-capability).
 

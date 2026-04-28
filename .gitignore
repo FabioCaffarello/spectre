@@ -76,4 +76,3 @@ adapters/playwright/src/proto/
 
 # Output produced by example jobs.
 examples/hello-hackernews/stories.jsonl
-examples/seleniumbase-navigate/output.jsonl

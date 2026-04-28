@@ -1,7 +1,8 @@
 # hello-hackernews — extract titles and URLs from the HN front page.
 #
-# Run via: cd core/engine && cargo run --example hello-hackernews
-# See ../README.md for status. The Go CLI wrapper lands in PR8.
+# See ./README.md for the run instructions. R2.3 retired the
+# `spectre run` CLI; submit this DSL via `grpcurl` against the
+# engine's `spectre.engine.v1alpha1.Engine.RunJob` RPC.
 
 spectre: v1alpha1
 driver: playwright
