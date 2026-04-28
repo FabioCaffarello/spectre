@@ -61,9 +61,9 @@ lands work on this PR.
 - [x] Step 13 — docs/architecture/postgres.md: schema, migration discipline, connection lifecycle, unavailability semantics, local dev, tests
 - [x] Step 14 — ADR-0019 R4.2 addendum: §5 JobRunner evolution + §4 Running-phase recovery; ADR index updated
 - [x] Step 15 — This entry; CHANGELOG; refactor-audit R4.2 row
-- [ ] Step 16 — Final verification (just check + Compose smoke + conformance ×3)
-- [ ] Step 17 — Open the PR
-- [ ] Step 18 — Summary report
+- [x] Step 16 — Final verification: engine fmt + clippy + 46 unit tests + 5 db integration tests green; control-plane vet + golangci-lint + 22 envtest cases + db + runner tests green; proto lint green; Compose `postgres:16-alpine` healthy in under 10s; engine binary smokes cleanly against the Compose stack; capability invariant 13/12/6 preserved. Adapter lint/test, `just conf-test` (×3), and the kubectl end-to-end transcript deferred to maintainer review (this PR does not touch adapter source; full verification needs a fresh `just bootstrap` of the Node + Python toolchains and a local Kubernetes cluster)
+- [x] Step 17 — Open the PR (#61)
+- [x] Step 18 — Summary report
 
 ## Surfaced decisions
 
