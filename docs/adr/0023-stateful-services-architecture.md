@@ -157,3 +157,118 @@ PostgreSQL is the answer. R4.2 implements the schema above and
 the engine's write path; R7.1's Helm chart packages the Bitnami
 Postgres subchart as the default (with an off-switch for
 operators bringing their own).
+
+## §3 — Kafka
+
+Kafka is the streaming surface for `OutputSink.Kafka`. The
+v1alpha2 schema already defines the variant —
+`KafkaSink.Brokers []string` and `KafkaSink.Topic string`
+(R3.2; `core/control-plane/api/v1alpha2/scrapejob_types.go`,
+lines 132–142) — and the reconciler currently rejects any
+ScrapeJob that selects it with "kafka output sink not yet
+implemented (R4.4)". This ADR records the producer-side
+contract that R4.4 implements, so the schema and the runtime
+behaviour converge.
+
+### Topic naming
+
+Topics follow the pattern `spectre.rows.<workspace>`. v1alpha1
+of the refactor has one workspace, named `default`, so the
+canonical topic is `spectre.rows.default`. The workspace
+component is reserved for v1alpha2 multi-tenancy; until then,
+every job writes to the same topic regardless of namespace or
+ScrapeJob name.
+
+Per-job topics were considered and rejected. Spectre's job
+cardinality is unbounded — operators can create thousands of
+ScrapeJob resources over a deployment's lifetime — and Kafka
+topics are not free per-topic (each topic carries metadata
+overhead in the broker, and a topic-per-job pattern would
+require runtime topic creation that complicates the producer's
+authorisation model). One topic per workspace bounds the topic
+count to the workspace count and lets downstream consumers
+subscribe once per workspace rather than once per job.
+
+### Partitioning
+
+Each topic uses 8 partitions by default. The partition key is
+the job's UUID; the producer hashes it into the partition index.
+Two consequences follow.
+
+First, all rows for a single job land on the same partition, so
+a downstream consumer that orders by `(partition, offset)` sees
+that job's rows in production order. The engine's row emission is
+sequential per job (one task per running job, draining a
+streaming RPC into the sink), so partition order matches
+extraction order.
+
+Second, work spreads across partitions roughly evenly across
+many concurrent jobs. The 8-partition default is tunable per
+environment via a future Helm value (R7.1 territory); the ADR
+fixes the default but does not pin it.
+
+### Message shape
+
+One Kafka message per row. The body is the JSONL row exactly as
+the engine would have written it to stdout — same schema, same
+field order, same line terminator (no terminator inside the
+Kafka body — Kafka frames the message). Headers carry the
+metadata downstream consumers need to route or filter without
+parsing the body:
+
+- `job_id` — the UUID, matching `jobs.id` in the Postgres
+  schema (§2)
+- `row_index` — monotonic counter per job, matching
+  `job_rows.row_index` for stdout-sinked jobs (§2)
+- `driver` — `playwright`, `seleniumbase`, or
+  `curl-impersonate`
+- `timestamp` — ISO-8601 row-emission time
+
+Consumers that need to back-fill a Postgres `job_rows` view (for
+example, an analytics service that wants the full audit log
+across both Stdout and Kafka jobs) can join on `(job_id,
+row_index)`; the headers carry the join keys explicitly so the
+consumer never has to parse the body to route.
+
+### Library and broker compatibility
+
+The engine uses `rdkafka` (see §8). The library wraps the
+upstream `librdkafka` C library through Rust FFI; the choice
+buys access to the most production-tested Kafka producer
+implementation in any language and a maintained Rust API on
+top.
+
+Brokers compatible with the Apache Kafka 0.11+ wire protocol
+all work. R7.1's production Helm path defaults to a Strimzi or
+Bitnami Kafka deployment; R6.2's local Compose stack uses
+Redpanda single-node — wire-protocol-compatible with Kafka,
+single binary, ~150 MB resident, no ZooKeeper dependency. The
+producer code does not branch on broker implementation; the
+broker list is a configuration value and the producer protocol
+is the abstraction.
+
+### Alternatives considered
+
+- **RabbitMQ.** AMQP semantics are queue-shaped (delete on
+  consume) rather than log-shaped (immutable, replayable). A
+  consumer that loses position cannot rewind without
+  application-level retention; Kafka's offset model is the
+  exact shape downstream consumers want for row-streaming.
+- **NATS JetStream.** Capable, but the cross-language client
+  ecosystem is thinner than Kafka's, and the partition
+  semantics are weaker. Spectre's downstream consumers are
+  intentionally polyglot (the same ADR-0014 polyglot
+  argument that picked Node + Python + Go for adapters
+  extends to consumers); Kafka's library breadth matters.
+- **Apache Pulsar.** Comparable feature set to Kafka with
+  additional complexity (BookKeeper, ZooKeeper). Kafka's
+  mindshare wins for a project where the streaming surface
+  is one consumer-facing decision among many.
+
+Kafka is the answer. R4.4 wires the producer and removes the
+admission-time rejection from the v1alpha2 reconciler so
+`OutputSink.Kafka` becomes a runnable variant; R7.1 packages
+the broker subchart. R5.1 (S3 + Webhook output sinks) consumes
+neither this topic nor this producer — those sinks have their
+own destinations — but does share the v1alpha2 schema's
+discriminated-union shape that R3.2 committed.
