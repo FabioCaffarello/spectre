@@ -513,222 +513,46 @@ jobs:
     name: Operator image (build + smoke test)
     needs: changes
     # Build the operator image whenever the operator source, the
-    # engine source (the engine binary is bundled), the protocol,
-    # the Dockerfile, or the workflow itself changes. The image
-    # depends on the engine image, which we build in-line so the
-    # job is self-contained and does not need a registry round-trip.
-    if: needs.changes.outputs.operator == 'true' || needs.changes.outputs.engine_image == 'true'
+    # protocol, the Dockerfile, or the workflow itself changes.
+    # R3.1 retired the bundled-image execution model — the operator
+    # image no longer carries the engine binary or the three
+    # adapters. Per-service Dockerfiles for them land in R6.1 and
+    # the multi-service end-to-end smoke comes back with the Helm
+    # chart in R7.2.
+    if: needs.changes.outputs.operator == 'true'
     runs-on: ubuntu-latest
-    # Both builds run with `docker build` (BuildKit on the daemon)
-    # rather than `docker buildx build`. The default buildx
-    # docker-container driver keeps an image cache isolated from the
-    # local daemon, so a `--load`-ed image from one buildx call is
-    # not visible to a subsequent buildx call's
-    # `FROM ${ENGINE_IMAGE}`. Plain `docker build` shares the daemon
-    # cache between both steps; the GitHub runner is already
-    # linux/amd64 so no cross-platform emulation is needed (the
-    # local justfile recipes still use buildx for the Apple Silicon
-    # case, where QEMU is required).
     env:
       DOCKER_BUILDKIT: "1"
     steps:
       - uses: actions/checkout@v6
-      - name: Resolve Playwright base image pin
-        id: pw-base
-        run: |
-          image="$(cat adapters/playwright/.playwright-base-image)"
-          echo "image=${image}" >> "$GITHUB_OUTPUT"
-          # Extract the digest portion for the cache key so a base-
-          # image bump invalidates the layer cache automatically.
-          digest="${image##*@}"
-          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-      - name: Resolve curl-impersonate pin
-        # PR18 §4.1: read VERSION + SHA256 from
-        # adapters/curl-impersonate/.curl-impersonate-version (one
-        # line, "VERSION SHA256") so a bump touches one file. The
-        # operator-image build downloads + verifies the tarball; the
-        # SHA-256 is defence-in-depth against tarball tampering.
-        id: curl-imp
-        run: |
-          read -r version sha256 < <(grep -v '^#' adapters/curl-impersonate/.curl-impersonate-version | head -n 1)
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
-      # Cache the Microsoft Playwright base image layers. Pulling it
-      # is ~600 MB / ~90s on an Azure runner; caching keyed on the
-      # pinned digest cuts that to a few seconds. The `docker save /
-      # docker load` round-trip preserves layer identity so the
-      # subsequent operator-image build can reuse them.
-      - name: Cache Playwright base image
-        id: pw-base-cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/pw-base.tar
-          key: pw-base-${{ runner.os }}-${{ steps.pw-base.outputs.digest }}
-      - if: steps.pw-base-cache.outputs.cache-hit == 'true'
-        name: Load cached Playwright base
-        run: docker load -i /tmp/pw-base.tar
-      - if: steps.pw-base-cache.outputs.cache-hit != 'true'
-        name: Pull and cache Playwright base
-        run: |
-          docker pull "${{ steps.pw-base.outputs.image }}"
-          docker save "${{ steps.pw-base.outputs.image }}" -o /tmp/pw-base.tar
-      - name: Build engine image
-        run: |
-          docker build \
-            -t spectre-engine:ci \
-            -f core/engine/Dockerfile \
-            .
       - name: Build operator image
-        # Build context is the repository root: each builder stage
-        # regenerates its language's proto bindings from proto/. PR16
-        # §6.3 / PR17 §6.5 / PR18 §6.5.
+        # Build context is the repository root because go.mod's local
+        # `replace` for the proto Go bindings resolves to
+        # ../../proto/gen/go from core/control-plane/. The Dockerfile
+        # stages both trees into the builder stage.
         run: |
           docker build \
-            --build-arg ENGINE_IMAGE=spectre-engine:ci \
-            --build-arg PLAYWRIGHT_BASE_IMAGE="${{ steps.pw-base.outputs.image }}" \
-            --build-arg CURL_IMPERSONATE_VERSION="${{ steps.curl-imp.outputs.version }}" \
-            --build-arg CURL_IMPERSONATE_SHA256="${{ steps.curl-imp.outputs.sha256 }}" \
             -t spectre-control-plane:ci \
             -f core/control-plane/Dockerfile \
             .
-      - name: Smoke test (engine binary present)
-        # R2.3 retired the `spectre version` subcommand. The
-        # equivalent image-level smoke is "the bundled engine binary
-        # exists at the canonical path".
+      - name: Smoke test (manager binary runs)
+        # The unbundled image is a Go static binary on
+        # gcr.io/distroless/static:nonroot. The only meaningful image-
+        # level smoke is "the manager binary exists at /manager and
+        # responds to --help". Deeper end-to-end smoke (engine + the
+        # three adapter services + sample ScrapeJobs) returns with
+        # the Helm production smoke (R7.2).
         run: |
           docker run --rm \
-            --entrypoint=test \
-            spectre-control-plane:ci -x /usr/local/bin/spectre
-      - name: Smoke test (Playwright adapter bundled)
-        run: |
-          docker run --rm \
-            --entrypoint=/bin/sh \
-            spectre-control-plane:ci -c \
-            'test -f /opt/spectre/adapters/playwright/dist/index.js && \
-             test -d /opt/spectre/adapters/playwright/node_modules/playwright && \
-             test -f /opt/spectre/adapters/playwright/driver.yaml && \
-             echo "playwright adapter assets OK"'
-      - name: Smoke test (SeleniumBase adapter bundled)
-        # PR17 §6 acceptance: the seleniumbase venv exists at the
-        # canonical path with shebangs that resolve, the adapter
-        # package imports cleanly through the editable proto-bindings
-        # source, and Chrome + ChromeDriver report the same major.
-        # A failure here surfaces packaging bugs (missing apt deps,
-        # broken venv shebangs, version skew) before kind smoke.
-        run: |
-          docker run --rm \
-            --entrypoint=/bin/sh \
-            spectre-control-plane:ci -c '
-              set -e
-              test -f /opt/spectre/adapters/seleniumbase/driver.yaml
-              test -x /opt/spectre/adapters/seleniumbase/.venv/bin/python
-              /opt/spectre/adapters/seleniumbase/.venv/bin/python -c "import spectre_seleniumbase"
-              /opt/spectre/adapters/seleniumbase/.venv/bin/python -c "from spectre.driver.v1alpha1 import driver_pb2"
-              google-chrome --version
-              chromedriver --version
-              chrome_major=$(google-chrome --version | grep -oE "[0-9]+" | head -n 1)
-              driver_major=$(chromedriver --version | grep -oE "[0-9]+" | head -n 1)
-              test "${chrome_major}" = "${driver_major}"
-              echo "seleniumbase adapter assets OK (chrome=${chrome_major} chromedriver=${driver_major})"
-            '
-      - name: Smoke test (curl-impersonate adapter bundled)
-        # PR18 §6 acceptance: the static Go adapter binary exists at
-        # the canonical path and is executable; driver.yaml is in
-        # place so the engine resolves
-        # `<adapters_path>/curl-impersonate/driver.yaml`; and the
-        # default variant binary (`curl_chrome116`) is on PATH so the
-        # adapter's per-Navigate `os/exec` subprocess (ADR-0016 §1)
-        # resolves. A failure here surfaces a missing build-arg, a
-        # bad SHA-256 pin, or a broken tarball extract before kind
-        # smoke.
-        run: |
-          docker run --rm \
-            --entrypoint=/bin/sh \
-            spectre-control-plane:ci -c '
-              set -e
-              test -x /opt/spectre/adapters/curl-impersonate/bin/adapter
-              test -f /opt/spectre/adapters/curl-impersonate/driver.yaml
-              command -v curl_chrome116
-              curl_chrome116 --version | head -n 1
-              echo "curl-impersonate adapter assets OK"
-            '
+            --entrypoint=/manager \
+            spectre-control-plane:ci --help 2>&1 | head -n 5
       - name: Report image size
         run: docker images spectre-control-plane:ci --format '{{.Size}}'
-      - name: Save operator image for downstream jobs
-        run: docker save spectre-control-plane:ci -o /tmp/spectre-control-plane.tar
-      - name: Save engine image for downstream jobs
-        run: docker save spectre-engine:ci -o /tmp/spectre-engine.tar
-      - name: Upload operator image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: operator-image
-          path: |
-            /tmp/spectre-control-plane.tar
-            /tmp/spectre-engine.tar
-          retention-days: 1
-
-  operator-smoke-kind:
-    name: Operator smoke (kind end-to-end)
-    needs: [changes, operator-image]
-    # The kind end-to-end smoke runs the operator's
-    # `SubprocessRunner`, which shells out to `spectre run` — a CLI
-    # surface retired in R2.3. The job is gated off until R3.1 lands
-    # `EngineClientRunner` (the operator becomes a gRPC client of the
-    # engine service). Re-enable by restoring the original `if:`
-    # expression once the runner refactor merges.
-    if: false
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Download operator + engine images
-        uses: actions/download-artifact@v8
-        with:
-          name: operator-image
-          path: /tmp
-      - name: Load images into local docker
-        run: |
-          docker load -i /tmp/spectre-engine.tar
-          docker load -i /tmp/spectre-control-plane.tar
-          docker tag spectre-engine:ci         spectre-engine:dev
-          docker tag spectre-control-plane:ci  spectre-control-plane:dev
-      - uses: helm/kind-action@v1
-        with:
-          cluster_name: spectre-pr18
-      - name: Install kubebuilder CLI dependencies
-        # `make install` / `make deploy` need kustomize and
-        # controller-gen. The kubebuilder Makefile vendors them into
-        # core/control-plane/bin on demand.
-        working-directory: core/control-plane
-        run: |
-          make kustomize
-          make controller-gen
-      # PR18: the smoke script runs all three bundled samples
-      # sequentially (hello-hackernews → seleniumbase-extract →
-      # curl-impersonate-extract). The hello-hackernews sample reaches
-      # news.ycombinator.com from inside the kind node; the
-      # seleniumbase-extract and curl-impersonate-extract samples both
-      # reach example.com (IANA-controlled, stable, two anchor tags).
-      # GitHub-hosted runners can typically reach both; if either
-      # starts flaking on rate-limits, the documented fallback
-      # (in-cluster fixture targeting an httpd ConfigMap) replaces
-      # this step. PR16 §6.6 / PR17 §6.9 / PR18 §6.7.
-      #
-      # TIMEOUT_SECONDS is per-sample. SeleniumBase's first launch
-      # is heavier than Playwright's (Python interpreter bootstrap
-      # plus Chrome's renderer subprocess tree); curl-impersonate is
-      # the lightest (no browser warm-up). 420s gives all three cases
-      # comfortable headroom.
-      - name: Run kind smoke
-        env:
-          ENGINE_IMAGE: spectre-engine:dev
-          OPERATOR_IMAGE: spectre-control-plane:dev
-          TIMEOUT_SECONDS: "420"
-        run: bash core/control-plane/hack/smoke-kind.sh spectre-pr18
 
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, operator, operator-image, operator-smoke-kind, engine-integration, engine-image]
+    needs: [changes, proto, rust, go, typescript, python, operator, operator-image, engine-integration, engine-image]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -740,7 +564,6 @@ jobs:
           echo "python:               ${{ needs.python.result }}"
           echo "operator:             ${{ needs.operator.result }}"
           echo "operator-image:       ${{ needs.operator-image.result }}"
-          echo "operator-smoke-kind:  ${{ needs.operator-smoke-kind.result }}"
           echo "engine-integration:   ${{ needs.engine-integration.result }}"
           echo "engine-image:         ${{ needs.engine-image.result }}"
       - name: Fail if any required job failed or was cancelled
