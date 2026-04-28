@@ -38,14 +38,14 @@ use crate::error::EngineError;
 
 /// Environment variable controlling the Playwright adapter endpoint.
 pub const PLAYWRIGHT_ENDPOINT_ENV: &str = "SPECTRE_PLAYWRIGHT_ENDPOINT";
-/// Environment variable controlling the SeleniumBase adapter endpoint.
+/// Environment variable controlling the `SeleniumBase` adapter endpoint.
 pub const SELENIUMBASE_ENDPOINT_ENV: &str = "SPECTRE_SELENIUMBASE_ENDPOINT";
 /// Environment variable controlling the curl-impersonate adapter endpoint.
 pub const CURL_IMPERSONATE_ENDPOINT_ENV: &str = "SPECTRE_CURL_IMPERSONATE_ENDPOINT";
 
 /// Local-development default for the Playwright adapter endpoint.
 pub const PLAYWRIGHT_DEFAULT_ENDPOINT: &str = "127.0.0.1:9091";
-/// Local-development default for the SeleniumBase adapter endpoint.
+/// Local-development default for the `SeleniumBase` adapter endpoint.
 pub const SELENIUMBASE_DEFAULT_ENDPOINT: &str = "127.0.0.1:9092";
 /// Local-development default for the curl-impersonate adapter endpoint.
 pub const CURL_IMPERSONATE_DEFAULT_ENDPOINT: &str = "127.0.0.1:9093";

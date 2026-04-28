@@ -14,7 +14,6 @@
 use thiserror::Error;
 
 use crate::dsl::JobError;
-use crate::launcher::LauncherError;
 use crate::plan::PlanError;
 
 /// Top-level error type for the engine pipeline.
@@ -27,11 +26,6 @@ pub enum EngineError {
     /// Planning failed (e.g. requested capability not declared).
     #[error(transparent)]
     Plan(#[from] PlanError),
-
-    /// Launching the driver subprocess failed (manifest missing,
-    /// readiness timeout, etc.).
-    #[error(transparent)]
-    Launcher(#[from] LauncherError),
 
     /// gRPC transport-layer error (channel build, request dispatch,
     /// HTTP/2 framing).

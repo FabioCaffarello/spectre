@@ -14,66 +14,52 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
-# The CLI binary. ADR-0013 explains why the spectre CLI lives in the
-# engine crate rather than in a separate Go binary; the [[bin]] name is
-# the user-facing command (`cargo install spectre-engine` produces
-# `spectre` on $PATH, mirroring `cargo`/`rg`/etc.).
+# The engine binary. R2.3 retired the CLI subcommands (`run`,
+# `validate`, `version` standalone); the binary that survives is the
+# gRPC service entry point. ADR-0013's CLI rationale is superseded
+# by ADR-0020 §3.
 [[bin]]
 name = "spectre"
 path = "src/bin/spectre.rs"
 
 [dependencies]
-# The engine speaks the Driver Protocol over gRPC. tonic provides the
-# async runtime-agnostic gRPC stack with HTTP/2 transport (over a
-# Unix domain socket via a tower service); prost handles message
-# (de)serialisation. Both are pulled in as direct dependencies (rather
-# than dev-dependencies) so downstream consumers of the engine crate
-# see the same protobuf types.
+# Driver protocol: tonic provides the async-runtime-agnostic gRPC
+# stack over HTTP/2; prost handles message (de)serialisation. Both
+# are direct dependencies so downstream consumers of the engine
+# crate see the same protobuf types. R2.3 added `tonic-health` for
+# the standard health-check service the engine registers alongside
+# its `spectre.engine.v1alpha1.Engine` server (ADR-0021 §6).
 prost = "0.13"
 prost-types = "0.13"
 tonic = { version = "0.12", default-features = false, features = ["codegen", "prost", "transport"] }
+tonic-health = { version = "0.12", default-features = false }
 
-# Tokio runtime: process spawning, async I/O on the UDS, signal
-# handling, timeouts, and the multi-threaded scheduler the example
-# binary uses.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "process", "signal", "time", "fs", "net", "sync"] }
+# Tokio runtime: async I/O, signal handling, timeouts, channels, and
+# the multi-threaded scheduler the engine binary uses. The `process`
+# feature went away with the subprocess launcher in R2.3.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "signal", "time", "fs", "net", "sync"] }
 tokio-stream = { version = "0.1", default-features = false }
-tower = { version = "0.5", default-features = false, features = ["util"] }
-hyper-util = { version = "0.1", default-features = false }
 
-# Serialisation: YAML for DSL/manifest input, JSON for output rows.
-# `serde_yaml_ng` is the community fork after the upstream `serde_yaml`
-# was archived; see ADR-0012 §3 in the consequences and ADR §9.8 of
-# the PR7 master prompt.
+# Serialisation: YAML for DSL input, JSON for output rows.
+# `serde_yaml_ng` is the community fork after the upstream
+# `serde_yaml` was archived; see ADR-0012 §3.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"
 
 # Error plumbing: thiserror for the public `EngineError` enum;
-# anyhow gives the spectre binary context-rich top-level errors
+# anyhow gives the engine binary context-rich top-level errors
 # without forcing a public error type on the library API.
 thiserror = "1"
 anyhow = "1"
 
-# CLI argument parsing. clap with the derive feature is the de facto
-# Rust ecosystem standard; see ADR-0013 §4 for the rationale.
-clap = { version = "4", features = ["derive"] }
-
-# tracing-subscriber initialises the binary's stderr logging. WARN by
-# default, INFO with --verbose, RUST_LOG overrides via env-filter.
+# tracing-subscriber initialises the binary's stderr logging.
+# RUST_LOG always wins; WARN otherwise.
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
-# UDS path generation, regex matching of the readiness line, URL
-# validation in DSL parsing, structured logs.
-uuid = { version = "1", features = ["v4"] }
-regex = "1"
+# URL validation in DSL parsing; structured logs.
 url = "2"
 tracing = "0.1"
-
-# SIGTERM signalling. tokio::process::Child does not expose a SIGTERM
-# helper portably; nix's narrow `signal` feature gives us the kill(2)
-# wrapper without pulling the rest of the crate. See ADR-0012 §4.
-nix = { version = "0.29", default-features = false, features = ["signal"] }
 
 [build-dependencies]
 # tonic-build invokes prost-build at compile time to write the
@@ -81,15 +67,8 @@ nix = { version = "0.29", default-features = false, features = ["signal"] }
 tonic-build = { version = "0.12", default-features = false, features = ["prost"] }
 
 [dev-dependencies]
-# Used by the integration test fixture (a tiny localhost HTTP server
-# that mirrors the Python conformance fixture's `/elements` route).
-# See ADR-0012 §"Bad, because" for the duplication rationale.
-hyper = { version = "1", features = ["server", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
-
-# tempfile is used by output-sink unit tests and the integration test
-# to allocate a deterministic JSONL output path.
+# tempfile is used by output-sink unit tests to allocate a
+# deterministic JSONL output path.
 tempfile = "3"
 
 [lints.rust]
