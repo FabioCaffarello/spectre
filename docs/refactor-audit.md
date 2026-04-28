@@ -137,10 +137,10 @@ audit demonstrates the choice to defer is conscious.
 
 | File | Why deferred |
 |------|--------------|
-| `core/control-plane/internal/runner/subprocess.go` | `SubprocessRunner` retirement lands in R3.1 (`EngineClientRunner` replaces it). R2 leaves the file untouched so the R3.1 PR's diff is focused. |
-| `core/control-plane/cmd/main.go` references to `SubprocessRunner` | Same — R3.1. |
-| `core/control-plane/Dockerfile` (operator image bundling adapters) | The bundled-image pattern retires in R6.1 (per-service Dockerfiles); the Dockerfile changes there. |
-| `.github/workflows/ci.yml` (operator-image build / load) | CI surface follows the code: R3.1 retires the SubprocessRunner CI lanes; R6.1 introduces per-service image build / push. |
+| `core/control-plane/internal/runner/subprocess.go` | ~~Deferred~~ retired in R3.1 (`EngineClientRunner` replaces it). |
+| `core/control-plane/cmd/main.go` references to `SubprocessRunner` | ~~Deferred~~ retired in R3.1. The `--engine-binary` and `--adapters-path` flags were replaced with `--engine-endpoint`. |
+| `core/control-plane/Dockerfile` (operator image bundling adapters) | ~~Deferred to R6.1~~ unbundled in R3.1. The image is now a Go static binary on `gcr.io/distroless/static:nonroot` (~50 MB). Per-service Dockerfiles for the engine and the three adapters land in R6.1. |
+| `.github/workflows/ci.yml` (operator-image build / load) | ~~Deferred~~ R3.1 retired the bundled-image smoke tests and the gated `operator-smoke-kind` end-to-end job; both come back in their multi-service forms in R6.2 / R7.2. |
 | `examples/curl-impersonate-extract/job.yaml`, `examples/curl-impersonate-fetch/job.yaml`, `examples/seleniumbase-extract/job.yaml`, `examples/seleniumbase-navigate/job.yaml` | These are `ScrapeJob` CRDs aimed at the operator. They get touched in R3.2 (CRD v1alpha2). |
 
 ## Counts

@@ -10,105 +10,85 @@ execution lands in PR15.
 
 ## Phase 3 status
 
-| Component                          | Status            | PR    |
-|------------------------------------|-------------------|-------|
-| kubebuilder scaffold               | shipped           | PR14  |
-| `ScrapeJob` CRD (v1alpha1)         | shipped           | PR14  |
-| State-machine reconciler           | shipped           | PR14  |
-| `JobRunner` interface              | shipped           | PR14  |
-| `StubRunner`                       | shipped           | PR14  |
-| `SubprocessRunner` (engine invoke) | shipped           | PR15  |
-| Operator image bundles engine      | shipped           | PR15  |
-| Operator image bundles Playwright  | shipped           | PR16  |
-| Operator image bundles SeleniumBase | shipped           | PR17  |
-| Operator image bundles curl-impersonate | shipped       | PR18  |
-| `ScrapeFleet` CRD                  | not started       | PR19+ |
-| `ScrapeSchedule` CRD               | not started       | PR19+ |
-| Helm chart                         | not started       | PR19+ |
-| Webhook validators                 | not started       | PR19+ |
-| Observability (metrics/traces)     | not started       | PR19+ |
+| Component                          | Status            | PR / Phase |
+|------------------------------------|-------------------|------------|
+| kubebuilder scaffold               | shipped           | PR14       |
+| `ScrapeJob` CRD (v1alpha1)         | shipped           | PR14       |
+| State-machine reconciler           | shipped           | PR14       |
+| `JobRunner` interface              | shipped           | PR14       |
+| `StubRunner`                       | shipped           | PR14       |
+| `EngineClientRunner` (gRPC)        | shipped           | R3.1       |
+| Operator image (unbundled)         | shipped           | R3.1       |
+| `ScrapeJob` CRD v1alpha2           | not started       | R3.2       |
+| PostgreSQL job state               | not started       | R4.2       |
+| Output sinks (S3 / webhook / Kafka)| not started       | R5         |
+| Per-service Dockerfiles            | not started       | R6.1       |
+| Compose stack                      | not started       | R6.2       |
+| Helm chart                         | not started       | R7.1       |
+| `ScrapeFleet` / `ScrapeSchedule`   | not started       | post-Phase3|
 
-PR14 shipped the reconciler with a sleep-based stub; PR15 wired
-`SubprocessRunner`, which shells out to the spectre engine binary
-the operator image bundles, captures JSONL on stdout, and reports
-`RowsExtracted` to the reconciler. The §5 invariant from ADR-0019
-held: the `JobRunner` signature, the reconciler control flow, and
-the envtest suite are byte-for-byte unchanged from PR14. The only
-in-tree edit to `internal/controller/` was a one-line writer swap
-(`io.Discard` → `os.Stdout`) so JSONL rows reach
-`kubectl logs <operator-pod>` per ADR-0019 §6.
+PR14 shipped the reconciler with a sleep-based stub. PR15–PR18
+delivered a bundled-image execution model where the operator,
+the engine binary, and three adapter runtimes ran together as
+nested subprocesses inside one Pod. The R1.1–R3.1 refactor
+(ADR-0020) replaced that model with service-per-component:
 
-PR16 lands the Playwright adapter in the operator image. The
-runtime base is now the official Microsoft Playwright image
-(`mcr.microsoft.com/playwright:v1.59.1-noble`, pinned by digest in
-[`adapters/playwright/.playwright-base-image`](../../adapters/playwright/.playwright-base-image)),
-which ships Ubuntu 24.04, Node 24, Chromium pinned to the matching
-patch release, and every system dependency Chromium needs. The
-adapter sources are compiled in a `playwright-builder` stage
-(repo-root build context, so the stage can regenerate the
-TypeScript protocol bindings before `pnpm build`).
+- The engine is a stateless gRPC service (R2.3, ADR-0020 §3) that
+  exposes `spectre.engine.v1alpha1.Engine.RunJob` on
+  `0.0.0.0:9090` and dials adapters from `AdapterRegistry` via
+  env vars (ADR-0021 §5).
+- The three reference adapters (Playwright, SeleniumBase,
+  curl-impersonate) are long-running gRPC services (R2.2) that
+  bind `0.0.0.0:909{1,2,3}` and register `grpc.health.v1.Health`
+  (ADR-0021 §6).
+- The control plane (R3.1) is a thin gRPC client of the engine
+  service. `EngineClientRunner` dials the engine, opens a
+  `RunJob` stream, and forwards every `Row.json_line` event into
+  the operator's stdout (so `kubectl logs <operator-pod>` keeps
+  working per ADR-0019 §6).
 
-PR17 lands the SeleniumBase adapter alongside Playwright. A new
-`seleniumbase-builder` stage uses `uv` to install the adapter's
-virtualenv at the final runtime path
-(`/opt/spectre/adapters/seleniumbase/.venv`), regenerates the
-Python protocol bindings and stages them at
-`/opt/spectre/proto/gen/python/` (so the adapter's
-`[tool.uv.sources]` editable resolves at runtime), and the runtime
-stage extends the Microsoft base with apt-installed Python 3.12,
-`google-chrome-stable`, and a matching ChromeDriver.
+ADR-0019 §5's `JobRunner` interface seam held byte-for-byte
+through three implementations (`StubRunner`, `SubprocessRunner`
+in PR15, `EngineClientRunner` in R3.1); the reconciler control
+flow and the envtest suite are unchanged from PR14.
 
-PR18 closes v1alpha1 adapter bundling with the curl-impersonate
-adapter. A new `curl-impersonate-builder` stage (Go,
-`CGO_ENABLED=0`) regenerates the protocol bindings via `buf
-generate` + `tools/codegen/post-generate.sh` and produces a single
-static `bin/adapter`. The runtime stage downloads the upstream
-`curl-impersonate-v${VERSION}.x86_64-linux-gnu.tar.gz` release
-tarball, verifies the SHA-256, and extracts the variant binaries
-onto `/usr/local/bin/`; the version + SHA-256 are pinned in
-[`adapters/curl-impersonate/.curl-impersonate-version`](../../adapters/curl-impersonate/.curl-impersonate-version)
-so a bump touches one file. ADR-0016 §1's subprocess-over-cgo
-contract held byte-for-byte: the adapter shells out to
-`curl_chrome116` per Navigate via `os/exec`, no link against
-`libcurl-impersonate.so`. All three adapters now land under
-`/opt/spectre/adapters/`:
+## Operator image
+
+Per R3.1, the operator image is a Go static binary on
+`gcr.io/distroless/static:nonroot`:
 
 ```
-/opt/spectre/
-├── adapters/
-│   ├── playwright/
-│   │   ├── dist/             # compiled JS entry point at dist/index.js
-│   │   ├── node_modules/     # production deps (playwright, @bufbuild/protobuf, …)
-│   │   ├── driver.yaml       # transports[0].command = ["node", "dist/index.js"]
-│   │   └── package.json
-│   ├── seleniumbase/
-│   │   ├── .venv/            # uv-built virtualenv; shebangs pin /opt/spectre/...
-│   │   ├── src/              # spectre_seleniumbase package
-│   │   ├── driver.yaml       # transports[0].command = [".venv/bin/python", "-m", ...]
-│   │   ├── pyproject.toml
-│   │   └── uv.lock
-│   └── curl-impersonate/
-│       ├── bin/adapter       # static Go binary; no venv, no node_modules
-│       └── driver.yaml       # transports[0].command = ["./bin/adapter"]
-└── proto/gen/python/
-    └── spectre/driver/v1alpha1/   # editable source for spectre-driver-protocol
+spectre-control-plane:dev (~50 MB on disk)
+└── /manager      # kubebuilder manager (Go, CGO_ENABLED=0)
 ```
 
-Chrome, Chromium, and `curl_chrome116` coexist cleanly: Playwright
-launches Chromium via `PLAYWRIGHT_BROWSERS_PATH`; SeleniumBase
-launches `/usr/bin/google-chrome` via ChromeDriver;
-curl-impersonate's adapter `os/exec`s `curl_chrome116` per
-Navigate. At any moment at most one runs
-(`MaxConcurrentReconciles=1` plus the DSL `driver:` field selects
-exactly one of `playwright`, `seleniumbase`, or
-`curl-impersonate`).
+`/usr/local/bin/spectre` and `/opt/spectre/adapters/*` are gone —
+the engine and adapters run as separate services. Per-service
+Dockerfiles for them are R6.1 work; the multi-service local-dev
+flow (`docker compose up`) is R6.2 (ADR-0025); production
+packaging via Helm chart is R7.1 (ADR-0026).
 
-The on-disk image weighs ~1.95 GB (Microsoft base ~1.0 GB plus
-~80 MiB of Chrome runtime libs, ~250 MiB of the SeleniumBase
-venv, and ~50 MiB of curl-impersonate variant binaries + the Go
-adapter). The manager's `--adapters-path` flag defaults to
-`/opt/spectre/adapters`; local development with `just op-run`
-overrides this to the workspace `adapters/` directory.
+## Engine endpoint
+
+The manager dials the engine's gRPC service. The endpoint is
+configured at startup via, in order of precedence:
+
+1. `--engine-endpoint=<host:port>` flag.
+2. `SPECTRE_ENGINE_ENDPOINT` environment variable.
+3. Hard-coded default `127.0.0.1:9090` (matches `just engine-run`'s
+   listener).
+
+In the Compose stack (R6.2) the env var is set to `engine:9090`.
+In the Helm chart (R7.1) it is rendered from values onto the
+operator Deployment. Plain-text gRPC is acceptable in v1alpha1
+because the operator-engine traffic stays on a private network
+namespace (Compose / Pod network). TLS / mTLS is deferred to
+v1alpha2 per ADR-0022 §6.
+
+The `EngineClientRunner` dials the endpoint per `RunJob`
+invocation (no connection pooling), respects the context deadline
+the reconciler attaches from `Spec.TimeoutSeconds`, and surfaces
+gRPC stream cancellation as `ctx.Err()` to the reconciler.
 
 ## The ScrapeJob CRD
 
@@ -159,9 +139,6 @@ returns without requeue once one is reached. This makes `kubectl wait
 
 ## Running locally
 
-PR14 ships envtest-based unit tests; running the operator against a
-real cluster is optional but useful for the kickoff demo.
-
 ### Unit tests (no cluster required)
 
 ```bash
@@ -170,153 +147,130 @@ just op-test
 ```
 
 `make test` downloads apiserver and etcd binaries via setup-envtest,
-runs the reconciler suite (5 transition tests + 1 runner test), and
-prints coverage. First run takes ~2 minutes (binary downloads);
-cached runs complete in under 30 seconds.
+runs the reconciler suite (state-machine transitions) and the
+runner suite (`StubRunner`, `EngineClientRunner` over an
+in-process bufconn gRPC server), and prints coverage. First run
+takes ~2 minutes (binary downloads); cached runs complete in under
+30 seconds.
 
-### In-cluster smoke (PR18: bundled image, kind)
+### Host operator against a local engine + adapter
 
-```bash
-# 1. Build the engine and operator images. just op-build-image
-#    chains engine-image first.
-just op-build-image
-
-# 2. Bring up a kind cluster, load both images, install the CRD,
-#    deploy the operator, then apply ALL THREE bundled samples
-#    sequentially (hello-hackernews → seleniumbase-extract →
-#    curl-impersonate-extract). The script polls each for
-#    Completed and asserts rowsExtracted >= 1 per sample. It exits
-#    non-zero on any failure with diagnostic context.
-just op-smoke-kind
-# Equivalent to: bash core/control-plane/hack/smoke-kind.sh
-```
-
-Expected output (PR18: all three bundled adapters):
-
-```
-NAME                        PHASE       ROWS   AGE
-hello-hackernews            Completed   30     14s
-seleniumbase-extract        Completed   2      11s
-curl-impersonate-extract    Completed   2      6s
-```
-
-`RowsExtracted` reflects the JSONL row count the engine emitted on
-stdout (Hacker News produces ~30 rows per front page; example.com
-produces 2 anchors — "More information…" and IANA contact). The
-rows themselves stream from the engine subprocess into the
-operator container's stdout and surface via
-`kubectl logs <operator-pod>` per ADR-0019 §6. Sequential
-execution matches `MaxConcurrentReconciles=1`; running the
-ScrapeJobs concurrently would contend for the single Pod. The
-kind smoke is linux/amd64 only — Apple Silicon hosts cannot run
-kubeadm reliably under Rosetta amd64 emulation, so local kind
-smoke requires either a Linux host or a remote Linux runner; CI's
-`operator-smoke-kind` job exercises the same flow on every PR
-that touches the operator.
-
-### Host operator against a local cluster (PR15-style)
-
-The PR15 host-operator workflow still works for iterating on the
-manager binary itself without rebuilding the image:
+R3.1 splits execution across services. To exercise the operator
+end-to-end against a `kubectl apply`-driven `ScrapeJob`, run the
+engine, an adapter, and the operator in three terminals:
 
 ```bash
-# 1. Bring up a cluster.
-kind create cluster --name spectre-dev
+# Terminal 1 — engine (gRPC service on 127.0.0.1:9090)
+just engine-run
 
-# 2. Install the CRD.
+# Terminal 2 — Playwright adapter (gRPC service on 127.0.0.1:9091)
+just pw-run 9091
+
+# Terminal 3 — operator against the current kubectl context.
+# SPECTRE_ENGINE_ENDPOINT defaults to 127.0.0.1:9090; override to
+# point at a remote engine if needed.
 just op-install-crds
-
-# 3. Run the operator against the current kubectl context. The
-#    --adapters-path override points at the workspace adapters/
-#    directory (the bundled-image default of /opt/spectre/adapters
-#    does not exist on the developer host).
 just op-run
 
-# 4. In another terminal, apply a sample.
+# Terminal 4 — apply a sample and watch.
 kubectl apply -f core/control-plane/config/samples/spectre_v1alpha1_scrapejob_hello-hackernews.yaml
-
-# 5. Watch the phase transitions.
 kubectl get scrapejob -w
 ```
 
-`op-run` runs the operator on the developer host, so "operator
-logs" here means the foreground terminal where the recipe is
-running.
+Phase transitions: `Pending → Running → Completed`. JSONL rows
+stream from the engine to the operator's stdout (the foreground
+terminal running `just op-run`) per ADR-0019 §6.
+
+The Compose stack (R6.2) replaces this multi-terminal flow with a
+single `docker compose up`; that becomes the canonical local-dev
+loop once R6.2 lands.
 
 ### Tearing down
 
 ```bash
 just op-uninstall-crds          # delete CRD + any in-flight ScrapeJobs
-kind delete cluster --name spectre-dev
+# Stop the engine and adapter terminals with Ctrl-C.
 ```
 
 ## Architecture decisions
 
 The substantive design choices are recorded in
-[ADR-0019](../adr/0019-control-plane-architecture-and-scrapejob-crd.md).
-Six axes:
+[ADR-0019](../adr/0019-control-plane-architecture-and-scrapejob-crd.md)
+and updated by
+[ADR-0020](../adr/0020-microservices-architecture-supersession.md):
 
 1. **kubebuilder v4 over operator-sdk or controller-runtime direct.**
-   Reference convention; marker-driven generation; envtest integration.
-2. **`ScrapeJob` is the only CRD in PR14.** `ScrapeFleet` /
-   `ScrapeSchedule` build on top of `ScrapeJob`; the reverse is
-   awkward.
-3. **Subprocess-in-operator-pod execution.** Extends the project's
-   "subprocess + protocol" thesis to a third nesting level
-   (operator → engine → adapter, all in one Pod). The textbook
-   alternative — Kubernetes `Job` per `ScrapeJob` — is documented
-   as the v1alpha2 escape hatch.
+   Reference convention; marker-driven generation; envtest
+   integration. Preserved.
+2. **`ScrapeJob` is the only v1alpha1 CRD.** `ScrapeFleet` /
+   `ScrapeSchedule` build on top of `ScrapeJob`. Preserved; the CRD
+   evolves to v1alpha2 in R3.2 with breaking-change semantics.
+3. **~~Subprocess-in-operator-pod execution.~~** Superseded by
+   ADR-0020 §3. The single-Pod, three-nested-process model
+   (operator → engine → adapter) is replaced by service-per-component:
+   the engine is a gRPC service the operator dials, adapters are
+   gRPC services the engine dials.
 4. **Phase as state-machine source of truth.** `Status.Conditions`
    is diagnostic, not authoritative. `kubectl wait` works against
-   `.status.phase`.
-5. **`JobRunner` interface as the engine seam.** PR14's `StubRunner`
-   and PR15's `SubprocessRunner` share one signature. The reconciler
-   is unaware of either implementation.
-6. **`outputSink` accepts only `"stdout"` in v1alpha1.** The schema
-   is forward-compatible with `s3://`, `pvc://`, `webhook://`,
-   `kafka://`; the reconciler implements them in v1alpha2+.
+   `.status.phase`. Preserved.
+5. **`JobRunner` interface as the engine seam.** Preserved and
+   vindicated through three implementations: PR14's `StubRunner`,
+   PR15's `SubprocessRunner` (retired R3.1), and R3.1's
+   `EngineClientRunner`. The reconciler is unaware of which
+   implementation is wired.
+6. **`outputSink` accepts only `"stdout"` in v1alpha1.** Preserved
+   as a CRD-schema commitment. The runtime grows S3, webhook, and
+   Kafka sinks under ADR-0024 in R5.
 
 ## What is not implemented yet
 
-These deferrals are intentional and have PR pointers:
+These deferrals are intentional and have phase pointers:
 
-- **Output sinks beyond stdout.** `s3://`, `pvc://`, `webhook://`,
+- **Output sinks beyond stdout.** `s3://`, `webhook://`,
   `kafka://` are valid `OutputSink` strings at the schema level but
-  the reconciler rejects them with an explicit error. PR19+ adds
-  per-sink support.
+  the reconciler rejects them with an explicit error. R5 adds
+  per-sink support under ADR-0024.
 - **Per-job resource isolation.** `Spec.Resources` is recorded but
-  not enforced; v1alpha1's single-Pod execution model cannot impose
-  OS-level limits on individual jobs.
-- **Concurrent reconciliation.** PR14 uses controller-runtime's
-  default `MaxConcurrentReconciles=1`. Phase 3 follow-ups will tune
-  this once real execution lands.
+  not enforced; the operator does not project the field onto a
+  per-job Pod. v1alpha2 may add an opt-in `Mode: Pod` per ADR-0019
+  §3's escape hatch.
+- **Concurrent reconciliation.** Controller-runtime's default
+  `MaxConcurrentReconciles=1` carries forward. Phase 4 may tune
+  this once Postgres-backed job state (R4.2) is in.
+- **CRD evolution.** R3.2 lands `ScrapeJob` v1alpha2 with breaking
+  changes (no conversion webhook — there are no production users
+  to migrate per ADR-0020 §3 / ADR-0023).
 - **Fan-out and scheduling.** `ScrapeFleet` (parallel jobs over a
   parameter list) and `ScrapeSchedule` (cron-like recurrence) are
-  PR19+ work. Both build on `ScrapeJob` semantics.
-- **Helm chart.** `helm/spectre-control-plane/` is PR19+.
+  post-Phase-3 work. Both build on `ScrapeJob` semantics.
+- **Helm chart.** `helm/spectre-control-plane/` is R7.1 (ADR-0026).
 - **Webhook validators.** Beyond `+kubebuilder:validation` markers
-  on the CRD, validating/mutating webhooks are PR19+.
+  on the CRD, validating/mutating webhooks are post-Phase-3.
 - **Observability.** Prometheus metrics, OpenTelemetry traces, and
   structured logs beyond controller-runtime's defaults are
-  Phase 3 follow-up.
+  post-Phase-3 follow-up.
 
 ## Where to start contributing
 
 - **Read [ADR-0019](../adr/0019-control-plane-architecture-and-scrapejob-crd.md)
-  end-to-end.** Six pages; one decision per axis.
+  and [ADR-0020](../adr/0020-microservices-architecture-supersession.md)
+  end-to-end.** ADR-0019 records the original Phase 3 decisions;
+  ADR-0020 supersedes the execution model.
 - **Run `just op-test`.** envtest's first run pulls binaries; expect
   ~2 minutes the first time.
 - **Read the reconciler at
   [`internal/controller/scrapejob_controller.go`](../../core/control-plane/internal/controller/scrapejob_controller.go).**
   It is a ~130-line `switch` over phases; the `runner.JobRunner`
-  call site at the Running case is what PR15 wired to a real engine.
-- **For PR19+ (ScrapeFleet, ScrapeSchedule, Helm chart):** with
-  v1alpha1 adapter bundling closed in PR18, the next concrete
-  Phase 3 tasks live above the per-Pod execution model.
-  `ScrapeFleet` (fan-out over a parameter list) and
-  `ScrapeSchedule` (cron-like recurrence) build on the existing
-  `ScrapeJob` semantics — see ADR-0019 §2 for the v1alpha2 escape
-  hatches that survived PR18. The Helm chart at
-  `helm/spectre-control-plane/` packages the operator image
-  bundled today (~1.95 GB on disk) plus the CRD and RBAC under
-  one `helm install`.
+  call site at the Running case is wired to `EngineClientRunner`
+  in production (R3.1) and `StubRunner` in envtest. The reconciler
+  itself does not change between the two.
+- **Read `EngineClientRunner` at
+  [`internal/runner/engine_client.go`](../../core/control-plane/internal/runner/engine_client.go).**
+  ~140 lines of gRPC stream consumption; the bufconn-based
+  test suite next to it covers the success / failure /
+  cancellation / dial-error / writer-error branches.
+- **For follow-up phases:** R3.2 evolves the CRD to v1alpha2; R4
+  adds Postgres / Redis / Kafka per ADR-0023; R5 adds output
+  sinks per ADR-0024; R6.2 brings up the Compose stack as the
+  canonical local-dev loop; R7.1 packages everything as a Helm
+  chart per ADR-0026.

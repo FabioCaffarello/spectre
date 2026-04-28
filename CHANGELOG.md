@@ -55,16 +55,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/architecture/engine.md` describing the service contract,
   discovery model, health-check registration, CLI-retirement
   rationale, and v1alpha1 statelessness invariant.
+- Control plane is now a thin gRPC client of the engine service
+  (R3.1, ADR-0020 §5). The new
+  `core/control-plane/internal/runner/engine_client.go` implements
+  the `JobRunner` interface by dialling
+  `spectre.engine.v1alpha1.Engine.RunJob` per invocation and
+  forwarding every `Row.json_line` event into the supplied
+  writer. ADR-0019 §5's interface seam is vindicated at the
+  second substitution: three implementations (`StubRunner`,
+  `SubprocessRunner`, `EngineClientRunner`) share one signature
+  and the reconciler is unaware of which is wired. The R2.3 → R3.1
+  transitional window (operator broken at runtime) closes here.
+- Operator startup honours `--engine-endpoint=<host:port>` and
+  `SPECTRE_ENGINE_ENDPOINT` (default `127.0.0.1:9090`) — Compose
+  (R6.2) and Helm (R7.1) renderings will inject the service-
+  network address. Plain-text gRPC for v1alpha1 per ADR-0022 §6;
+  TLS / mTLS deferred to v1alpha2.
 
 ### Changed
 
 - ADR-0008 (UDS transport), ADR-0009 (session lifecycle),
   ADR-0019 (subprocess-in-pod) carry "Update (R1.1, ADR-0020)"
-  notes recording per-section supersession. ADR-0013 (CLI as
-  engine binary) is superseded in full. ADR-0012 (engine DSL +
-  execution pipeline) carries an "Update (R2.3, ADR-0020)" note
-  recording the launcher-contract supersession; §§1-3, 5, 6 are
-  preserved unchanged. The ADR index reflects these changes.
+  notes recording per-section supersession. ADR-0019 §5
+  (`JobRunner` interface) gains an "Update (R3.1, vindication)"
+  addendum recording the seam's stability across three
+  implementations. ADR-0013 (CLI as engine binary) is superseded
+  in full. ADR-0012 (engine DSL + execution pipeline) carries an
+  "Update (R2.3, ADR-0020)" note recording the launcher-contract
+  supersession; §§1-3, 5, 6 are preserved unchanged. The ADR
+  index reflects these changes.
 - Adapter transport for all three reference adapters (Playwright,
   SeleniumBase, curl-impersonate) and the conformance harness
   switched from Unix-domain-socket gRPC to TCP gRPC (R2.2,
@@ -149,3 +168,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/seleniumbase-navigate/` and
   `examples/curl-impersonate-fetch/` (R2.3) — navigate-only CLI
   demos; the `*-extract` siblings cover the same adapters.
+- `core/control-plane/internal/runner/subprocess.go` (R3.1) —
+  shelled out to the engine's retired `spectre run` CLI surface
+  and bundled the JSONL scanner. `EngineClientRunner` replaces
+  it with a gRPC stream consumer; `subprocess_test.go` and the
+  `testdata/fake_spectre.go` fixture binary go with it.
+- The operator image's bundled engine binary
+  (`/usr/local/bin/spectre`) and three adapter trees
+  (`/opt/spectre/adapters/{playwright,seleniumbase,curl-impersonate}/`)
+  retire with the bundled-image execution model (R3.1). The
+  Microsoft Playwright runtime base, the apt overlay for Google
+  Chrome + ChromeDriver, the curl-impersonate release tarball
+  download, and the per-adapter builder stages are gone. The new
+  image is a Go static binary on
+  `gcr.io/distroless/static:nonroot` (~50 MB on disk).
+- `core/control-plane/hack/smoke-kind.sh` and the gated
+  `operator-smoke-kind` CI job (R3.1) — drove the bundled-image
+  in-cluster smoke. The multi-service end-to-end smoke returns
+  with the Compose stack (R6.2) and the Helm production smoke
+  (R7.2).
