@@ -2,24 +2,29 @@
 
 //! Spectre engine core.
 //!
-//! This crate hosts the DSL parser, the planner, the gRPC client, and
-//! the executor that together compile a `job.yaml` into a sequence of
-//! Driver Protocol RPCs against a launched adapter subprocess.
+//! This crate hosts the DSL parser, the planner, the gRPC client,
+//! the executor, and the gRPC server that together compile a
+//! `job.yaml` into a sequence of Driver Protocol RPCs against a
+//! running adapter service.
 //!
 //! ```text
 //! YAML  ─►  Job  ─►  Plan  ─►  RPC sequence  ─►  JSONL rows
-//!          [dsl]   [plan]    [client + executor]   [output]
+//!          [dsl]   [plan]    [client + executor]   [output sink]
 //! ```
 //!
-//! The crate is `v0.1.0-alpha.0`. The protocol is `v1alpha1` — frozen
-//! and unstable; see ADR-0004 and ADR-0012.
+//! The crate is `v0.1.0-alpha.0`. The driver protocol is
+//! `spectre.driver.v1alpha1` (frozen) and the internal engine
+//! protocol is `spectre.engine.v1alpha1` (unstable). See ADR-0004
+//! and ADR-0012.
 //!
 //! Public entry points:
 //!
-//! - [`Engine::run_job`] — parse, plan, launch, execute, return the
-//!   total number of rows written.
+//! - [`Engine::run_plan_with_sink`] — resolve driver, dial the
+//!   adapter, drive the executor against the supplied sink. Used by
+//!   [`server::EngineServiceImpl`] to back the streaming `RunJob`
+//!   RPC.
 //! - [`Job::from_yaml`] — parse and validate a YAML job in isolation
-//!   (no driver launch). Useful for editors and validators.
+//!   (no driver dial). Useful for editors and validators.
 //! - [`plan::plan`] — turn a validated [`Job`] into a [`Plan`]
 //!   without running it.
 //!
@@ -59,6 +64,7 @@ pub mod executor;
 pub mod output;
 pub mod plan;
 pub mod registry;
+pub mod server;
 
 mod engine;
 

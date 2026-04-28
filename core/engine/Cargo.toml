@@ -57,9 +57,11 @@ anyhow = "1"
 # RUST_LOG always wins; WARN otherwise.
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
-# URL validation in DSL parsing; structured logs.
+# URL validation in DSL parsing; structured logs; correlation-id
+# generation for `RunJob` requests that arrive without one set.
 url = "2"
 tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 # tonic-build invokes prost-build at compile time to write the
