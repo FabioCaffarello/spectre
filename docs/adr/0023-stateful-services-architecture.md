@@ -817,3 +817,83 @@ integration tests have a stable target. R6.2 implements the
 `docker-compose.yml`; R8.1's documentation refresh will narrate
 the stack from the operator's perspective.
 
+## §10 — Production deployment
+
+R7.1's Helm chart packages the stateful services as managed
+subcharts. The full chart design lives in ADR-0026 (R7.1
+territory); this section commits the stateful-service slice
+that ADR-0023 binds.
+
+### Subcharts
+
+- **Postgres**: Bitnami's `postgresql` chart, pinned by
+  major version. The chart materialises a StatefulSet, a
+  PersistentVolumeClaim, the Service, and the Secret holding
+  the connection password. Helm values let the operator
+  size storage, configure replication for HA, or disable the
+  subchart entirely (`postgresql.enabled: false`) when
+  bringing an external Postgres.
+- **Kafka**: Two options, both viable, decision deferred to
+  R7.1's prompt. The Bitnami `kafka` chart materialises a
+  Kafka StatefulSet directly — simpler for operators who
+  already use Bitnami subcharts everywhere. The Strimzi
+  operator pattern (a `Kafka` CRD reconciled into pods)
+  composes better with the rest of Spectre's operator-based
+  architecture and is the path real production Kafka
+  deployments increasingly take. R7.1 picks one with that
+  prompt's full context; ADR-0023 records that both are on
+  the table and that the Helm-values shape (`kafka.enabled`,
+  external-broker fallback) does not depend on which one is
+  picked.
+- **Redis**: Bitnami's `redis` chart. Materialises a
+  StatefulSet (or master-replica pair under HA values), the
+  Service, the Secret. Helm values cover the same
+  `redis.enabled` toggle for operators bringing an external
+  Redis.
+
+### External service support
+
+Every subchart carries an `enabled: false` Helm value. When
+disabled, the chart materialises only the Spectre application
+services and reads connection URLs from the operator-supplied
+configuration:
+
+- `postgresql.enabled: false` requires the operator to set
+  `spectre.postgres.url` in Helm values; the rendered engine
+  Deployment carries `SPECTRE_POSTGRES_URL` from a Secret
+  reference (`valueFrom.secretKeyRef`).
+- `kafka.enabled: false` requires the operator to set
+  `spectre.kafka.brokers`. ScrapeJobs that select
+  `OutputSink.Kafka` write to those brokers; if neither
+  subchart nor external broker is configured, admission
+  rejects new Kafka sinks per §6.
+- `redis.enabled: false` requires the operator to set
+  `spectre.redis.url`. The rendered adapter Deployments
+  carry `SPECTRE_REDIS_URL` from the Secret.
+
+The toggle pattern lets a self-hosted operator bring their
+own managed services (cloud-managed Postgres / Redis / Kafka,
+in-house deployments) without forking the chart. Production
+operators routinely run their stateful services centrally; the
+chart respects that operational pattern.
+
+### Credential handling
+
+The connection URLs embed credentials. Production deployments
+must not hard-code credentials in `values.yaml`; the chart
+references Kubernetes Secrets via `valueFrom.secretKeyRef` for
+every URL. R7.1's chart README documents the Secret shapes the
+operator must pre-create (or, for the bundled subcharts, the
+chart materialises the Secrets on install). The §12
+configuration model is pass-through; Helm just populates the
+env vars.
+
+### Storage and backups
+
+Out of scope for ADR-0023. The Helm chart's PersistentVolumeClaim
+sizing, the backup story for Postgres, and the Kafka retention
+configuration belong in ADR-0026 / R7.1's prompt. ADR-0023's
+commitment is to the *deployment shape* (subchart-or-external,
+configurable via Helm values, credentials in Secrets); the
+operational specifics are R7.1's call.
+
