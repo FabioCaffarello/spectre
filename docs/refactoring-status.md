@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-28
-Current phase: **R4.2 — PostgreSQL integration end-to-end (complete on merge of this PR, 2026-04-28)**
-Next PR: **R4.3 — Redis for adapter session cache**
+Current phase: **R4.3 — Redis for adapter session cache (complete on merge of this PR, 2026-04-28)**
+Next PR: **R4.4 — Kafka producer (engine → topic)**
 
 ## Phases
 
@@ -26,9 +26,9 @@ for the per-phase ADR deltas.
 - [x] **R3.1 — `EngineClientRunner` replaces `SubprocessRunner`** *(merged 2026-04-27)*
 - [x] **R3.2 — `ScrapeJob` CRD v1alpha2 (breaking change, no conversion webhook)** *(merged 2026-04-28)*
 - [x] **R4.1 — ADR-0023 stateful services architecture** *(merged 2026-04-28)*
-- [x] **R4.2 — PostgreSQL integration end-to-end** *(complete on merge of this PR, 2026-04-28)*
-- [ ] **R4.3 — Redis for adapter session cache** *(next)*
-- [ ] R4.4 — Kafka producer (engine → topic)
+- [x] **R4.2 — PostgreSQL integration end-to-end** *(merged 2026-04-28, PR #61)*
+- [x] **R4.3 — Redis for adapter session cache** *(complete on merge of this PR, 2026-04-28)*
+- [ ] **R4.4 — Kafka producer (engine → topic)** *(next)*
 - [ ] R5.1 — ADR-0024 output sinks (S3 + webhook + Kafka)
 - [ ] R6.1 — Per-service Dockerfiles (engine, control plane, three adapters)
 - [ ] R6.2 — ADR-0025 Compose stack (six services + three stateful deps)
@@ -37,33 +37,29 @@ for the per-phase ADR deltas.
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R4.2)
+## Current PR checklist (R4.3)
 
-The R4.2 PR's per-step checklist mirrors Section 7 of the phase
-prompt. R4.2 is the first implementation PR of Phase R4: engine
-writes job state to Postgres, control plane reads for restart
-recovery, and a Compose stack at the repo root brings up
-postgres:16-alpine for local dev. Updated each session that
-lands work on this PR.
+The R4.3 PR's per-step checklist mirrors Section 7 of the phase
+prompt. R4.3 externalises adapter session metadata to Redis
+across all three reference adapters (Playwright, SeleniumBase,
+curl-impersonate) and materialises the §5 restart-invalidation
+contract via the `adapter_instance_id` mechanism. The most
+operationally risky PR of the refactor; per-adapter commits
+provide stable resumption points.
 
-- [x] Step 0 — Skipped: repo's go 1.25.3 pin in core/control-plane/go.mod is deliberate (commit 9168b32, controller-runtime v0.23.3 requires it). pgx/v5 v5.6.0+ supports Go 1.21+ so the toolchain bump is unnecessary for R4.2's stated goals.
-- [x] Step 1 — Inventory: R4.1 merge confirmed; ADR-0023 §2 / §13 read; engine + control-plane + proto current state mapped
-- [x] Step 2 — Engine migration file (`<timestamp>_initial_schema.sql` per ADR-0023 §13; both tables + indexes from §2)
-- [x] Step 3 — Engine `db` module: sqlx 0.8 with explicit features, Database wrapper, run_migrations, four typed query functions; .sqlx/ offline cache committed
-- [x] Step 4 — Engine startup wires Postgres dial + migrations before the gRPC service registers
-- [x] Step 5 — Engine RunJob persists state on every transition (insert_job → record_job_row per stdout row → mark_completed/mark_failed); 5 #[ignore] integration tests; new just engine-db-test recipe
-- [x] Step 6 — engine.proto RunJobRequest gains output_sink_kind (field 3, non-breaking)
-- [x] Step 7 + 8 — Control-plane pgx/v5 dependency + db package (Pool interface, Database wrapper, GetJob / CountJobRows, pgxmock unit tests)
-- [x] Step 9 — JobRunner evolves to accept jobID + outputSinkKind; StubRunner + EngineClientRunner + reconciler + tests update in lockstep
-- [x] Step 10 — Reconciler reads Postgres on Running phase entry for restart recovery; main.go wires db.FromEnv at startup; four pgxmock-driven envtest cases cover the recovery branches
-- [x] Step 11 — docker-compose.yml at repo root (postgres:16-alpine, healthchecked); .env.example; .gitignore (compose.override.yml); justfile compose-{up,down,logs,reset} recipes
-- [x] Step 12 — README quick-start replaced (the prior `just spectre-run` flow was retired in R2.3; new flow uses Compose + multi-process gRPC stack)
-- [x] Step 13 — docs/architecture/postgres.md: schema, migration discipline, connection lifecycle, unavailability semantics, local dev, tests
-- [x] Step 14 — ADR-0019 R4.2 addendum: §5 JobRunner evolution + §4 Running-phase recovery; ADR index updated
-- [x] Step 15 — This entry; CHANGELOG; refactor-audit R4.2 row
-- [x] Step 16 — Final verification: engine fmt + clippy + 46 unit tests + 5 db integration tests green; control-plane vet + golangci-lint + 22 envtest cases + db + runner tests green; proto lint green; Compose `postgres:16-alpine` healthy in under 10s; engine binary smokes cleanly against the Compose stack; capability invariant 13/12/6 preserved. Adapter lint/test, `just conf-test` (×3), and the kubectl end-to-end transcript deferred to maintainer review (this PR does not touch adapter source; full verification needs a fresh `just bootstrap` of the Node + Python toolchains and a local Kubernetes cluster)
-- [x] Step 17 — Open the PR (#61)
-- [x] Step 18 — Summary report
+- [x] Step 1 — Inventory: R4.2 merge confirmed; ADR-0023 §4/§5 + ADR-0010 read; per-adapter session managers + conformance harness mapped
+- [x] Step 2 — Compose stack extension: `redis:7-alpine` service with AOF + LRU eviction; `.env.example` extended with `SPECTRE_REDIS_URL` and the testing-only `SPECTRE_ADAPTER_INSTANCE_ID` knob (committed pre-step-3)
+- [x] Step 3 — Playwright adapter: `ioredis` + `ioredis-mock` deps; `redis.ts` wrapper; `SessionManager` accepts `RedisClient` + `instanceId`; `register` writes Redis, `validate` reads + refreshes TTL, `closeSession` best-effort deletes; `server.ts` gates non-Initialize RPCs on validate, throws `ConnectError(Code.Unavailable)` on instance mismatch / Redis errors; `index.ts` resolves env, PINGs Redis, exits non-zero on failure; 88 vitest cases green
+- [x] Step 4 — SeleniumBase adapter: `redis>=5.0` + `fakeredis>=2.0` (dev) deps; `redis_client.py` mirrors the TS shape; `SessionManager` mirrors the lifecycle integration; `server.py` gates each RPC via `_gate_session` and aborts with `grpc.StatusCode.UNAVAILABLE` on mismatch / Redis errors; `adapter.py` resolves env, PINGs Redis, exits non-zero on failure; 79 pytest cases green; mypy + ruff green
+- [x] Step 5 — curl-impersonate adapter: `go-redis/v9` + `redismock/v9` + `miniredis/v2` (test) deps; `internal/redis/redis.go` mirrors the TS / Python shape; `Manager` accepts `*redis.Client` + `instanceID`; `Validate` returns typed kinds; gRPC handlers use `gateSession` and return `status.Error(codes.Unavailable, ...)` on mismatch / Redis errors; `cmd/adapter/main.go` resolves env, PINGs Redis, exits non-zero on failure; all `go test ./...` green
+- [x] Step 6 — Conformance harness: `DriverHarness.instance_id_override` exports `SPECTRE_ADAPTER_INSTANCE_ID` into the spawned subprocess; `redis>=5.0` added to conformance deps for test-side verification; existing 56-test suite still passes (44 passed, 13 skipped — env-gated; unchanged from R4.2)
+- [x] Step 7 — Restart-invalidation conformance test: `tools/conformance/tests/test_session_restart_invalidation.py` with three tests (one per adapter) following Section 4.4 parallel-instances pattern; full suite three consecutive runs at 46 passed, 14 skipped (curl-impersonate test skips with the rest of the curl-impersonate suite when `curl_chrome116` is not on PATH locally)
+- [x] Step 8 — ADR-0023 §5 R4.3 addendum: `adapter_instance_id` mechanism, why hostname-based identification was rejected, per-RPC failure semantics, conformance test pattern; ADR index updated
+- [x] Step 9 — `docs/architecture/redis.md`: keyspace, lifecycle table per RPC, instance_id mechanism, restart-invalidation contract, local-dev + production deployment notes
+- [x] Step 10 — This entry; CHANGELOG; refactor-audit R4.3 row
+- [ ] Step 11 — Final verification: `just check`; full conformance ×3; manual end-to-end transcript with grpcurl restart-invalidation
+- [ ] Step 12 — Open the PR
+- [ ] Step 13 — Summary report
 
 ## Surfaced decisions
 

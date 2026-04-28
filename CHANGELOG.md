@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Redis adapter session externalization with restart
+  invalidation (R4.3).** ADR-0023 §4's keyspace lands across all
+  three reference adapters: each adapter writes session metadata
+  to `session:<adapter>:<session_id>` at `Initialize` with a
+  1-hour idle TTL refreshed on every successful non-Initialize
+  RPC. Each adapter process generates a UUID at startup
+  (overridable via `SPECTRE_ADAPTER_INSTANCE_ID` for the
+  conformance suite only) and stamps it on the metadata
+  document; non-Initialize RPCs read the metadata, compare the
+  stored `adapter_instance_id` against the live process value,
+  and surface foreign-instance sessions as gRPC `UNAVAILABLE`
+  with the message _"session belongs to a different adapter
+  instance; client must re-Initialize"_ — the §5
+  restart-invalidation contract documented in the new ADR-0023
+  §5 R4.3 addendum. `Initialize` awaits the Redis write before
+  responding so the local registry never drifts ahead of Redis;
+  `Close` validates first, then evicts locally and best-effort
+  deletes the Redis key (TTL is the safety net per phase prompt
+  §4.6). Per-language libraries: Playwright uses
+  `ioredis` + `ioredis-mock`; SeleniumBase uses `redis>=5.0` +
+  `fakeredis`; curl-impersonate uses `go-redis/v9` +
+  `redismock/v9` + `miniredis/v2`. Each adapter PINGs Redis at
+  startup and exits non-zero when unreachable (ADR-0023 §6 —
+  Redis required). The Compose stack gains `redis:7-alpine`
+  (AOF + LRU eviction); `.env.example` carries
+  `SPECTRE_REDIS_URL`. Conformance suite gains
+  `tools/conformance/tests/test_session_restart_invalidation.py`
+  (one test per adapter) exercising the contract via parallel
+  adapter instances with distinct `instance_id_overrides`. The
+  13 / 12 / 6 capability invariant holds byte-for-byte. Engine
+  and control plane are unchanged operationally — ADR-0023 §7
+  reserves Redis access to adapters only.
 - **PostgreSQL integration end-to-end (R4.2).** ADR-0023 §2's
   schema lands as a versioned, immutable migration file in
   `core/engine/migrations/`. The engine gains an `sqlx`-backed
