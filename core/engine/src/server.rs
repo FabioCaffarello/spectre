@@ -38,6 +38,7 @@ use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::db::Database;
 use crate::dsl::Job;
 use crate::engine::Engine;
 use crate::engine_proto::engine_server::{Engine as EngineService, EngineServer};
@@ -51,23 +52,29 @@ use crate::output::OutputSink;
 /// Wraps the engine in an `Arc` (so the streaming task can hold it
 /// independently) and exposes the resulting `EngineServer` value.
 #[must_use]
-pub fn engine_server(engine: Engine) -> EngineServer<EngineServiceImpl> {
-    EngineServer::new(EngineServiceImpl::new(engine))
+pub fn engine_server(engine: Engine, db: Database) -> EngineServer<EngineServiceImpl> {
+    EngineServer::new(EngineServiceImpl::new(engine, db))
 }
 
 /// Implementation of `spectre.engine.v1alpha1.Engine`. Holds an
 /// [`Engine`] (cheap to clone — it carries an [`AdapterRegistry`]
-/// of strings) and serves every incoming `RunJob` against it.
+/// of strings) and a [`Database`] handle (cheap to clone — wraps a
+/// reference-counted `PgPool`); both are shared with the streaming
+/// task spawned per `RunJob`.
 pub struct EngineServiceImpl {
     engine: Arc<Engine>,
+    #[allow(dead_code)] // Wired in Step 4; consumed by RunJob in Step 5.
+    db: Database,
 }
 
 impl EngineServiceImpl {
-    /// Construct a service implementation wrapping `engine`.
+    /// Construct a service implementation wrapping `engine` and
+    /// holding a [`Database`] handle for ADR-0023 §2 persistence.
     #[must_use]
-    pub fn new(engine: Engine) -> Self {
+    pub fn new(engine: Engine, db: Database) -> Self {
         Self {
             engine: Arc::new(engine),
+            db,
         }
     }
 }
