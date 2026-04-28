@@ -14,6 +14,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   No code changes in this release; subsequent phase PRs (R2–R8)
   deliver the implementation. Live progress is tracked in
   [`docs/refactoring-status.md`](docs/refactoring-status.md).
+- [ADR-0023](docs/adr/0023-stateful-services-architecture.md)
+  records the stateful-services architecture for Phase R4
+  (R4.1, documentation-only). Three services land together:
+  PostgreSQL for job state and the audit `job_rows` table
+  (R4.2; engine-side `sqlx` and control-plane-side `pgx/v5`),
+  Kafka for the `OutputSink.Kafka` streaming surface (R4.4;
+  `rdkafka` producer publishing one message per JSONL row to
+  topic `spectre.rows.<workspace>`, partitioned by job UUID
+  with `job_id` / `row_index` / `driver` / `timestamp`
+  headers), Redis for adapter session metadata (R4.3; `ioredis`
+  / `redis-py` / `go-redis/v9` per language at the
+  `session:<adapter>:<session_id>` keyspace with a 1-hour idle
+  TTL). The ADR commits the deployment-shape matrix (Postgres
+  + Redis required everywhere, Kafka admission-gated when an
+  operator runs it), the env-var configuration convention
+  extending ADR-0021 §5 (`SPECTRE_POSTGRES_URL`,
+  `SPECTRE_KAFKA_BROKERS`, `SPECTRE_REDIS_URL`), the
+  per-service network topology, and the migration discipline
+  (sqlx forward-only versioned SQL applied at engine startup).
+  ADR-0023 §5 commits the *restart-invalidation* contract for
+  adapter sessions: clients hold session_ids only for the
+  lifetime of the adapter Pod that allocated them; sticky
+  sessions and warm recovery were evaluated and rejected.
 - Initial repository structure and foundational documents
 - Driver Protocol skeleton at v1alpha1
 - Skeleton implementations for three reference adapters

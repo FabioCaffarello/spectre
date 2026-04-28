@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-28
-Current phase: **R4.1 — ADR-0023 stateful services architecture**
-Next PR: **R4.1 — ADR-0023 stateful services architecture**
+Current phase: **R4.1 — ADR-0023 stateful services architecture (complete on merge of this PR, 2026-04-28)**
+Next PR: **R4.2 — PostgreSQL for control-plane job state**
 
 ## Phases
 
@@ -24,9 +24,9 @@ for the per-phase ADR deltas.
 - [x] **R2.2 — Adapter transport switch (UDS → TCP, all three adapters)** *(merged 2026-04-27, PR #29)*
 - [x] **R2.3 — Engine transport + gRPC server (UDS client → TCP client)** *(merged 2026-04-27, PR #30)*
 - [x] **R3.1 — `EngineClientRunner` replaces `SubprocessRunner`** *(merged 2026-04-27)*
-- [x] **R3.2 — `ScrapeJob` CRD v1alpha2 (breaking change, no conversion webhook)** *(complete on merge of this PR, 2026-04-28)*
-- [ ] **R4.1 — ADR-0023 stateful services architecture** *(next)*
-- [ ] R4.2 — PostgreSQL for control-plane job state
+- [x] **R3.2 — `ScrapeJob` CRD v1alpha2 (breaking change, no conversion webhook)** *(merged 2026-04-28)*
+- [x] **R4.1 — ADR-0023 stateful services architecture** *(complete on merge of this PR, 2026-04-28)*
+- [ ] **R4.2 — PostgreSQL for control-plane job state** *(next)*
 - [ ] R4.3 — Redis for adapter session cache
 - [ ] R4.4 — Kafka producer (engine → topic)
 - [ ] R5.1 — ADR-0024 output sinks (S3 + webhook + Kafka)
@@ -37,36 +37,44 @@ for the per-phase ADR deltas.
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R3.2)
+## Current PR checklist (R4.1)
 
-The R3.2 PR's per-step checklist mirrors Section 7 of the phase
-prompt. Updated each session that lands work on this PR.
+The R4.1 PR's per-step checklist mirrors Section 7 of the phase
+prompt. R4.1 is documentation-only — the deliverable is
+ADR-0023 (stateful services architecture) plus index updates.
+Updated each session that lands work on this PR.
 
-- [x] Step 1 — Inventory: confirm R3.1 merged, v1alpha1 types/reconciler reviewed, six decisions in Section 4 cross-checked
-- [x] Step 2 — Close R3.1 loose ends in status docs
-- [x] Step 3 — Create v1alpha2 API: `api/v1alpha2/{groupversion_info.go,scrapejob_types.go,zz_generated.deepcopy.go}` with EngineRef + OutputSink discriminated unions; `make manifests` + `make generate`
-- [x] Step 4 — CEL validation rules emitted in CRD YAML under `x-kubernetes-validations`
-- [x] Step 5 — Reconciler updated for v1alpha2: EngineRef resolution, OutputSink enforcement, `ResolvedEngineEndpoint` status, per-reconcile `EngineClientRunner` construction
-- [x] Step 6 — Reconciler tests updated: EngineRef resolution forms, OutputSink variants, `ResolvedEngineEndpoint` populated
-- [x] Step 7 — `cmd/main.go` passes `DefaultEngineEndpoint` instead of `Runner`; flag preserved as fallback
-- [x] Step 8 — Sample manifests rewritten under `_v1alpha2_*.yaml`; `_kafka_NOT_YET_IMPLEMENTED.yaml` documents the schema-ahead-of-functionality gap
-- [x] Step 9 — `api/v1alpha1/` deleted; `PROJECT` and `config/crd/kustomization.yaml` updated
-- [x] Step 10 — `docs/architecture/control-plane.md` rewritten for v1alpha2 with sink-status table and CEL explanation
-- [x] Step 11 — ADR-0019 R3.2 addendum recording v1alpha2 as the only registered version
-- [x] Step 12 — `docs/refactor-audit.md` R3.2 ticked; CHANGELOG Unreleased entry; this checklist
-- [x] Step 13 — Final verification: `just check` green; `just conf-test` × 3 (44 passed, 13 skipped, byte-for-byte stable); `make build` produces a 73 MB operator binary
-- [ ] Step 14 — Open the PR
-- [ ] Step 15 — Summary report
+- [x] Step 1 — Inventory: confirm R3.2 merged, v1alpha2 schema reviewed, thirteen decisions in Section 4 cross-checked
+- [x] Step 2 — Fix R4.1 status preamble
+- [x] Step 3 — Draft ADR-0023 §1 (Context and problem)
+- [x] Step 4 — Draft §2 (PostgreSQL)
+- [x] Step 5 — Draft §3 (Kafka)
+- [x] Step 6 — Draft §4 (Redis)
+- [x] Step 7 — Draft §5 (Session externalization — most consequential paragraph)
+- [x] Step 8 — Draft §6 (Required vs optional)
+- [x] Step 9 — Draft §7 (Network topology)
+- [x] Step 10 — Draft §8 (Library choices and pinning)
+- [x] Step 11 — Draft §9 (Compose stack composition)
+- [x] Step 12 — Draft §10 (Production deployment)
+- [x] Step 13 — Draft §11 (Migration order across phases)
+- [x] Step 14 — Draft §12 (Configuration via env vars)
+- [x] Step 15 — Draft §13 (Migrations and schema evolution)
+- [x] Step 16 — Update ADR index, refactor-audit, status, CHANGELOG; flip R4.1 → complete and R4.2 → next
+- [x] Step 17 — Final verification: only `.md` files in `git diff main...HEAD --stat`; `just check` green (44 conformance pass / 13 skip; 13/12/6 invariant intact); ADR length 647 lines (target 500-600 — substantive, §5 narrative preserved)
+- [x] Step 18 — Open the PR (#60)
+- [x] Step 19 — Summary report
 
 ## Surfaced decisions
 
 No open architectural questions awaiting maintainer input. The
-six decisions for R3.2 (v1alpha2 as the only registered version;
-Go discriminated union + CEL validation; EngineRef Service-or-
-Endpoint; schema-ahead-of-functionality for non-stdout sinks;
-per-reconcile `EngineClientRunner` construction; total v1alpha1
-sample deletion) are settled by master strategy + maintainer
-prior choices, recorded in the phase prompt's Section 4.
+thirteen decisions for R4.1 (three stateful services scoped
+together; Postgres / Kafka / Redis specifically; restart-
+invalidation contract for sessions; required-vs-optional
+deployment shape; library commitments per language; topic-per-
+workspace partitioned by job; normalised Postgres schema;
+per-service env-var configuration; migrations at engine
+startup) are settled by master strategy + maintainer prior
+choices, recorded in the phase prompt's Section 4.
 
 ## Known issues
 
