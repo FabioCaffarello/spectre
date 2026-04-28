@@ -671,3 +671,99 @@ a *new* dependency, not a replacement for the engine dial; the
 two paths coexist, with the engine dial driving execution and
 the Postgres dial serving status reads.
 
+## §8 — Library choices and pinning
+
+ADR-0023 commits to specific client libraries per language.
+The commitments close out the per-PR debate that R4.2 / R4.3 /
+R4.4 would otherwise reopen. Each library is the most
+production-tested, maintained option in its ecosystem at the
+time of writing; if new information surfaces during
+implementation, the response is a follow-up ADR, not a per-PR
+re-litigation.
+
+### Engine (Rust)
+
+- **Postgres**: `sqlx`. Compile-time-checked queries (`query!`
+  macros that read the database schema at build time), async-
+  first API on Tokio, no ORM machinery to learn around. The
+  alternative — `tokio-postgres` directly — is lower-level
+  with no compile-time check, and an ORM (`diesel`,
+  `sea-orm`) introduces an abstraction the engine does not
+  need.
+- **Kafka**: `rdkafka`. Wraps `librdkafka` via Rust FFI, which
+  in turn is the canonical Kafka client across the ecosystem
+  (used by the C / Python / Node clients downstream). The pure-
+  Rust alternatives (`rskafka`, `kafka-rust`) are less
+  exercised at production scale; the FFI cost of `rdkafka` is
+  paid once per process and the implementation maturity is
+  worth it.
+- **Redis**: not used engine-side (per §7). Listed here for
+  symmetry; the engine has no Redis dependency.
+
+### Control plane (Go)
+
+- **Postgres**: `pgx/v5`. The modern Go Postgres driver. Native
+  protocol support (no `database/sql` indirection unless
+  desired), connection pooling built in, prepared-statement
+  caching, JSONB-aware. The historical alternative `lib/pq` is
+  in maintenance mode — no new features, security fixes only —
+  and ADR-0023 §8 explicitly commits to `pgx/v5` so R4.2's
+  implementation does not reach for `lib/pq` by reflex.
+
+The control plane has no Kafka or Redis dependency; the only
+new dependency R4 introduces control-plane-side is `pgx/v5`.
+
+### Playwright adapter (Node / TypeScript)
+
+- **Redis**: `ioredis`. Mature, maintained, supports the
+  full Redis command surface, includes Cluster / Sentinel
+  support for v1alpha2 if Spectre's deployment shape evolves.
+  The alternative `node-redis` is also viable; `ioredis` is
+  selected for its slightly larger feature surface and
+  community familiarity.
+
+The Playwright adapter has no Postgres or Kafka dependency.
+
+### SeleniumBase adapter (Python)
+
+- **Redis**: `redis-py` (the official driver, package name
+  `redis`). Maintained by the Redis team itself; the de-facto
+  standard Python client. Async support via `redis.asyncio`
+  if SeleniumBase's adapter wrapper goes async; v1alpha1 of
+  the adapter is sync, so the sync API is the path R4.3 takes
+  initially.
+
+The SeleniumBase adapter has no Postgres or Kafka dependency.
+
+### curl-impersonate adapter (Go)
+
+- **Redis**: `go-redis/v9`. Mature Go Redis client; idiomatic
+  context-aware API. The alternative `redigo` is older and
+  less actively developed; `go-redis/v9` is selected.
+
+The curl-impersonate adapter has no Postgres or Kafka
+dependency.
+
+### Pinning discipline
+
+Each library lands at a specific minor version pinned in the
+respective dependency manifest at R4.2 / R4.3 / R4.4 time:
+
+- Engine: `Cargo.toml` `[dependencies]` block, pinned via
+  semver `~` operators on minor (e.g. `sqlx = "~0.8"`).
+- Control plane: `core/control-plane/go.mod`, pinned via the
+  Go module system.
+- Playwright: `adapters/playwright/package.json`, pinned via
+  `npm`'s `^` (caret-major).
+- SeleniumBase: `adapters/seleniumbase/pyproject.toml`,
+  pinned via PEP 440 `~=` (compatible-release).
+- curl-impersonate: `adapters/curl-impersonate/go.mod`,
+  pinned via the Go module system.
+
+The implementation PRs (R4.2 / R4.3 / R4.4) commit specific
+versions; this ADR commits the *libraries* and the *pinning
+discipline*, not the version numbers themselves. Library
+version bumps over the project's life are normal-course
+maintenance; library *replacements* require revisiting this
+section.
+
