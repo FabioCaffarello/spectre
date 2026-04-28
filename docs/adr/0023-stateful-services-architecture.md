@@ -272,3 +272,107 @@ the broker subchart. R5.1 (S3 + Webhook output sinks) consumes
 neither this topic nor this producer — those sinks have their
 own destinations — but does share the v1alpha2 schema's
 discriminated-union shape that R3.2 committed.
+
+## §4 — Redis
+
+Redis stores adapter session metadata. Each adapter — Playwright,
+SeleniumBase, curl-impersonate — already maintains a session
+table internally: a session_id (UUID) maps to a browser context
+or HTTP client object that holds cookies, the navigation
+history, and per-session generation counters used for stable-
+node tracking under ADR-0010 §3. R4.3 externalises the
+*metadata* layer of that table to Redis. The runtime objects
+(the browser process, the HTTP client) remain in the adapter
+process; the index that lets the adapter find them, and the
+metadata a future replacement adapter would need to know about
+their existence, lives in Redis.
+
+### Keyspace
+
+Two keys per session, namespaced by adapter:
+
+- `session:<adapter>:<session_id>` — JSON document holding
+  the session metadata: creation timestamp, current URL, cookie-
+  jar path on the adapter's local volume, generation counter,
+  and a stable-node map summary.
+- `session:<adapter>:<session_id>:ref` — last-access
+  timestamp. Updated on every session-bound RPC; used as the
+  signal for LRU-style eviction when an adapter approaches its
+  configured session-count ceiling.
+
+The `<adapter>` component is one of the three driver names —
+`playwright`, `seleniumbase`, `curl-impersonate` — matching
+the values in §3's Kafka headers and the Postgres `jobs.driver`
+column. The session_id is the same UUID the adapter returned to
+the client on `Initialize`, the same UUID the client carries on
+every subsequent RPC, and the same UUID the engine logs and the
+control plane records on `ResolvedEngineEndpoint` traces.
+
+### TTL
+
+The metadata key carries a 1-hour idle TTL. Each session-bound
+RPC refreshes the TTL via `EXPIRE` on both keys. A session
+unused for an hour falls out of Redis and the adapter
+invalidates the in-memory runtime object on its next eviction
+sweep. The TTL is configurable per environment via Helm values
+(R7.1) but the default value bounds the project's documented
+contract: clients must not assume a session_id is live after
+an hour of inactivity.
+
+### Atomicity
+
+Writes are PUT-style overwrites. The full session-metadata
+document is rewritten atomically on each update via `SET`; no
+field-level updates, no `HSET` partial mutation, no Redis
+transactions. The atomic write boundary is one document. The
+choice keeps the failure model simple — either the document is
+written or it is not, and a reader on the other side never sees
+a half-mutated session.
+
+For the `:ref` timestamp key, a separate `SET` follows the
+metadata write. The two keys can momentarily disagree (the
+metadata advances before its `:ref`), but the disagreement is
+not load-bearing — `:ref` is an eviction hint, not a correctness
+input — and the cost of a Redis transaction (MULTI/EXEC, with
+its block-on-server-response cost) outweighs the benefit.
+
+### Library matrix
+
+Three adapters in three languages need three Redis clients.
+Each language picks the most production-tested client in its
+ecosystem:
+
+- Playwright (Node/TypeScript): `ioredis`
+- SeleniumBase (Python): `redis-py` (the official driver)
+- curl-impersonate (Go): `go-redis/v9`
+
+Engine and control plane do not connect to Redis at all; only
+the adapters do. The full library matrix lives in §8.
+
+### Alternatives considered
+
+- **PostgreSQL session table.** Putting session metadata into
+  the same Postgres database that holds job state sounds
+  appealing for operational simplicity (one stateful service
+  fewer). It fails on access pattern. Adapters update session
+  metadata on every RPC — every navigation, every screenshot,
+  every `Find`/`Click` cycle. Postgres's per-statement parser
+  / planner overhead makes it the wrong tool for sub-millisecond
+  metadata writes; Redis is purpose-built for this exact load.
+  The architectural cost of running both services is real, and
+  ADR §6's required-vs-optional matrix records it.
+- **Adapter-local file storage.** Writing session metadata to
+  a per-Pod volume technically survives Pod restart on the same
+  node, but loses the session on Pod reschedule (the standard
+  Kubernetes failure mode), loses the session on Compose
+  `down`/`up`, and does not solve the problem ADR §5 articulates.
+  File storage is a half-solution that hides the choice.
+- **In-memory only (status quo).** What every adapter does
+  today. No Redis dependency, no operational service to run.
+  And no recovery semantics — every Pod restart loses every
+  session. R4.3 changes this; the architectural commitment in
+  §5 makes the change explicit.
+
+Redis is the answer. R4.3 wires the adapter clients per the §8
+library matrix; R7.1 packages the Bitnami Redis subchart.
+
