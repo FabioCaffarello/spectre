@@ -45,7 +45,7 @@ A decision moves through three states:
 | 0020  | [Microservices architecture supersession](0020-microservices-architecture-supersession.md) | accepted |
 | 0021  | [Service discovery](0021-service-discovery.md)                                | accepted |
 | 0022  | [TCP / gRPC transport](0022-tcp-grpc-transport.md)                            | accepted (supersedes ADR-0008 §2) |
-| 0023  | [Stateful services architecture](0023-stateful-services-architecture.md)      | accepted |
+| 0023  | [Stateful services architecture](0023-stateful-services-architecture.md)      | accepted (§5 gains R4.3 addendum on `adapter_instance_id`) |
 
 ## When to write an ADR
 

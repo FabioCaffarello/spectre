@@ -323,6 +323,127 @@ revisit if real users run longer-lived sessions whose restart
 cost is operationally significant; v1alpha1 commits to the
 honest contract.
 
+### Update (R4.3) — restart invalidation mechanism
+
+R4.3 implements restart invalidation across all three adapters
+via the `adapter_instance_id` mechanism:
+
+- Each adapter generates a fresh UUID at process startup
+  (overridable via `SPECTRE_ADAPTER_INSTANCE_ID` for
+  conformance testing only — production deployments must leave
+  the env var unset).
+- The session metadata stored in Redis under
+  `session:<adapter>:<session_id>` includes this UUID under
+  the `adapter_instance_id` field at write time
+  (`Initialize`).
+- Every non-Initialize RPC reads the session metadata,
+  compares the stored `adapter_instance_id` against the
+  adapter's current value, and returns gRPC `UNAVAILABLE`
+  with the message _"session belongs to a different adapter
+  instance; client must re-Initialize"_ on mismatch. Each
+  adapter implements the same mapping in its native gRPC
+  framework (Connect's `Code.Unavailable` for Playwright,
+  `grpc.StatusCode.UNAVAILABLE` for SeleniumBase,
+  `codes.Unavailable` for curl-impersonate); all three resolve
+  to the same wire status.
+
+The mechanism works in both Kubernetes and Compose:
+
+- **Kubernetes:** Pod restart = new process = new UUID. The
+  prior Pod's sessions become foreign-instance to the new
+  Pod; clients see `UNAVAILABLE` and re-Initialize.
+- **Compose:** `docker compose restart` = new process = new
+  UUID, even though container hostname unchanged. This is why
+  hostname-based identification was rejected — Compose
+  containers may share hostname across restart, breaking the
+  contract for the dev surface.
+
+A process-startup UUID is the only mechanism that works
+identically across both deployment shapes without depending on
+orchestrator-specific identity (Pod names, container IDs,
+etc.). The §5 R4.3 addendum is therefore irreducibly tied to
+the local process — never persisted, never derived from
+external state.
+
+#### Failure semantics on Initialize
+
+`Initialize` writes the session document to Redis before
+responding. The order is:
+
+1. Generate `session_id` (UUIDv4).
+2. (Adapter-specific) prepare any per-session local state —
+   for Playwright/SeleniumBase the browser launch is lazy so
+   this is a no-op; for curl-impersonate the cookie-jar path
+   is reserved.
+3. Write `session:<adapter>:<session_id>` with the current
+   `adapter_instance_id` and a 1-hour TTL.
+4. Return `InitializeResponse{session_id, capabilities}`.
+
+If step 3 fails (Redis unreachable mid-Initialize), the
+adapter returns gRPC `UNAVAILABLE` and never updates its local
+registry — a retry produces a fresh `session_id` rather than
+the appearance of a registered-but-not-stored session. Step 2
+state, where it exists, is torn down before responding.
+
+#### Failure semantics on Close
+
+Per phase prompt §4.6, `Close`'s Redis delete is best-effort:
+
+1. Validate against Redis. On `different-instance` →
+   `UNAVAILABLE`. On `unknown` → `INVALID_ARGUMENT`. On `ok`
+   continue.
+2. Delete `session:<adapter>:<session_id>` from Redis. Log on
+   failure but do not fail the RPC — the 1-hour TTL is the
+   safety net.
+3. Tear down local per-session state.
+4. Return `CloseResponse`.
+
+#### TTL refresh
+
+Every successful non-Initialize RPC refreshes
+`last_active_at` and the TTL via a SET-with-EX round-trip.
+The race window between read and write is acceptable per
+phase prompt §4.5 (last-write-wins; the worst case is a
+session expiring shortly after recent activity, which surfaces
+as `UNAVAILABLE` / `INVALID_ARGUMENT` and a re-Initialize). A
+v1alpha2 revisit may move the refresh into a Lua script if
+real workloads expose the race.
+
+#### Conformance test pattern
+
+The `tools/conformance/tests/test_session_restart_invalidation.py`
+suite exercises the contract for each adapter via parallel
+adapter instances rather than an actual restart:
+
+1. Start adapter A with `instance_id_override=instance-aaaa`
+   and adapter B with `instance_id_override=instance-bbbb`.
+2. `Initialize` a session via A. Verify Redis has the
+   metadata document with `adapter_instance_id=instance-aaaa`.
+3. Dial B with A's `session_id` and call `Navigate`. Assert
+   `grpc.StatusCode.UNAVAILABLE` with `"different adapter
+   instance"` in the details.
+
+Why parallel instances over actual restart:
+
+- The mechanism we test (instance_id comparison) is the same
+  on both paths — restart equals "new process with new
+  instance_id", which parallel instances simulate exactly.
+- Parallel instances are deterministic — no timing dependency
+  on process termination + Redis observation.
+- Test teardown is one harness exit each rather than a stop +
+  restart sequence.
+
+The harness extension (`DriverHarness.instance_id_override`)
+is the only test-only API; production adapters read
+`SPECTRE_ADAPTER_INSTANCE_ID` from the same env-resolution
+code path the test uses (the env var is the override). The
+conformance test therefore exercises the same code path real
+restart would.
+
+See `docs/architecture/redis.md` for the full lifecycle
+documentation and ADR-0023 §4 for the keyspace + value schema
+this addendum builds on.
+
 ## §6 — Required vs optional
 
 | Service   | Production | Dev (Compose) | Rationale |
