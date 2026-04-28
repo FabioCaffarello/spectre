@@ -114,7 +114,7 @@ impl Engine {
 
         let handle: DriverHandle =
             launch_driver(&plan.driver, &self.adapters_path, DEFAULT_READY_TIMEOUT).await?;
-        let client = Client::dial(handle.socket_path()).await?;
+        let client = Client::dial(&handle.socket_path().to_string_lossy()).await?;
 
         let outcome = Executor::run(&plan, &client, sink.as_mut()).await;
         handle.shutdown().await;
