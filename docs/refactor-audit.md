@@ -195,6 +195,52 @@ audit demonstrates the choice to defer is conscious.
 | `docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md` | R3.2 addendum recording v1alpha2 as the only registered version; §1, §2, §4 carry forward; §3 was already superseded by ADR-0020; §5 (`JobRunner`) preserved (vindicated R3.1); §6 (OutputSink stdout-only commitment) honoured at the runtime level — Kafka / S3 / Webhook reject at admission. |
 | `CHANGELOG.md` | Unreleased entry recording the breaking schema change and the schema-ahead-of-functionality deferral for Kafka / S3 / Webhook. |
 
+## R4.1 — ADR-0023 stateful services architecture
+
+> **Status (R4.1 complete):** ADR-0023 is the architectural
+> reference for Phase R4. Documentation-only PR; zero source
+> code changes (acceptance criterion 7 — `git diff main...HEAD
+> --stat` shows only `.md` files). The ADR commits the three
+> stateful services Spectre depends on from Phase R4 onward
+> (PostgreSQL for job state and audit, Kafka for streaming
+> output rows, Redis for adapter session metadata), the
+> required-vs-optional deployment matrix (Postgres + Redis
+> always; Kafka admission-gated), the §5 restart-invalidation
+> contract for adapter sessions, the per-language library
+> commitments (sqlx + rdkafka engine-side; pgx/v5 control-
+> plane-side; ioredis / redis-py / go-redis/v9 adapter-side),
+> and the env-var configuration convention extending ADR-0021
+> §5. R4.2 / R4.3 / R4.4 implement against this architecture
+> without re-debating its foundations.
+
+### `docs/adr/`
+
+| File | Change |
+|------|--------|
+| `0023-stateful-services-architecture.md` | Created. Thirteen sections (§1 context · §2 PostgreSQL · §3 Kafka · §4 Redis · §5 session externalization · §6 required vs optional · §7 network topology · §8 library choices · §9 Compose stack · §10 production deployment · §11 migration order · §12 configuration · §13 migrations) plus More Information cross-references to ADR-0010 / ADR-0017 / ADR-0019 §6 / ADR-0020 / ADR-0021 §5 / ADR-0022. |
+| `README.md` | ADR-0023 row added under index. |
+
+### Cross-cutting
+
+| File | Change |
+|------|--------|
+| `docs/refactor-audit.md` | This R4.1 section added; R4.2 / R4.3 / R4.4 cross-references below point at ADR-0023 sections. |
+| `docs/refactoring-status.md` | R4.1 → complete; R4.2 → next; PR checklist mirrors phase prompt Section 7. |
+| `CHANGELOG.md` | Unreleased entry recording the architectural commitment and the deferred-implementation phasing. |
+
+### R4.2 / R4.3 / R4.4 — implementation cross-references
+
+These rows are forward-looking. R4.2 / R4.3 / R4.4 will land
+the corresponding source-code changes; the audit rows are
+recorded here so reviewers of those PRs can confirm the
+implementation tracks ADR-0023.
+
+| PR | Surface | ADR-0023 reference |
+|----|---------|---------------------|
+| R4.2 | Engine `core/engine/migrations/` (sqlx versioned SQL files); engine Postgres write path; control-plane `pgx/v5` read path for `Status`; `SPECTRE_POSTGRES_URL` env var added to engine + operator Deployments; Helm subchart wiring for Bitnami Postgres. | §2 (schema) · §8 (library) · §11 (R4.2 first, smallest blast radius) · §12 (env var) · §13 (migration discipline) |
+| R4.3 | Adapter Redis clients (`ioredis` / `redis-py` / `go-redis/v9`); `session:<adapter>:<session_id>` keyspace + `:ref` LRU sibling; 1-hour idle TTL; PUT-style overwrite atomicity; adapter startup validates `SPECTRE_REDIS_URL` and refuses to serve when unavailable; conformance suite preserves the 13 / 12 / 6 capability invariant byte-for-byte through the switch. | §4 (keyspace) · §5 (restart-invalidation contract — most consequential) · §8 (library) · §11 (R4.3 second, highest-risk PR) · §12 (env var) |
+| R4.4 | Engine `rdkafka` producer; topic `spectre.rows.<workspace>` with default workspace `default`; 8-partition default keyed by job UUID; one-message-per-row with `job_id` / `row_index` / `driver` / `timestamp` headers; reconciler removes the "kafka output sink not yet implemented" admission rejection so the v1alpha2 schema's `OutputSink.Kafka` becomes a runnable variant; admission gate falls back to "kafka not available" when broker is unreachable at engine startup. | §3 (topic / partitioning / message shape) · §6 (Kafka admission-gated) · §8 (library) · §11 (R4.4 last, depends on R4.2's `jobs` table) · §12 (env var) |
+
 ## Counts
 
 - Adapters with UDS bind code: **3** (Playwright, SeleniumBase,

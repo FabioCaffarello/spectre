@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-28
-Current phase: **R4.1 — ADR-0023 stateful services architecture (in progress, this PR)**
-Next PR: **R4.1 — ADR-0023 stateful services architecture**
+Current phase: **R4.1 — ADR-0023 stateful services architecture (complete on merge of this PR, 2026-04-28)**
+Next PR: **R4.2 — PostgreSQL for control-plane job state**
 
 ## Phases
 
@@ -25,8 +25,8 @@ for the per-phase ADR deltas.
 - [x] **R2.3 — Engine transport + gRPC server (UDS client → TCP client)** *(merged 2026-04-27, PR #30)*
 - [x] **R3.1 — `EngineClientRunner` replaces `SubprocessRunner`** *(merged 2026-04-27)*
 - [x] **R3.2 — `ScrapeJob` CRD v1alpha2 (breaking change, no conversion webhook)** *(merged 2026-04-28)*
-- [ ] **R4.1 — ADR-0023 stateful services architecture** *(in progress, this PR)*
-- [ ] R4.2 — PostgreSQL for control-plane job state
+- [x] **R4.1 — ADR-0023 stateful services architecture** *(complete on merge of this PR, 2026-04-28)*
+- [ ] **R4.2 — PostgreSQL for control-plane job state** *(next)*
 - [ ] R4.3 — Redis for adapter session cache
 - [ ] R4.4 — Kafka producer (engine → topic)
 - [ ] R5.1 — ADR-0024 output sinks (S3 + webhook + Kafka)
@@ -45,21 +45,21 @@ ADR-0023 (stateful services architecture) plus index updates.
 Updated each session that lands work on this PR.
 
 - [x] Step 1 — Inventory: confirm R3.2 merged, v1alpha2 schema reviewed, thirteen decisions in Section 4 cross-checked
-- [x] Step 2 — Fix R4.1 status preamble (this commit)
-- [ ] Step 3 — Draft ADR-0023 §1 (Context and problem)
-- [ ] Step 4 — Draft §2 (PostgreSQL)
-- [ ] Step 5 — Draft §3 (Kafka)
-- [ ] Step 6 — Draft §4 (Redis)
-- [ ] Step 7 — Draft §5 (Session externalization — most consequential paragraph)
-- [ ] Step 8 — Draft §6 (Required vs optional)
-- [ ] Step 9 — Draft §7 (Network topology)
-- [ ] Step 10 — Draft §8 (Library choices and pinning)
-- [ ] Step 11 — Draft §9 (Compose stack composition)
-- [ ] Step 12 — Draft §10 (Production deployment)
-- [ ] Step 13 — Draft §11 (Migration order across phases)
-- [ ] Step 14 — Draft §12 (Configuration via env vars)
-- [ ] Step 15 — Draft §13 (Migrations and schema evolution)
-- [ ] Step 16 — Update ADR index, refactor-audit, status, CHANGELOG; flip R4.1 → complete and R4.2 → next
+- [x] Step 2 — Fix R4.1 status preamble
+- [x] Step 3 — Draft ADR-0023 §1 (Context and problem)
+- [x] Step 4 — Draft §2 (PostgreSQL)
+- [x] Step 5 — Draft §3 (Kafka)
+- [x] Step 6 — Draft §4 (Redis)
+- [x] Step 7 — Draft §5 (Session externalization — most consequential paragraph)
+- [x] Step 8 — Draft §6 (Required vs optional)
+- [x] Step 9 — Draft §7 (Network topology)
+- [x] Step 10 — Draft §8 (Library choices and pinning)
+- [x] Step 11 — Draft §9 (Compose stack composition)
+- [x] Step 12 — Draft §10 (Production deployment)
+- [x] Step 13 — Draft §11 (Migration order across phases)
+- [x] Step 14 — Draft §12 (Configuration via env vars)
+- [x] Step 15 — Draft §13 (Migrations and schema evolution)
+- [x] Step 16 — Update ADR index, refactor-audit, status, CHANGELOG; flip R4.1 → complete and R4.2 → next (this commit)
 - [ ] Step 17 — Final verification: `git diff main...HEAD --stat` shows only `.md` files; `just check` green; ADR length 500-600 lines
 - [ ] Step 18 — Open the PR
 - [ ] Step 19 — Summary report
