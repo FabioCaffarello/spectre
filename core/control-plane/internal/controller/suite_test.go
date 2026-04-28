@@ -29,7 +29,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	spectrev1alpha1 "github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha1"
+	spectrev1alpha2 "github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha2"
 )
 
 // testEnv, cfg, and k8sClient are shared across the controller tests
@@ -45,7 +45,7 @@ var (
 func TestMain(m *testing.M) {
 	logf.SetLogger(zap.New(zap.UseDevMode(true)))
 
-	if err := spectrev1alpha1.AddToScheme(scheme.Scheme); err != nil {
+	if err := spectrev1alpha2.AddToScheme(scheme.Scheme); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to add spectre scheme: %v\n", err)
 		os.Exit(1)
 	}

@@ -35,7 +35,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	spectrev1alpha1 "github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha1"
+	spectrev1alpha2 "github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha2"
 	"github.com/FabioCaffarello/spectre/core/control-plane/internal/controller"
 	"github.com/FabioCaffarello/spectre/core/control-plane/internal/runner"
 	// +kubebuilder:scaffold:imports
@@ -55,7 +55,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(spectrev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(spectrev1alpha2.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -92,10 +92,13 @@ func main() {
 		endpointDefault = defaultEngineEndpoint
 	}
 	flag.StringVar(&engineEndpoint, "engine-endpoint", endpointDefault,
-		"host:port of the spectre.engine.v1alpha1.Engine service the operator dials. "+
-			"Override via SPECTRE_ENGINE_ENDPOINT env var or this flag. Defaults to "+
-			"127.0.0.1:9090 (matches `just engine-run`'s local listener). Compose "+
-			"deployments set this to engine:9090; Helm renders it from values.")
+		"host:port of the spectre.engine.v1alpha1.Engine service the operator dials "+
+			"when a ScrapeJob's spec.engineRef is unset. Override via "+
+			"SPECTRE_ENGINE_ENDPOINT env var or this flag. Defaults to 127.0.0.1:9090 "+
+			"(matches `just engine-run`'s local listener). Compose deployments set this "+
+			"to engine:9090; Helm renders it from values. Per-job EngineRef "+
+			"(spectre.io/v1alpha2 ScrapeJobSpec.engineRef) overrides this default; see "+
+			"docs/architecture/control-plane.md for the resolution order.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -195,20 +198,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// EngineClientRunner dials the spectre.engine.v1alpha1.Engine
-	// gRPC service and streams Row events back to the reconciler.
-	// See ADR-0019 §5 for the JobRunner seam (preserved through
-	// three implementations) and ADR-0020 §5 for the refactor that
-	// replaced the bundled-engine SubprocessRunner with a service
-	// client.
-	jobRunner := &runner.EngineClientRunner{
-		EngineEndpoint: engineEndpoint,
-	}
-
+	// The reconciler constructs an EngineClientRunner per Reconcile
+	// (R3.2): each ScrapeJob's spec.engineRef may resolve to a
+	// different host:port, so the runner cannot be a long-lived
+	// field. The closure below binds the production runner type;
+	// envtest cases inject their own factory in suite_test.go. See
+	// ADR-0019 §5 (JobRunner seam, preserved across StubRunner /
+	// SubprocessRunner / EngineClientRunner) and ADR-0020 §5 (the
+	// refactor that retired SubprocessRunner).
 	if err := (&controller.ScrapeJobReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Runner: jobRunner,
+		Client:                mgr.GetClient(),
+		Scheme:                mgr.GetScheme(),
+		DefaultEngineEndpoint: engineEndpoint,
+		RunnerFactory: func(endpoint string) runner.JobRunner {
+			return &runner.EngineClientRunner{EngineEndpoint: endpoint}
+		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScrapeJob")
 		os.Exit(1)
