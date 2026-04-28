@@ -107,6 +107,14 @@ engine-build:
 engine-integration-test: pw-build pw-install-browsers
     cd core/engine && PLAYWRIGHT_AVAILABLE=1 cargo test --test integration -- --ignored --nocapture
 
+# Run the engine's database integration tests. Requires a Postgres
+# reachable at SPECTRE_POSTGRES_URL (the same env var the engine
+# binary reads at startup, ADR-0023 §12). Bring one up via
+# `just compose-up` (R4.2). Tests are `#[ignore]` by default so
+# `just engine-test` stays DB-free.
+engine-db-test:
+    cd core/engine && SQLX_OFFLINE=true cargo test --test db_integration -- --ignored --nocapture
+
 # ---------------------------------------------------------------------------
 # spectre engine binary (core/engine/src/bin/spectre.rs)
 # ---------------------------------------------------------------------------
