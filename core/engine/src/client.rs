@@ -251,7 +251,10 @@ mod tests {
 
     #[test]
     fn normalise_endpoint_accepts_bare_host_port() {
-        assert_eq!(normalise_endpoint("127.0.0.1:9091"), "http://127.0.0.1:9091");
+        assert_eq!(
+            normalise_endpoint("127.0.0.1:9091"),
+            "http://127.0.0.1:9091"
+        );
     }
 
     #[test]
@@ -280,7 +283,10 @@ mod tests {
 
     #[test]
     fn normalise_endpoint_trims_whitespace() {
-        assert_eq!(normalise_endpoint("  127.0.0.1:9091  "), "http://127.0.0.1:9091");
+        assert_eq!(
+            normalise_endpoint("  127.0.0.1:9091  "),
+            "http://127.0.0.1:9091"
+        );
     }
 
     #[test]

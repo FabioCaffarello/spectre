@@ -41,7 +41,9 @@ use uuid::Uuid;
 use crate::dsl::Job;
 use crate::engine::Engine;
 use crate::engine_proto::engine_server::{Engine as EngineService, EngineServer};
-use crate::engine_proto::{Completed, Failed, Row, RunJobRequest, RunJobResponse, run_job_response};
+use crate::engine_proto::{
+    Completed, Failed, Row, RunJobRequest, RunJobResponse, run_job_response,
+};
 use crate::error::EngineError;
 use crate::output::OutputSink;
 
@@ -70,8 +72,7 @@ impl EngineServiceImpl {
     }
 }
 
-type ResponseStream =
-    Pin<Box<dyn Stream<Item = Result<RunJobResponse, Status>> + Send + 'static>>;
+type ResponseStream = Pin<Box<dyn Stream<Item = Result<RunJobResponse, Status>> + Send + 'static>>;
 
 #[tonic::async_trait]
 impl EngineService for EngineServiceImpl {
@@ -122,10 +123,7 @@ impl EngineService for EngineServiceImpl {
                     })
                 }
             };
-            if tx
-                .send(Ok(RunJobResponse { event: Some(event) }))
-                .is_err()
-            {
+            if tx.send(Ok(RunJobResponse { event: Some(event) })).is_err() {
                 // Client dropped the stream before the terminal
                 // event landed. Nothing to clean up — the channel
                 // closes when this task ends.
@@ -151,7 +149,8 @@ impl ChannelSink {
 
 impl OutputSink for ChannelSink {
     fn write_row(&mut self, row: &serde_json::Value) -> Result<(), EngineError> {
-        let json_line = serde_json::to_string(row).map_err(|e| EngineError::Output(e.to_string()))?;
+        let json_line =
+            serde_json::to_string(row).map_err(|e| EngineError::Output(e.to_string()))?;
         let event = RunJobResponse {
             event: Some(run_job_response::Event::Row(Row { json_line })),
         };

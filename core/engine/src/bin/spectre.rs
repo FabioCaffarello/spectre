@@ -25,9 +25,9 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
 use spectre_engine::registry::AdapterRegistry;
 use spectre_engine::server::engine_server;
+use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 use tracing::{info, warn};
@@ -66,10 +66,7 @@ async fn run() -> Result<()> {
         .set_service_status("", ServingStatus::Serving)
         .await;
     health_reporter
-        .set_service_status(
-            "spectre.engine.v1alpha1.Engine",
-            ServingStatus::Serving,
-        )
+        .set_service_status("spectre.engine.v1alpha1.Engine", ServingStatus::Serving)
         .await;
 
     info!(
@@ -92,9 +89,9 @@ async fn run() -> Result<()> {
 
 fn parse_port() -> Result<u16> {
     match env::var(PORT_ENV) {
-        Ok(s) => s.parse::<u16>().with_context(|| {
-            format!("invalid {PORT_ENV} value (expected u16): {s:?}")
-        }),
+        Ok(s) => s
+            .parse::<u16>()
+            .with_context(|| format!("invalid {PORT_ENV} value (expected u16): {s:?}")),
         Err(_) => Ok(DEFAULT_PORT),
     }
 }

@@ -109,9 +109,7 @@ impl AdapterRegistry {
     /// Iterate every registered `(driver, endpoint)` pair. Useful
     /// for startup logging.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.endpoints
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
+        self.endpoints.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 }
 
