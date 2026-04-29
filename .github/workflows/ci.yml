@@ -775,9 +775,14 @@ jobs:
           set -a
           source build/docker/versions.env
           set +a
+          # Two `--set` per target (one per platform) renders
+          # platforms as a proper list under `bake --print`; the
+          # comma-joined form is documented but renders ambiguously.
           docker buildx bake \
-            --set control-plane.platform=linux/amd64,linux/arm64 \
-            --set playwright.platform=linux/amd64,linux/arm64
+            --set control-plane.platform=linux/amd64 \
+            --set control-plane.platform=linux/arm64 \
+            --set playwright.platform=linux/amd64 \
+            --set playwright.platform=linux/arm64
 
   ci-summary:
     name: CI summary

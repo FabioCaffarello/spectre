@@ -256,12 +256,12 @@ specific blocker per image, not wholesale Dockerfile rewrites.
 **Per-target platform set declared at publish time, not in
 `docker-bake.hcl`.** The bake targets keep
 `platforms = ["linux/amd64"]` as their default; the publish
-workflow declares multi-arch via per-target `--set` overrides
-(`--set control-plane.platform=linux/amd64,linux/arm64`). The
-platform set is a deployment concern, not a build concern; CI's
-verify-only matrix doesn't need overrides, and adding new
-multi-arch targets later is one line in `publish.yml` rather
-than a bake structural change.
+workflow declares multi-arch via per-target bake `--set`
+overrides (one `--set <target>.platform=<plat>` per platform
+per target). The platform set is a deployment concern, not a
+build concern; CI's verify-only matrix doesn't need overrides,
+and adding new multi-arch targets later is a few lines in
+`publish.yml` rather than a bake structural change.
 
 **`workflow_dispatch` only in R6.5.3; tag-triggered and `:edge`
 deferred.** The repo has no tags as of R6.5.3 merge (`VERSION =

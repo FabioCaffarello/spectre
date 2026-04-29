@@ -38,9 +38,9 @@
 # node:<version>-bookworm-slim builder image is also multi-arch.
 # The buf-arch case-statement below uses $(uname -m) and already
 # covers x86_64 + aarch64. Multi-arch is opted into at publish
-# time via `--set playwright.platform=linux/amd64,linux/arm64`
-# (see `.github/workflows/publish.yml`); CI's verify-only matrix
-# stays single-arch (`--load` cannot represent a manifest list).
+# time via per-target bake `--set` platform overrides — see
+# `.github/workflows/publish.yml`. CI's verify-only matrix stays
+# single-arch (`--load` cannot represent a manifest list).
 
 ARG NODE_VERSION=20
 ARG BUF_VERSION=1.55.1

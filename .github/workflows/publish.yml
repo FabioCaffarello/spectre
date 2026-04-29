@@ -99,11 +99,18 @@ jobs:
           # update. As deferred images unblock, add their override
           # here without touching docker-bake.hcl. Use a bash array
           # so empty / multi-flag expansion is correct under set -u.
+          # Two `--set` per target (one per platform) renders the
+          # platforms field as a proper list under `bake --print`;
+          # the comma-joined single-value form
+          # (`--set foo.platform=a,b`) is documented but renders
+          # ambiguously, so we keep the explicit form here.
           platform_overrides=()
           if [ "${{ inputs.multi_arch }}" = "true" ]; then
             platform_overrides+=(
-              "--set" "control-plane.platform=linux/amd64,linux/arm64"
-              "--set" "playwright.platform=linux/amd64,linux/arm64"
+              "--set" "control-plane.platform=linux/amd64"
+              "--set" "control-plane.platform=linux/arm64"
+              "--set" "playwright.platform=linux/amd64"
+              "--set" "playwright.platform=linux/arm64"
             )
           fi
 
