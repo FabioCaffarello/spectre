@@ -70,6 +70,10 @@ variable "BUF_VERSION" {
   default = "1.55.1"
 }
 
+variable "UV_VERSION" {
+  default = "0.5.11"
+}
+
 variable "PLAYWRIGHT_VERSION" {
   default = "1.49.0"
 }
@@ -193,6 +197,7 @@ target "seleniumbase" {
   args = {
     PYTHON_VERSION = PYTHON_VERSION
     BUF_VERSION    = BUF_VERSION
+    UV_VERSION     = UV_VERSION
   }
   platforms = ["linux/amd64"]
 }

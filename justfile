@@ -543,6 +543,27 @@ sb-conf-test: sb-bootstrap sb-install-chromedriver conf-bootstrap
         tests/test_seleniumbase_extract.py \
         tests/test_seleniumbase_screenshot.py
 
+# Build the SeleniumBase adapter image as `spectre-seleniumbase:dev`
+# via docker buildx bake. Slowest of the three adapter image builds
+# (Chrome apt install + ChromeDriver download); buildx layer cache
+# amortises subsequent builds. R6.1 §4.2.
+sb-image:
+    set -a; source build/docker/versions.env; set +a; \
+        docker buildx bake --load seleniumbase
+
+# Smoke-test the SeleniumBase adapter image. Per R6.1 §4.10: the
+# image bakes SPECTRE_ADAPTER_GRPC_PORT=9092 as a default ENV so
+# the adapter passes port resolution and proceeds to the Redis
+# ping; that ping fails with the canonical "redis ping" /
+# "Connection refused" message because no Redis is reachable in
+# a bare `docker run`. Capture-then-grep avoids the justfile
+# shell's pipefail propagating Python's exit-1.
+sb-image-smoke: sb-image
+    set +e; \
+      out=$(docker run --rm --platform=linux/amd64 spectre-seleniumbase:dev 2>&1); \
+      echo "$out" | tail -5; \
+      echo "$out" | grep -qE 'redis ping|Connection refused|ConnectionError'
+
 # ---------------------------------------------------------------------------
 # Python conformance suite (tools/conformance)
 # ---------------------------------------------------------------------------
