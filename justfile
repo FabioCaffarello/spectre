@@ -396,6 +396,33 @@ curl-imp-conf-test: curl-imp-build conf-bootstrap
         tests/test_curl_impersonate_initialize.py \
         tests/test_curl_impersonate_navigate.py
 
+# Build the curl-impersonate adapter image as
+# `spectre-curl-impersonate:dev` via docker buildx bake. R6.1 §4.2
+# routes every per-image build through bake so toolchain pins,
+# OCI labels, and platform args stay uniform across the five
+# images. Sources build/docker/versions.env first so RUST/GO/etc.
+# pins flow through.
+curl-imp-image:
+    set -a; source build/docker/versions.env; set +a; \
+        docker buildx bake --load curl-impersonate
+
+# Smoke-test the curl-impersonate adapter image. Per R6.1 §4.10:
+# the adapter requires SPECTRE_ADAPTER_GRPC_PORT at runtime (no
+# Compose / Helm machinery in the smoke), so a bare `docker run`
+# exits 1 with the canonical "SPECTRE_ADAPTER_GRPC_PORT is
+# required" message. The smoke greps for that exact text so a
+# regression where the binary fails to load (missing proto
+# bindings, wrong arch) surfaces as a different error.
+#
+# `docker run` exits 1 here on purpose — the justfile's pipefail
+# shell would propagate that as failure, so we capture the output
+# first and grep against the captured log.
+curl-imp-image-smoke: curl-imp-image
+    set +e; \
+      out=$(docker run --rm --platform=linux/amd64 spectre-curl-impersonate:dev 2>&1); \
+      echo "$out"; \
+      echo "$out" | grep -q 'SPECTRE_ADAPTER_GRPC_PORT is required'
+
 # ---------------------------------------------------------------------------
 # TypeScript Playwright adapter (adapters/playwright)
 # ---------------------------------------------------------------------------
