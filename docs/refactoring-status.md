@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-29
-Current phase: **R6.5 — Quality & Hardening (in progress; R6.5.1 complete on merge of this PR, 2026-04-29)**
-Next PR: **R6.5.2 — CI hardening: image-build matrix completion + bake unification + full-stack gate**
+Current phase: **R6.5 — Quality & Hardening (in progress; R6.5.2 complete on merge of this PR, 2026-04-29)**
+Next PR: **R6.5.3 — Docker Hub registry wiring + multi-arch readiness**
 
 ## Phases
 
@@ -41,110 +41,98 @@ audit-trail row.
 **Phase R6.5 — Quality & Hardening** *(inserted between R6.3
 close and R7.1 open; no new ADRs; recorded in ADR-0020 §4)*
 
-- [x] **R6.5.1 — Stale-references sweep + R6.1 leftovers (`build/docker/README.md`, `tools/build/check-versions-coherent.sh`)** *(complete on merge of this PR, 2026-04-29 — opens Phase R6.5)*
-- [ ] **R6.5.2 — CI hardening: image-build matrix completion, bake unification in CI, full-stack gate** *(next)*
-- [ ] R6.5.3 — Docker Hub registry wiring + multi-arch readiness
+- [x] **R6.5.1 — Stale-references sweep + R6.1 leftovers (`build/docker/README.md`, `tools/build/check-versions-coherent.sh`)** *(merged 2026-04-29 — opened Phase R6.5)*
+- [x] **R6.5.2 — CI hardening: image-build matrix completion, bake unification in CI, full-stack gate** *(complete on merge of this PR, 2026-04-29)*
+- [ ] **R6.5.3 — Docker Hub registry wiring + multi-arch readiness** *(next)*
 - [ ] R6.5.4 — Dockerfile deduplication via shared codegen base image stage
 
 - [ ] **R7.1 — ADR-0026 Helm chart** *(opens Phase R7 once R6.5 closes)*
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R6.5.1)
+## Current PR checklist (R6.5.2)
 
-The R6.5.1 PR's per-step checklist mirrors Section 7 of the
-phase prompt. R6.5.1 sweeps stale `PR<N>` references out of
-live code, ships R6.1's two leftovers (`build/docker/README.md`
-and `tools/build/check-versions-coherent.sh`), and wires the
-coherence script into `just check` and CI's `proto` job.
-**Phase R6.5 opens with this PR's merge.**
+The R6.5.2 PR's per-step checklist mirrors Section 7 of the
+phase prompt. R6.5.2 routes every CI image build through the
+canonical `docker buildx bake` orchestrator, replaces the two
+ad-hoc `engine-image` / `operator-image` jobs with a single
+matrix `images` job, and adds a new `full-stack` end-to-end
+gate that exercises the unified Compose flow against a sample
+ScrapeJob.
 
-- [x] Step 1 — Inventory: R6.3 merge confirmed; the inventory
-  grep located stale `PR<N>` references in live code (excluding
-  `docs/adr/**`, `docs/MASTER_STRATEGY_REFACTOR.md`, and similar
-  history-bearing strategy docs). Section 4 decisions settled.
-- [x] Step 2 — `build/docker/README.md` authored (~155 lines):
-  versions.env contract, two-consumer model (bake + direct
-  Dockerfile builds), bump procedure, pin-inventory table
-  covering every variable in `versions.env` plus the
-  `core/engine` + `core/control-plane` no-default ARG split.
-- [x] Step 3 — `tools/build/check-versions-coherent.sh` authored
-  (~190 lines, executable, bash 3.2 compatible): sources
-  versions.env, verifies docker-bake.hcl variable defaults,
-  verifies adapter Dockerfile ARG defaults, sanity-checks the
-  bake `labels()` schema. Pass-path returns 0; intentional
-  drift returns non-zero with per-mismatch detail. `tools/build/`
-  carved out of the unanchored `build/` gitignore rule.
-- [x] Step 4 — Wired into `just check` via a top-level
-  `check-versions` recipe; `check` chain becomes
-  `check-versions lint test`. CI's `proto` job runs the script
-  as its first step (after checkout); R6.5.2 may promote it to a
-  dedicated job.
-- [x] Step 5 — Stale-reference sweep, batch 1 — curl-impersonate
-  Go source: nine files (Pattern A); one test rename
-  `TestNamesReturnsPR12List` → `TestNamesMatchesCapabilityManifest`.
-  Capability invariant 6 unchanged byte-for-byte; tests pass.
-- [x] Step 6 — Stale-reference sweep, batch 2 — SeleniumBase
-  Python source: eight files (Pattern A + B). Capability
-  invariant 12 unchanged byte-for-byte; tests pass.
-- [x] Step 7 — Stale-reference sweep, batch 3 — Playwright TS
-  source: five files (Pattern A); the capabilities test spec
-  name updates `"declares the thirteen PR6 capabilities"` →
-  `"declares the thirteen v1alpha1 capabilities"`. Capability
-  invariant 13 unchanged byte-for-byte; 88/88 tests pass.
-- [x] Step 8 — Stale-reference sweep, batch 4 — engine +
-  control-plane: dsl.rs (Pattern B), plan.rs (Pattern A),
-  runner.go + engine_client.go (Pattern C), manager.yaml
-  (Pattern A on PR# refs + Pattern D R7.1 deferral annotations
-  on resource limits / runAsUser / terminationGracePeriodSeconds
-  that were sized for the pre-R3.1 bundled adapter Pod).
-  cargo test --lib 82/82; go vet clean.
-- [x] Step 9 — Stale-reference sweep, batch 5 — conformance
-  suite: 15 files (Pattern A across capabilities.py,
-  demo_full_cycle.py, README.md, conftest.py, test docstrings).
-  Pytest collection holds at 64 tests (test bodies unchanged).
-- [x] Step 10 — Stale-reference sweep, batch 6 — build infra:
-  justfile, .github/workflows/ci.yml, .devcontainer/Dockerfile.
-- [x] Step 11 — Stale-reference sweep, batch 7 — module READMEs:
-  core/engine/README.md (one-line) and core/control-plane/README.md
-  (status block + runner.go bullet + multi-stage description +
-  "What this does not do (yet)" block, kept narrowly scoped to
-  PR# removal + the bundled-image staleness that was directly
-  reachable from the PR# wording).
-- [x] Step 12 — Final stale-ref grep clean (live-code paths
-  return zero hits); ADRs / strategy docs retain their refs.
-- [x] Step 13 — `docs/refactor-audit.md` ticks R6.5.1 + opens the
-  R6.5 phase block; this `docs/refactoring-status.md` advances
-  to R6.5; ADR-0020 §4 gains the R6.5 audit row; CHANGELOG
-  Unreleased entry recording the sweep + R6.1 leftovers.
-- [ ] Step 14 — Final verification (`just check`, `just
-  check-versions`, conformance suite, image build).
-- [ ] Step 15 — Open the PR.
+- [x] Step 1 — Inventory: R6.5.1 merge confirmed; the existing
+  CI workflow, `docker-bake.hcl`, `docker-compose.yml`,
+  `build/kind/cluster.yaml`, and the five smoke recipe names
+  reviewed. Section 4 decisions settled.
+- [x] Step 2 — Smoke recipe parameterization: each of the five
+  smoke / run recipes (`engine-image-run`, `op-image-smoke`,
+  `curl-imp-image-smoke`, `pw-image-smoke`, `sb-image-smoke`)
+  gains a positional `TAG='dev'` argument; recipe bodies use
+  `spectre-<name>:{{TAG}}` instead of hardcoded `:dev`. Local
+  default unchanged.
+- [x] Step 3 — `changes` job filters extended: legacy
+  `engine_image` output removed; six new outputs added
+  (`image_engine`, `image_control_plane`,
+  `image_curl_impersonate`, `image_playwright`,
+  `image_seleniumbase`, `full_stack`). Each `image_<name>`
+  filter triggers on its source, the proto schema, the
+  per-Dockerfile `.dockerignore`, `docker-bake.hcl`,
+  `build/docker/**`, or the workflow.
+- [x] Step 4 — Matrix `images` job added: five matrix entries
+  (one per bake target), each carrying `target` + `changed` +
+  `smoke_recipe` via `include:` form; `if: matrix.changed ==
+  'true'` skips unchanged targets within a dispatched matrix;
+  build step calls `set -a; source build/docker/versions.env;
+  set +a; docker buildx bake --load <target>` (canonical
+  invocation byte-for-byte aligned with `just images`); CI sets
+  `VCS_REF`, `BUILD_DATE`, `TAG=ci`. Legacy jobs preserved in
+  this commit.
+- [x] Step 5 — `full-stack` job added: bake builds at `TAG=dev`,
+  Compose `--profile full` up, kind via `helm/kind-action@v1`
+  (`cluster_name: spectre-ci`), kubeconfig regen with
+  `--internal`, `make install` for v1alpha2 CRD, hello-hackernews
+  sample apply, 5-minute polling loop on `status.phase ==
+  Completed`, always-run operator + engine + adapter log tails,
+  unconditional `compose down -v` cleanup.
+- [x] Step 6 — Legacy `engine-image` and `operator-image` jobs
+  removed; `ci-summary` `needs:` and report block updated to
+  drop the legacy names and add `images` + `full-stack`.
+- [x] Step 7 — `docs/architecture/container-images.md` gains a
+  "CI shape" subsection (matrix table, full-stack gate steps,
+  filter map, when-each-job-runs table). `build/docker/README.md`
+  pin inventory gains a footer noting CI consumes the same pins
+  via the same bake invocation.
+- [x] Step 8 — `docs/refactor-audit.md` ticks R6.5.2;
+  `docs/refactoring-status.md` advances to R6.5.3; CHANGELOG
+  Unreleased entry recording the CI restructuring.
+- [ ] Step 9 — Final verification (`just check`, smoke
+  parameterization tests, conformance suite).
+- [ ] Step 10 — Open the PR.
 
 ## Surfaced decisions
 
 No open architectural questions awaiting maintainer input. The
-three decisions for R6.5.1 (Pattern A/B/C taxonomy for stale
-PR# refs; pin inventory in README, not in source comments;
-coherence script wired into `just check` + the existing CI
-`proto` job, not a new dedicated job) are settled by Section 4
-of the phase prompt.
+five decisions for R6.5.2 (single matrix job over five separate
+jobs; bake invocation matches local byte-for-byte; per-target
+`changes` outputs preserve selectivity; full-stack gate
+verifies Level 3 / sample ScrapeJob `Completed`; gate placement
+`needs: [changes, images]`) are settled by Section 4 of the
+phase prompt.
 
-One scope adjustment surfaced during execution: the inventory
-grep's actual count (~125 hits across live code) was higher
-than the prompt's estimate of 102. The Playwright adapter — which
-the prompt said happened to be clean — actually had five
-references; module READMEs (which the prompt's Section 5 didn't
-enumerate) carried twenty-three more. Both were swept under the
-prompt's Pattern A guidance because criterion 2 (zero hits in
-live code) is unconditional.
+One scope adjustment surfaced during execution: the prompt's
+Cluster B sketch hardcoded `images-smoke` recipe names that
+mostly differed from the project's actual conventions
+(`op-image-smoke`, `curl-imp-image-smoke`, `pw-image-smoke`,
+`sb-image-smoke`, `engine-image-run`). The matrix's
+`include:` form carries `smoke_recipe:` per entry to absorb
+that asymmetry; the prompt's Decision 4.1 anticipated the
+asymmetry and chose `include:` for exactly this reason.
 
 One pre-existing-issue note carried over from R6.3: the
 Playwright runtime image pinned in `build/docker/versions.env`
 (`v1.49.0`) is out-of-step with the npm `playwright` dep
-(`1.59.1`). R6.5.1 documents the pinning contract but does not
-bump pins (Section 10 of the phase prompt). R7.x or a separate
-maintenance PR picks up the sync.
+(`1.59.1`). R7.x or a separate maintenance PR picks up the
+sync; R6.5.2 doesn't bump pins.
 
 ## Known issues
 

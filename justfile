@@ -398,10 +398,10 @@ op-image:
 # the engine and adapter services to be running alongside; that
 # is what `just compose-up` (R6.2) provides for app-level
 # smoke and what production smoke (R7.2) covers in-cluster.
-op-image-smoke: op-image
+op-image-smoke TAG='dev': op-image
     docker run --rm --platform=linux/amd64 \
         --entrypoint=/manager \
-        spectre-control-plane:dev --help
+        spectre-control-plane:{{TAG}} --help
 
 # ---------------------------------------------------------------------------
 # Kubernetes-in-Docker (kind) — ADR-0025 §6 R6.3 update
@@ -532,9 +532,9 @@ curl-imp-image:
 # `docker run` exits 1 here on purpose — the justfile's pipefail
 # shell would propagate that as failure, so we capture the output
 # first and grep against the captured log.
-curl-imp-image-smoke: curl-imp-image
+curl-imp-image-smoke TAG='dev': curl-imp-image
     set +e; \
-      out=$(docker run --rm --platform=linux/amd64 spectre-curl-impersonate:dev 2>&1); \
+      out=$(docker run --rm --platform=linux/amd64 spectre-curl-impersonate:{{TAG}} 2>&1); \
       echo "$out"; \
       echo "$out" | grep -q 'SPECTRE_ADAPTER_GRPC_PORT is required'
 
@@ -586,9 +586,9 @@ pw-image:
 # message because no Redis is reachable in a bare `docker run`.
 # The smoke greps for that exact text. Capture-then-grep avoids
 # the justfile shell's pipefail propagating Node's exit-1.
-pw-image-smoke: pw-image
+pw-image-smoke TAG='dev': pw-image
     set +e; \
-      out=$(docker run --rm --platform=linux/amd64 spectre-playwright:dev 2>&1); \
+      out=$(docker run --rm --platform=linux/amd64 spectre-playwright:{{TAG}} 2>&1); \
       echo "$out" | tail -3; \
       echo "$out" | grep -q 'redis ping failed'
 
@@ -647,9 +647,9 @@ sb-image:
 # "Connection refused" message because no Redis is reachable in
 # a bare `docker run`. Capture-then-grep avoids the justfile
 # shell's pipefail propagating Python's exit-1.
-sb-image-smoke: sb-image
+sb-image-smoke TAG='dev': sb-image
     set +e; \
-      out=$(docker run --rm --platform=linux/amd64 spectre-seleniumbase:dev 2>&1); \
+      out=$(docker run --rm --platform=linux/amd64 spectre-seleniumbase:{{TAG}} 2>&1); \
       echo "$out" | tail -5; \
       echo "$out" | grep -qE 'redis ping|Connection refused|ConnectionError'
 
@@ -754,9 +754,9 @@ engine-image:
 # `test` binary so an "exists" probe is not available; the
 # canonical-error path is the closest equivalent. Deeper end-to-
 # end start-and-probe lives in R6.2's Compose stack work.
-engine-image-run: engine-image
+engine-image-run TAG='dev': engine-image
     set +e; \
-      out=$(docker run --rm --platform=linux/amd64 spectre-engine:dev 2>&1); \
+      out=$(docker run --rm --platform=linux/amd64 spectre-engine:{{TAG}} 2>&1); \
       echo "$out"; \
       echo "$out" | grep -q 'SPECTRE_POSTGRES_URL must be set'
 

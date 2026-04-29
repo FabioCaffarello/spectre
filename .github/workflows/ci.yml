@@ -24,7 +24,12 @@ jobs:
       typescript: ${{ steps.filter.outputs.typescript }}
       python: ${{ steps.filter.outputs.python }}
       operator: ${{ steps.filter.outputs.operator }}
-      engine_image: ${{ steps.filter.outputs.engine_image }}
+      image_engine: ${{ steps.filter.outputs.image_engine }}
+      image_control_plane: ${{ steps.filter.outputs.image_control_plane }}
+      image_curl_impersonate: ${{ steps.filter.outputs.image_curl_impersonate }}
+      image_playwright: ${{ steps.filter.outputs.image_playwright }}
+      image_seleniumbase: ${{ steps.filter.outputs.image_seleniumbase }}
+      full_stack: ${{ steps.filter.outputs.full_stack }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -65,14 +70,62 @@ jobs:
               # the Python conformance job too.
               - 'adapters/curl-impersonate/**'
               - '.github/workflows/ci.yml'
-            engine_image:
-              # Rebuild the engine Docker image whenever the engine,
-              # the protocol schema, the Dockerfile, the build-context
-              # exclusions, or the workflow changes. See ADR-0018 §5
-              # on why this job is build+run only, not push.
+            # Per-image rebuild filters (R6.5.2). Each target rebuilds
+            # when its source, the proto schema, the bake config, the
+            # toolchain pins, the per-Dockerfile ignore, or the
+            # workflow changes. The `images` matrix job below consumes
+            # these via its `if:` gate; matrix-entry `if:` reads the
+            # corresponding output to skip unchanged targets while
+            # still listing them in the run UI.
+            image_engine:
               - 'core/engine/**'
+              - 'core/engine/.dockerignore'
               - 'proto/**'
-              - '.dockerignore'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/ci.yml'
+            image_control_plane:
+              - 'core/control-plane/**'
+              - 'core/control-plane/.dockerignore'
+              - 'proto/**'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/ci.yml'
+            image_curl_impersonate:
+              - 'adapters/curl-impersonate/**'
+              - 'adapters/curl-impersonate/.dockerignore'
+              - 'proto/**'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/ci.yml'
+            image_playwright:
+              - 'adapters/playwright/**'
+              - 'adapters/playwright/.dockerignore'
+              - 'proto/**'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/ci.yml'
+            image_seleniumbase:
+              - 'adapters/seleniumbase/**'
+              - 'adapters/seleniumbase/.dockerignore'
+              - 'proto/**'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/ci.yml'
+            # Full-stack gate (R6.5.2). Triggers on anything that could
+            # break the unified Compose flow — service source, proto,
+            # Compose YAML, bake, build pins, kind config, sample CRs
+            # / CRDs, or the workflow itself.
+            full_stack:
+              - 'core/**'
+              - 'adapters/**'
+              - 'proto/**'
+              - 'docker-compose.yml'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - 'build/kind/**'
+              - 'core/control-plane/config/samples/**'
+              - 'core/control-plane/config/crd/**'
               - '.github/workflows/ci.yml'
 
   proto:
@@ -480,84 +533,205 @@ jobs:
       - name: Build
         run: make build
 
-  engine-image:
-    name: Engine image (build + smoke test)
+  # Matrix image build + smoke (R6.5.2). Replaces the ad-hoc
+  # `engine-image` and `operator-image` jobs by routing every image
+  # build through the same `docker buildx bake` invocation that
+  # `just images` uses locally. Five matrix entries (one per bake
+  # target); per-entry `if: matrix.changed == 'true'` preserves
+  # selectivity. Legacy jobs run alongside until the next commit
+  # deletes them.
+  images:
+    name: Image (build + smoke) — ${{ matrix.target }}
     needs: changes
-    if: needs.changes.outputs.engine_image == 'true'
+    # Job-level gate fires when at least one image's filter matched.
+    # Per-step gates (matrix.changed) skip unchanged targets within
+    # the dispatched matrix.
+    if: |
+      needs.changes.outputs.image_engine == 'true' ||
+      needs.changes.outputs.image_control_plane == 'true' ||
+      needs.changes.outputs.image_curl_impersonate == 'true' ||
+      needs.changes.outputs.image_playwright == 'true' ||
+      needs.changes.outputs.image_seleniumbase == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # `include:` form — each entry carries `target` (bake target),
+      # `changed` (per-target gate), `smoke_recipe` (just recipe
+      # name). The smoke recipe names aren't a uniform suffix
+      # transform of the target name (`op-image-smoke` vs
+      # `engine-image-run`), so a plain `target:` axis is not
+      # enough.
+      matrix:
+        include:
+          - target: engine
+            changed: ${{ needs.changes.outputs.image_engine }}
+            smoke_recipe: engine-image-run
+          - target: control-plane
+            changed: ${{ needs.changes.outputs.image_control_plane }}
+            smoke_recipe: op-image-smoke
+          - target: curl-impersonate
+            changed: ${{ needs.changes.outputs.image_curl_impersonate }}
+            smoke_recipe: curl-imp-image-smoke
+          - target: playwright
+            changed: ${{ needs.changes.outputs.image_playwright }}
+            smoke_recipe: pw-image-smoke
+          - target: seleniumbase
+            changed: ${{ needs.changes.outputs.image_seleniumbase }}
+            smoke_recipe: sb-image-smoke
+    steps:
+      - uses: actions/checkout@v6
+      - if: matrix.changed == 'true'
+        uses: docker/setup-buildx-action@v4
+      - if: matrix.changed == 'true'
+        uses: extractions/setup-just@v3
+      # The bake invocation matches `just images` byte-for-byte:
+      # source the toolchain pins from versions.env, then call
+      # `docker buildx bake --load <target>`. CI sets VCS_REF /
+      # BUILD_DATE / TAG=ci so the OCI labels are populated and
+      # the resulting image is tagged distinctly from local
+      # `:dev` artefacts.
+      - name: Build ${{ matrix.target }}
+        if: matrix.changed == 'true'
+        env:
+          VCS_REF: ${{ github.sha }}
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
+          TAG: ci
+        run: |
+          set -a
+          source build/docker/versions.env
+          set +a
+          docker buildx bake --load ${{ matrix.target }}
+      - name: Smoke ${{ matrix.target }}
+        if: matrix.changed == 'true'
+        run: just ${{ matrix.smoke_recipe }} TAG=ci
+      - name: Report image size
+        if: matrix.changed == 'true'
+        run: docker images "spectre-${{ matrix.target }}:ci" --format '{{.Repository}}:{{.Tag}}\t{{.Size}}'
+
+  # Full-stack gate (R6.5.2 — verifies master strategy §2.5
+  # "Compose is the development environment" in CI). Runs the
+  # post-R6.3 unified flow end-to-end: bake builds the five
+  # images, Compose brings up the eleven services, kind provides
+  # the Kubernetes API the operator dials, the v1alpha2 CRD is
+  # installed, and the hello-hackernews sample ScrapeJob is
+  # asserted to reach `Completed`. The 5-minute Completed-poll
+  # absorbs CI cold-start; the local flow finishes the same
+  # ScrapeJob in well under a minute.
+  full-stack:
+    name: Full-stack gate (compose + kind + sample ScrapeJob)
+    needs: [changes, images]
+    if: needs.changes.outputs.full_stack == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v4
-      # Build the engine image with the same Dockerfile contributors
-      # use locally. No registry push — see ADR-0018 §5. The smoke test
-      # runs the binary in the resulting image; image publishing is a
-      # release-engineering concern that fires on tagged releases, not
-      # every PR.
-      - name: Build engine image
+      - uses: extractions/setup-just@v3
+      - uses: actions/setup-go@v6
+        with:
+          # Match the toolchain kubebuilder v4 scaffolds in go.mod;
+          # `make install` invokes controller-gen.
+          go-version: "1.25"
+      # Build the five images at TAG=dev so docker-compose.yml's
+      # `image: spectre-<name>:dev` references resolve without
+      # re-tagging. Local-flow byte-for-byte parity (just images).
+      - name: Build images via bake
+        env:
+          VCS_REF: ${{ github.sha }}
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
+          TAG: dev
         run: |
-          docker buildx build \
-            --platform=linux/amd64 \
-            -t spectre-engine:ci \
-            -f core/engine/Dockerfile \
-            --load \
-            .
-      - name: Smoke test (spectre binary present)
-        # R2.3 retired the `version` subcommand alongside the rest of
-        # the CLI surface; the equivalent image-level smoke is "the
-        # binary exists at the canonical path". A start-and-probe
-        # smoke that binds a port and queries `grpc.health.v1.Health`
-        # is deferred to the operator-image / kind end-to-end jobs.
+          set -a
+          source build/docker/versions.env
+          set +a
+          docker buildx bake --load
+      # Spin up the kind cluster on the runner's Docker daemon.
+      # `cluster_name: spectre-ci` overrides build/kind/cluster.yaml's
+      # `name:` so the runner's daemon doesn't collide with a
+      # `spectre-dev` from a parallel job. helm/kind-action exports
+      # KUBECONFIG to the runner; subsequent kubectl calls work
+      # without extra setup.
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: spectre-ci
+          config: build/kind/cluster.yaml
+      - name: Sanity-check kind cluster
+        run: kubectl get nodes -o wide
+      # Regenerate kubeconfig with --internal so the operator
+      # container — which joins the `kind` Docker network — can
+      # reach the API server at `spectre-ci-control-plane:6443`
+      # (kind names the API node `<cluster>-control-plane`). The
+      # runner's host-side kubectl keeps its own KUBECONFIG from
+      # helm/kind-action; the operator reads the file mounted at
+      # /home/nonroot/.kube/config.
+      - name: Generate operator kubeconfig (--internal)
         run: |
-          docker run --rm \
-            --entrypoint=test \
-            spectre-engine:ci -x /usr/local/bin/spectre
-      - name: Report image size
-        run: docker images spectre-engine:ci --format '{{.Size}}'
-
-  operator-image:
-    name: Operator image (build + smoke test)
-    needs: changes
-    # Build the operator image whenever the operator source, the
-    # protocol, the Dockerfile, or the workflow itself changes.
-    # R3.1 retired the bundled-image execution model — the operator
-    # image no longer carries the engine binary or the three
-    # adapters. Per-service Dockerfiles for them land in R6.1 and
-    # the multi-service end-to-end smoke comes back with the Helm
-    # chart in R7.2.
-    if: needs.changes.outputs.operator == 'true'
-    runs-on: ubuntu-latest
-    env:
-      DOCKER_BUILDKIT: "1"
-    steps:
-      - uses: actions/checkout@v6
-      - name: Build operator image
-        # Build context is the repository root because go.mod's local
-        # `replace` for the proto Go bindings resolves to
-        # ../../proto/gen/go from core/control-plane/. The Dockerfile
-        # stages both trees into the builder stage.
+          mkdir -p build/kind
+          kind get kubeconfig --name spectre-ci --internal \
+            > build/kind/kubeconfig
+      # docker-compose.yml's `control-plane` service hardcodes the
+      # in-DinD URL `spectre-dev-control-plane:6443` (the
+      # cluster-name suffix is baked into the kubeconfig, not the
+      # Compose env). CI's kind cluster is named `spectre-ci`, so
+      # the kubeconfig's server URL resolves at
+      # `spectre-ci-control-plane:6443` — the operator follows the
+      # kubeconfig, not the Compose env, so this works without
+      # touching docker-compose.yml.
+      - name: Bring up Compose stack (--profile full)
         run: |
-          docker build \
-            -t spectre-control-plane:ci \
-            -f core/control-plane/Dockerfile \
-            .
-      - name: Smoke test (manager binary runs)
-        # The unbundled image is a Go static binary on
-        # gcr.io/distroless/static:nonroot. The only meaningful image-
-        # level smoke is "the manager binary exists at /manager and
-        # responds to --help". Deeper end-to-end smoke (engine + the
-        # three adapter services + sample ScrapeJobs) returns with
-        # the Helm production smoke (R7.2).
+          docker compose --profile full up -d
+          docker compose ps
+      - name: Wait for Compose services to start
         run: |
-          docker run --rm \
-            --entrypoint=/manager \
-            spectre-control-plane:ci --help 2>&1 | head -n 5
-      - name: Report image size
-        run: docker images spectre-control-plane:ci --format '{{.Size}}'
+          # Compose reports `running` when each container is up.
+          # The engine has no Compose healthcheck (ADR-0025 §3 —
+          # distroless ships no probe binary), so we count
+          # `running` services rather than `healthy`. Eleven
+          # services on `--profile full` (minio-bootstrap exits
+          # `service_completed_successfully` and is not running).
+          timeout 120 bash -c '
+            until [ "$(docker compose ps --status running --format json | jq -s "length")" -ge 10 ]; do
+              docker compose ps
+              sleep 5
+            done
+          '
+          docker compose ps
+      - name: Apply v1alpha2 CRDs to kind
+        working-directory: core/control-plane
+        run: make install
+      - name: Apply hello-hackernews sample ScrapeJob
+        run: kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml
+      - name: Wait for ScrapeJob phase=Completed
+        run: |
+          # Hello-hackernews finishes in <60s locally; 5 minutes
+          # absorbs CI cold-start image pulls and slow runners.
+          timeout 300 bash -c '
+            until [ "$(kubectl get scrapejob hello-hackernews -o jsonpath={.status.phase} 2>/dev/null)" = "Completed" ]; do
+              kubectl get scrapejob hello-hackernews 2>/dev/null || true
+              sleep 5
+            done
+          '
+          kubectl describe scrapejob hello-hackernews
+      - name: Operator logs (always)
+        if: always()
+        run: docker compose logs control-plane | tail -200 || true
+      - name: Engine logs (always)
+        if: always()
+        run: docker compose logs engine | tail -200 || true
+      - name: Adapter logs (always)
+        if: always()
+        run: |
+          docker compose logs playwright-adapter | tail -100 || true
+          docker compose logs seleniumbase-adapter | tail -100 || true
+          docker compose logs curl-impersonate-adapter | tail -100 || true
+      - name: Compose stack down (cleanup)
+        if: always()
+        run: docker compose --profile full down -v || true
 
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, operator, operator-image, engine-integration, engine-image]
+    needs: [changes, proto, rust, go, typescript, python, operator, engine-integration, images, full-stack]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -568,9 +742,9 @@ jobs:
           echo "typescript:           ${{ needs.typescript.result }}"
           echo "python:               ${{ needs.python.result }}"
           echo "operator:             ${{ needs.operator.result }}"
-          echo "operator-image:       ${{ needs.operator-image.result }}"
           echo "engine-integration:   ${{ needs.engine-integration.result }}"
-          echo "engine-image:         ${{ needs.engine-image.result }}"
+          echo "images:               ${{ needs.images.result }}"
+          echo "full-stack:           ${{ needs.full-stack.result }}"
       - name: Fail if any required job failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1

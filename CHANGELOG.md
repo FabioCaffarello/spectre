@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CI hardening — image-build matrix + bake unification +
+  full-stack gate (R6.5.2).** R6.5.2 routes every CI image build
+  through the canonical `docker buildx bake` orchestrator that
+  `just images` runs locally; CI and local now share one build
+  path byte-for-byte. The two ad-hoc `engine-image`
+  (`docker buildx build`) and `operator-image` (`docker build`)
+  jobs are replaced by a single matrix `images` job whose five
+  entries (engine, control-plane, curl-impersonate, playwright,
+  seleniumbase) each call
+  `set -a; source build/docker/versions.env; set +a;
+  docker buildx bake --load <target>`. CI sets `VCS_REF`,
+  `BUILD_DATE`, and `TAG=ci` so the OCI labels are populated and
+  CI artefacts stay distinct from local `:dev` builds. Each
+  matrix entry's smoke step calls a parameterized just recipe
+  (`just <recipe> TAG=ci`); the five smoke / run recipes
+  (`engine-image-run`, `op-image-smoke`, `curl-imp-image-smoke`,
+  `pw-image-smoke`, `sb-image-smoke`) gain a positional
+  `TAG='dev'` argument so local invocations are unchanged. The
+  `changes` job filter set is rebuilt: the legacy `engine_image`
+  output is removed; six new outputs are added (`image_engine`,
+  `image_control_plane`, `image_curl_impersonate`,
+  `image_playwright`, `image_seleniumbase`, `full_stack`). Each
+  `image_<name>` filter rebuilds when its source, the proto
+  schema, the per-Dockerfile `.dockerignore`, `docker-bake.hcl`,
+  `build/docker/**`, or the workflow changes; selectivity is
+  preserved so adapter-specific edits don't trigger unrelated
+  rebuilds. A new **`full-stack` job** (gated by the
+  `full_stack` filter) bake-builds the five images at `TAG=dev`,
+  brings up the eleven-service Compose stack with
+  `--profile full`, creates a kind cluster on the runner's
+  Docker daemon via `helm/kind-action@v1`
+  (`cluster_name: spectre-ci`, `config: build/kind/cluster.yaml`),
+  regenerates `build/kind/kubeconfig` with `--internal` so the
+  operator container can dial `spectre-ci-control-plane:6443`,
+  applies the v1alpha2 CRD via `make install`, applies
+  `spectre_v1alpha2_scrapejob_hello-hackernews.yaml`, and polls
+  `kubectl get scrapejob hello-hackernews -o
+  jsonpath={.status.phase}` until `Completed` (5-minute
+  timeout). Always-run debug steps tail operator + engine +
+  adapter logs; `compose down -v` cleans up unconditionally. The
+  full-stack gate verifies master strategy §2.5 ("Compose is the
+  development environment") in CI on every relevant change —
+  the strongest possible signal that the post-R6.3 unified flow
+  holds. `ci-summary`'s `needs:` and report block drop the
+  legacy job names and gain `images` + `full-stack`.
+  `docs/architecture/container-images.md` grows a "CI shape"
+  subsection (matrix table, full-stack gate steps, filter map,
+  per-job firing/cost table). `build/docker/README.md`'s pin
+  inventory gains a footer noting CI consumes the same pins via
+  the same bake invocation. Capability invariant 13/12/6 holds
+  byte-for-byte (zero source changes; CI-only PR). **No new ADR
+  introduced** — Phase R6.5 is hygiene work; ADR-0020 §4's
+  refactor table records R6.5.2 alongside R6.5.1. R6.5.3 (Docker
+  Hub registry wiring + multi-arch readiness) is next.
 - **Phase R6.5 opens — stale-references sweep + R6.1 leftovers
   (R6.5.1).** R6.5 is a four-PR sub-phase inserted between R6.3
   (Phase R6 close) and R7.1 (Helm chart) to clear monorepo-health

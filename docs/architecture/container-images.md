@@ -248,6 +248,108 @@ smoke (start each service, poll gRPC health, fan a job through the
 engine + an adapter pair) belongs to R6.2's Compose stack work and
 R7.2's production-cluster smoke.
 
+The smoke recipes accept a `TAG='dev'` positional parameter (R6.5.2)
+so CI's matrix images job — which builds with `TAG=ci` to keep CI
+artefacts distinct from local `:dev` images — can reuse the same
+recipe bodies without re-tagging.
+
+## CI shape
+
+R6.5.2 routes every CI image build through the same `docker buildx
+bake` invocation that `just images` runs locally. CI and local
+share one orchestrator byte-for-byte; toolchain pins flow from
+`build/docker/versions.env` in both flows.
+
+### Matrix `images` job
+
+A single matrix job replaces the two ad-hoc `engine-image` and
+`operator-image` jobs that pre-R6.5.2 CI shipped. Each matrix entry
+maps a bake target to its smoke recipe:
+
+| Matrix entry | Bake target | Smoke recipe |
+|---|---|---|
+| `engine` | `engine` | `engine-image-run` |
+| `control-plane` | `control-plane` | `op-image-smoke` |
+| `curl-impersonate` | `curl-impersonate` | `curl-imp-image-smoke` |
+| `playwright` | `playwright` | `pw-image-smoke` |
+| `seleniumbase` | `seleniumbase` | `sb-image-smoke` |
+
+Per-entry `if: matrix.changed == 'true'` reads the corresponding
+`changes.outputs.image_<name>` filter; unchanged targets list in
+the run UI but skip their build / smoke / size steps. The build
+step is the canonical `set -a; source build/docker/versions.env;
+set +a; docker buildx bake --load <target>` — identical to `just
+images`. CI additionally sets `VCS_REF` (commit SHA), `BUILD_DATE`
+(repository updated_at), and `TAG=ci` so the OCI labels are
+populated and the resulting image is tagged distinctly from local
+artefacts.
+
+### Full-stack gate
+
+The `full-stack` job exercises the post-R6.3 unified Compose flow
+end-to-end on every relevant change. Eight steps:
+
+1. Bake builds the five images at `TAG=dev` so
+   `docker-compose.yml`'s `image: spectre-<name>:dev` references
+   resolve without re-tagging.
+2. `docker compose --profile full up -d` brings up the eleven
+   services on the runner's Docker daemon.
+3. `helm/kind-action@v1` creates a kind cluster
+   (`cluster_name: spectre-ci`) using `build/kind/cluster.yaml`.
+4. `kind get kubeconfig --internal` regenerates
+   `build/kind/kubeconfig` so the operator container — which joins
+   the `kind` Docker network — can dial
+   `spectre-ci-control-plane:6443`.
+5. `make install` (kubebuilder) applies the v1alpha2 CRD.
+6. `kubectl apply -f
+   core/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml`
+   submits the canonical sample.
+7. A 5-minute polling loop asserts
+   `kubectl get scrapejob hello-hackernews -o
+   jsonpath={.status.phase}` reads `Completed`.
+8. Always-run debug steps tail operator + engine + adapter logs;
+   `compose down -v` cleans up.
+
+The hello-hackernews sample exercises Playwright (the most common
+driver), the engine, the control plane, Postgres (status writes),
+and the gRPC dial chain — `Completed` is the strongest possible
+signal that the unified flow is intact.
+
+### `changes` filter map
+
+The `changes` job's `dorny/paths-filter` config emits per-target
+outputs that the matrix job consumes, plus a single `full_stack`
+output that gates the heavy gate:
+
+| Output | Triggers |
+|---|---|
+| `image_engine` | `core/engine/**`, `core/engine/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
+| `image_control_plane` | `core/control-plane/**`, …`/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
+| `image_curl_impersonate` | `adapters/curl-impersonate/**`, …`/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
+| `image_playwright` | `adapters/playwright/**`, …`/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
+| `image_seleniumbase` | `adapters/seleniumbase/**`, …`/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
+| `full_stack` | `core/**`, `adapters/**`, `proto/**`, `docker-compose.yml`, `docker-bake.hcl`, `build/docker/**`, `build/kind/**`, sample CRs / CRDs, the workflow |
+
+Selectivity is preserved: a change in `core/engine/src/lib.rs`
+rebuilds only the engine image; a change in
+`build/docker/versions.env` rebuilds every image (toolchain pins
+are shared); a change in `proto/**` rebuilds every image **and**
+fires the full-stack gate.
+
+### When each job runs
+
+| Job | Fires when | Cost |
+|---|---|---|
+| `proto`, `rust`, `go`, `typescript`, `python`, `operator` | Per-language source changes (existing) | Cheap |
+| `engine-integration` | engine or playwright source | Medium (~3–5 min) |
+| `images` matrix | Any image filter matches | Per-entry ~2–4 min, parallel |
+| `full-stack` | `full_stack` filter matches | Sequential after `images`; ~5–8 min |
+
+For a typical PR (one language change), most matrix entries skip
+their build steps and the full-stack gate may not fire; runtime
+stays close to the pre-R6.5.2 baseline. The heaviest case (a
+proto-schema change) rebuilds all five images and runs the gate.
+
 ## Forward references
 
 - **R6.2** will add Compose `services:` stanzas for every image and
@@ -279,9 +381,11 @@ R7.2's production-cluster smoke.
   `grpc_health_probe` into Compose `healthcheck:` stanzas.
 - **`grpc_health_probe` in runtime stages.** Added in R6.2
   alongside the Compose stanzas that consume it.
-- **CI image-build job rewrite.** R6.1 leaves the existing
-  `engine-image` / `op-image-smoke` jobs alone; R7.1 sweeps them
-  up wholesale with layer caching.
+- **CI image-build job rewrite.** R6.1 left the existing
+  `engine-image` / `op-image-smoke` jobs alone. R6.5.2 swept them
+  into a single matrix `images` job that calls bake — see the
+  "CI shape" section above. Layer caching across runs is still a
+  follow-up if CI runtime becomes painful.
 - **Image-size optimisation beyond "good enough".** Each image
   could be smaller with aggressive optimisation (Chrome →
   Chromium for SeleniumBase, custom Chromium build for
