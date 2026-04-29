@@ -66,7 +66,9 @@ pub mod kafka;
 pub mod output;
 pub mod plan;
 pub mod registry;
+pub mod s3;
 pub mod server;
+pub mod webhook;
 
 mod engine;
 

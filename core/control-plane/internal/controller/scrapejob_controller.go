@@ -32,6 +32,7 @@ import (
 	spectrev1alpha2 "github.com/FabioCaffarello/spectre/core/control-plane/api/v1alpha2"
 	"github.com/FabioCaffarello/spectre/core/control-plane/internal/db"
 	"github.com/FabioCaffarello/spectre/core/control-plane/internal/runner"
+	enginev1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/engine/v1alpha1"
 )
 
 // defaultJobTimeout is the timeout applied to ScrapeJob runs whose
@@ -179,8 +180,17 @@ func (r *ScrapeJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// R4.4: kafkaTopic is sourced from `Spec.OutputSink.Kafka.Topic`
 		// when the sink is Kafka; empty for every other variant.
 		// The engine consumes it only on `output_sink_kind = "kafka"`.
+		// R5.1: s3Config / webhookConfig are sourced from
+		// `Spec.OutputSink.S3` / `.Webhook` when those variants are
+		// set; nil for every other variant. The engine consumes
+		// each only when `output_sink_kind` matches (ADR-0024 §3 / §4).
 		kafkaTopic := outputSinkKafkaTopic(job.Spec.OutputSink)
-		rows, runErr := jr.Run(runCtx, jobUUID, job.Spec.JobDSL, sinkKind, kafkaTopic, os.Stdout)
+		s3Config := outputSinkS3Config(job.Spec.OutputSink)
+		webhookConfig := outputSinkWebhookConfig(job.Spec.OutputSink)
+		rows, runErr := jr.Run(
+			runCtx, jobUUID, job.Spec.JobDSL, sinkKind, kafkaTopic,
+			s3Config, webhookConfig, os.Stdout,
+		)
 
 		now := metav1.Now()
 		if runErr != nil {
@@ -320,11 +330,7 @@ func resolveEngineEndpoint(
 // to the canonical string the engine writes to `jobs.output_sink_kind`
 // (ADR-0023 §2). Returns the empty string when no variant is set;
 // the CEL rule prevents that at admission, so callers should
-// already have run validateOutputSink. Kafka / S3 / Webhook return
-// their canonical value here even though validateOutputSink rejects
-// them today — the engine.proto field is forward-compatible
-// (R4.2 Step 6) and the kind plumbing lands now so R4.4 / R5.1's
-// reconciler diff is just removing rejection lines.
+// already have run validateOutputSink.
 func outputSinkKind(sink spectrev1alpha2.OutputSink) string {
 	switch {
 	case sink.Stdout != nil:
@@ -340,20 +346,25 @@ func outputSinkKind(sink spectrev1alpha2.OutputSink) string {
 	}
 }
 
-// validateOutputSink enforces R4.4's runtime sink grammar: Stdout
-// and Kafka are accepted; S3 and Webhook remain schema-only and
-// reject with an explicit pointer to R5.1. The CEL rule on
-// OutputSink enforces "exactly one variant set" at admission, so
-// the unset-everything case is treated as an internal error.
+// validateOutputSink enforces R5.1's runtime sink grammar: every
+// v1alpha2 OutputSink variant (Stdout, Kafka, S3, Webhook) is
+// behaviourally implemented. The CEL rule on OutputSink enforces
+// "exactly one variant set" at admission, so the unset-everything
+// case is treated as an internal error.
 //
-// R4.4 unblocked the Kafka branch — the engine ships an `rdkafka`
-// producer and the reconciler forwards `Spec.OutputSink.Kafka.Topic`
-// to the engine via the `kafka_topic` field of `RunJobRequest`
-// (engine.proto field 4). Kafka admission gating is engine-side:
-// if the engine binary started without a reachable broker, jobs
-// with the Kafka sink fail fast at job-start time with
-// `KAFKA_UNAVAILABLE`. ADR-0023 §3 R4.4 addendum records the
-// pattern.
+// Engine-side admission gating per ADR-0024 §5:
+//
+//   - Kafka: engine startup probes the broker; jobs against an
+//     unreachable broker fail fast with `KAFKA_UNAVAILABLE`.
+//   - S3: engine startup parses SPECTRE_S3_* env (or relies on the
+//     AWS default credential chain); jobs against `None` fail fast
+//     with `S3_UNAVAILABLE`.
+//   - Webhook: per-job, no engine-level state. Failures surface
+//     mid-job as `WEBHOOK_POST_FAILED`.
+//
+// Each branch defence-in-depths the CEL-enforced field constraints
+// so a regenerated CRD without the rules still surfaces a clear
+// error at admission.
 func validateOutputSink(sink spectrev1alpha2.OutputSink) error {
 	switch {
 	case sink.Stdout != nil:
@@ -368,9 +379,26 @@ func validateOutputSink(sink spectrev1alpha2.OutputSink) error {
 		}
 		return nil
 	case sink.S3 != nil:
-		return fmt.Errorf("s3 output sink not yet implemented (R5.1)")
+		// R5.1: S3 is wired end-to-end via the engine's
+		// `aws-sdk-s3`. Defence-in-depth on bucket / key
+		// emptiness — CEL enforces `MinLength=1` for both at
+		// admission. ADR-0024 §3.
+		if sink.S3.Bucket == "" {
+			return fmt.Errorf("s3 output sink: bucket must be non-empty")
+		}
+		if sink.S3.Key == "" {
+			return fmt.Errorf("s3 output sink: key must be non-empty")
+		}
+		return nil
 	case sink.Webhook != nil:
-		return fmt.Errorf("webhook output sink not yet implemented (R5.1)")
+		// R5.1: Webhook is wired end-to-end via the engine's
+		// `reqwest` client. Defence-in-depth on URL emptiness —
+		// CEL enforces `Pattern=^https?://.+$` and `MinLength=1`
+		// at admission. ADR-0024 §4.
+		if sink.Webhook.URL == "" {
+			return fmt.Errorf("webhook output sink: url must be non-empty")
+		}
+		return nil
 	default:
 		return fmt.Errorf("OutputSink has no variant set")
 	}
@@ -386,6 +414,38 @@ func outputSinkKafkaTopic(sink spectrev1alpha2.OutputSink) string {
 		return sink.Kafka.Topic
 	}
 	return ""
+}
+
+// outputSinkS3Config extracts the S3 sink config when the sink is
+// S3, returning nil for every other variant. R5.1 (ADR-0024 §3)
+// ships the config on `RunJobRequest.s3` (engine.proto field 5);
+// the engine ignores the field for sinks other than S3.
+func outputSinkS3Config(sink spectrev1alpha2.OutputSink) *enginev1alpha1.S3SinkConfig {
+	if sink.S3 == nil {
+		return nil
+	}
+	return &enginev1alpha1.S3SinkConfig{
+		Bucket:   sink.S3.Bucket,
+		Key:      sink.S3.Key,
+		Endpoint: sink.S3.Endpoint,
+		Region:   sink.S3.Region,
+	}
+}
+
+// outputSinkWebhookConfig extracts the webhook sink config when
+// the sink is Webhook, returning nil for every other variant. R5.1
+// (ADR-0024 §4) ships the config on `RunJobRequest.webhook`
+// (engine.proto field 6); the engine ignores the field for sinks
+// other than Webhook.
+func outputSinkWebhookConfig(sink spectrev1alpha2.OutputSink) *enginev1alpha1.WebhookSinkConfig {
+	if sink.Webhook == nil {
+		return nil
+	}
+	return &enginev1alpha1.WebhookSinkConfig{
+		Url:       sink.Webhook.URL,
+		Method:    sink.Webhook.Method,
+		BatchSize: sink.Webhook.BatchSize,
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

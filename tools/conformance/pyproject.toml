@@ -32,6 +32,15 @@ dependencies = [
     # to drain the topic the engine published to and assert
     # partition keys + headers (ADR-0023 §3 R4.4 addendum).
     "confluent-kafka>=2.5",
+    # S3 client used by the R5.1 s3-sink conformance test to
+    # fetch the engine's uploaded JSONL object and assert
+    # body + content-type (ADR-0024 §3).
+    "boto3>=1.35",
+    # In-process HTTP server used by the R5.1 webhook-sink
+    # conformance test — the receiver lives in the test
+    # process so the test runs without a Compose dependency
+    # (ADR-0024 §4).
+    "aiohttp>=3.10",
 ]
 
 [project.urls]
@@ -105,6 +114,20 @@ follow_imports = "skip"
 # test wraps it locally so the boundary is bounded.
 [[tool.mypy.overrides]]
 module = ["confluent_kafka", "confluent_kafka.*"]
+ignore_missing_imports = true
+
+# boto3 + botocore ship type stubs only via separate boto3-stubs
+# packages; the conformance s3 test wraps boto3 locally so the
+# boundary is bounded.
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true
+
+# aiohttp ships type stubs but the conformance webhook test
+# uses aiohttp.web's TestServer surface which is loosely
+# typed; treat as Any-typed at the boundary.
+[[tool.mypy.overrides]]
+module = ["aiohttp", "aiohttp.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

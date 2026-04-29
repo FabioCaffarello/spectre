@@ -735,3 +735,139 @@ The §1 / §2 / §3 / §6 sections are unchanged at R4.2. The
 operator's startup-time Postgres dial is documented in
 ADR-0023 §6 / §12 — the operator refuses to start without
 `SPECTRE_POSTGRES_URL`.
+
+## Update (R4.4)
+
+R4.4 wires the engine's `rdkafka` producer end-to-end. Two
+ADR-level effects:
+
+- **§5** (`JobRunner` interface boundary): the signature
+  evolves with `kafkaTopic`. Cumulative parameter list:
+
+  ```go
+  type JobRunner interface {
+      Run(
+          ctx context.Context,
+          jobID uuid.UUID,
+          jobDSL string,
+          outputSinkKind string,
+          kafkaTopic string,
+          writer io.Writer,
+      ) (int64, error)
+  }
+  ```
+
+  `kafkaTopic` is sourced from `Spec.OutputSink.Kafka.Topic`
+  when the sink is Kafka; empty for every other variant. The
+  engine consumes it only when `outputSinkKind = "kafka"`
+  (ADR-0023 §3 R4.4 addendum). An empty topic with the Kafka
+  sink fails the job at the engine with `KAFKA_TOPIC_REQUIRED`.
+
+  The pattern §5 R4.2 addendum established holds: interface
+  changes that preserve the abstraction are acceptable;
+  changes that break the abstraction would require a new ADR.
+  R4.4's evolution is driven by the engine.proto field 4 plumbing,
+  not by an alternative architecture.
+
+- **§6** (output sink): the Kafka rejection branch in
+  `validateOutputSink` is removed. The only schema-only
+  variants remaining are S3 and Webhook (R5.1 wires both).
+  Admission gating for Kafka is engine-side per ADR-0023 §3
+  R4.4 addendum — no operator-level rejection required.
+
+The §1 / §2 / §3 / §4 sections are unchanged at R4.4.
+
+## Update (R5.1)
+
+R5.1 wires the remaining two output sinks (S3 and Webhook) and
+closes Phase R5. The §6 schema-only stub is fully retired —
+every v1alpha2 OutputSink variant is behaviourally
+implemented. ADR-0024 records the architecture; this addendum
+records §5's interface evolution.
+
+- **§5** (`JobRunner` interface boundary): the signature
+  evolves once more, this time with two parameters:
+
+  ```go
+  type JobRunner interface {
+      Run(
+          ctx context.Context,
+          jobID uuid.UUID,
+          jobDSL string,
+          outputSinkKind string,
+          kafkaTopic string,
+          s3Config *enginev1alpha1.S3SinkConfig,
+          webhookConfig *enginev1alpha1.WebhookSinkConfig,
+          writer io.Writer,
+      ) (int64, error)
+  }
+  ```
+
+  `s3Config` and `webhookConfig` are nil for every variant
+  except their own. The reconciler extracts them from
+  `Spec.OutputSink.S3` / `Spec.OutputSink.Webhook` via the
+  helpers `outputSinkS3Config` / `outputSinkWebhookConfig`
+  paralleling R4.4's `outputSinkKafkaTopic`. The engine
+  consumes each only when the matching `outputSinkKind` is
+  selected (ADR-0024 §3 / §4).
+
+  **The parameter list now stands at seven.** The R3.1
+  vindication of the abstraction holds in spirit — "run a
+  job, write output, return rows/error" is still preserved —
+  but the seam is starting to look noisy. Three options were
+  weighed for R5.1:
+
+  1. **Keep adding parameters** (chosen). Each parameter has
+     a clear purpose; the interface remains
+     forwarding-only-to-the-engine; the test surface
+     (StubRunner / errorRunner) updates trivially with
+     ignored `_` placeholders. The cost is the ugly
+     7-param signature.
+  2. **Refactor into a `RunRequest` struct.** The cleanest
+     v1alpha2 shape — one parameter that carries every
+     forwarding field. Rejected for R5.1 because doing it
+     inside a PR that already adds two new sinks doubles the
+     reviewable surface area. The seam is noisy but correct;
+     the refactor lands as its own PR in v1alpha2 once the
+     OutputSink design space stabilises.
+  3. **Functional-options pattern**
+     (`Run(ctx, dsl, opts ...RunOption)`). Pleasant at the
+     call site but obscures the wire mapping; the
+     reconciler-side helpers are forwarding values directly
+     to gRPC fields, and a builder layer between would
+     sacrifice obviousness for ergonomics. Rejected.
+
+  ADR-0024 §8 + the master prompt §4.4 explicitly defer the
+  struct refactor. v1alpha2 lands it alongside the
+  `OutputSinkAdapter` trait abstraction (ADR-0024 §8 + master
+  prompt §4.5), since both unify the engine's flat
+  per-sink dispatch into a single shape.
+
+- **§6** (output sink): the schema-only stub is fully retired.
+  After R5.1 every v1alpha2 OutputSink variant is wired:
+  Stdout (R3.2 / R4.2), Kafka (R4.4), S3 (R5.1), Webhook
+  (R5.1). The remaining negative-path coverage is
+  defence-in-depth on field emptiness — CEL admission rules
+  enforce non-empty bucket / key / URL at apiserver time, the
+  engine validates the same constraints in
+  `validateOutputSink` so a regenerated CRD without the rules
+  still surfaces a clear error. `TestFailedOnUnsupportedSink`
+  in `scrapejob_controller_test.go` is **deleted** — the
+  test's input set (a sink the reconciler rejects) has gone
+  to zero.
+
+- **§5 R5.1 admission gating asymmetry.** The reconciler-side
+  story stays uniform: `validateOutputSink` accepts or rejects
+  based on per-variant fields. The asymmetry shows up engine-
+  side: Kafka and S3 hold engine-level state validated at
+  startup; Webhook has no global state and gates per-job at
+  runtime. ADR-0024 §5 records the decision; the reconciler
+  is unchanged from §5 R4.4's pattern of "let the engine
+  decide" — an unreachable broker / unconfigured S3 surfaces
+  as a `Failed` event with `KAFKA_UNAVAILABLE` /
+  `S3_UNAVAILABLE`, the operator's job → `Failed` transition
+  carries the message verbatim.
+
+The §1 / §2 / §3 / §4 sections are unchanged at R5.1. ADR-0024
+is the new authoritative reference for the per-sink
+behavioural contract.

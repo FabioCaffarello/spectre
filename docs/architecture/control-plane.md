@@ -23,10 +23,10 @@ Webhook variants, CEL-validated).
 | Operator image (unbundled)         | shipped           | R3.1       |
 | `ScrapeJob` CRD v1alpha2           | shipped           | R3.2       |
 | `OutputSink.Stdout`                | shipped           | R3.2       |
-| `OutputSink.Kafka`                 | schema-only       | R4.4       |
-| `OutputSink.S3`                    | schema-only       | R5.1       |
-| `OutputSink.Webhook`               | schema-only       | R5.1       |
-| PostgreSQL job state               | not started       | R4.2       |
+| `OutputSink.Kafka`                 | shipped           | R4.4       |
+| `OutputSink.S3`                    | shipped           | R5.1       |
+| `OutputSink.Webhook`               | shipped           | R5.1       |
+| PostgreSQL job state               | shipped           | R4.2       |
 | Per-service Dockerfiles            | not started       | R6.1       |
 | Compose stack                      | not started       | R6.2       |
 | Helm chart                         | not started       | R7.1       |
@@ -131,24 +131,23 @@ enforces "exactly one variant set" via CEL:
 exactly one of stdout, kafka, s3, webhook must be set
 ```
 
-The reconciler implements only the `Stdout` variant in v1alpha2;
-the other three are schema-only. The schema is committed now to
-keep the CRD stable through Phase 3 — Kafka, S3, and Webhook
-implementations land progressively without forcing a v1alpha3.
+Every variant is wired post-R5.1. The reconciler accepts any of
+the four sinks at admission; engine-side admission gating
+surfaces destination-specific failures (e.g.
+`KAFKA_UNAVAILABLE`, `S3_UNAVAILABLE`, `WEBHOOK_POST_FAILED`)
+when the engine's runtime context does not support the
+configured sink.
 
-| Sink     | Runtime status        | Lands in PR | Reconciler behaviour |
-|----------|-----------------------|-------------|----------------------|
-| Stdout   | Implemented           | R3.2        | Engine streams Row events to the operator's stdout (`kubectl logs`). |
-| Kafka    | Schema-only           | R4.4        | Failed: `"kafka output sink not yet implemented (R4.4)"`. |
-| S3       | Schema-only           | R5.1        | Failed: `"s3 output sink not yet implemented (R5.1)"`. |
-| Webhook  | Schema-only           | R5.1        | Failed: `"webhook output sink not yet implemented (R5.1)"`. |
+| Sink     | Runtime status         | Lands in PR | Engine-side behaviour |
+|----------|------------------------|-------------|------------------------|
+| Stdout   | Implemented (R3.2 / R4.2) | R3.2     | Engine streams Row events to the operator's stdout (`kubectl logs`); audit copy persisted to `job_rows`. |
+| Kafka    | Implemented (R4.4)     | R4.4        | Engine publishes one message per row to the configured topic. Admission gate at engine startup; `KAFKA_UNAVAILABLE` if broker absent (ADR-0023 §3 R4.4 addendum). |
+| S3       | Implemented (R5.1)     | R5.1        | Engine buffers JSONL output in memory, single `PutObject` at completion. Admission gate at engine startup with INFO-level fallback for BYO-credentials mode; `S3_UNAVAILABLE` if uploader unconfigured (ADR-0024 §3 + §5). |
+| Webhook  | Implemented (R5.1)     | R5.1        | Engine POSTs rows to the configured URL — per-row or batched. Per-job admission at the executor; `WEBHOOK_POST_FAILED` after retries exhaust (ADR-0024 §4 + §5). |
 
-Applying a manifest with a schema-only sink succeeds (the CR is
-admitted), but the reconciler immediately transitions the
-ScrapeJob to `Failed` at the `Pending → Running` boundary with
-the documented error message. The
-`spectre_v1alpha2_scrapejob_kafka_NOT_YET_IMPLEMENTED.yaml` sample
-documents the gap explicitly.
+`docs/architecture/output-sinks.md` is the per-sink reference;
+ADR-0023 §3 R4.4 addendum and ADR-0024 are the load-bearing
+architectural records.
 
 ## CEL validation
 

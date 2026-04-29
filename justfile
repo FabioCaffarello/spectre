@@ -89,6 +89,22 @@ kafka-consume TOPIC:
         --from-beginning \
         --property print.headers=true
 
+# Open the MinIO Console UI for the local S3-compatible object
+# store. Linux uses `xdg-open`; macOS uses `open`. Falls back to
+# printing the URL when no opener is available (e.g. headless
+# dev container). Default credentials are
+# spectre_dev_access / spectre_dev_secret_key (visible in
+# docker-compose.yml; dev-only).
+minio-console:
+    @if command -v open >/dev/null; then open http://localhost:9001; \
+    elif command -v xdg-open >/dev/null; then xdg-open http://localhost:9001; \
+    else echo "open http://localhost:9001 in your browser"; fi
+
+# List objects in the spectre-rows bucket via docker exec —
+# useful for sanity-checking the engine's S3 uploads.
+minio-ls:
+    docker exec spectre-minio mc ls --recursive local/spectre-rows
+
 # ---------------------------------------------------------------------------
 # Repository hygiene
 # ---------------------------------------------------------------------------
@@ -178,6 +194,21 @@ engine-db-test:
 # default so `just engine-test` stays broker-free.
 engine-kafka-test:
     cd core/engine && cargo test --test kafka_integration -- --ignored --nocapture
+
+# Run the engine's S3 uploader integration tests. Requires an
+# S3-compatible endpoint reachable at SPECTRE_S3_ENDPOINT (the
+# same env var the engine binary reads at startup, ADR-0024 §3).
+# Bring up MinIO via `just compose-up` (R5.1). Tests are
+# `#[ignore]` by default so `just engine-test` stays MinIO-free.
+engine-s3-test:
+    cd core/engine && cargo test --test s3_integration -- --ignored --nocapture
+
+# Run the engine's webhook client integration tests. No external
+# dependency — the test server runs in-process via axum. ADR-0024
+# §4. Tests run unconditionally as part of `just engine-test`;
+# this recipe gives them a discoverable surface.
+engine-webhook-test:
+    cd core/engine && cargo test --test webhook_integration -- --nocapture
 
 # ---------------------------------------------------------------------------
 # spectre engine binary (core/engine/src/bin/spectre.rs)

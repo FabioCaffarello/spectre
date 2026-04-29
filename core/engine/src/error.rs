@@ -64,6 +64,24 @@ pub enum EngineError {
     #[error("output error: {0}")]
     Output(String),
 
+    /// Per-row sink publish or end-of-job sink finalisation
+    /// failed (Kafka publish, S3 `PutObject`, webhook POST). The
+    /// `code` is the canonical engine-side error code
+    /// (`KAFKA_PUBLISH_FAILED`, `S3_UPLOAD_FAILED`,
+    /// `WEBHOOK_POST_FAILED`); the gRPC `Failed.error_code` is
+    /// the same string. Carries the destination-specific
+    /// diagnostic in `message`. ADR-0023 §3 + ADR-0024 §3 / §4.
+    #[error("{code}: {message}")]
+    SinkPublish {
+        /// Canonical sink-error code (`KAFKA_PUBLISH_FAILED` /
+        /// `S3_UPLOAD_FAILED` / `WEBHOOK_POST_FAILED`).
+        code: String,
+        /// Destination-specific diagnostic (status code +
+        /// excerpt for HTTP, librdkafka error string for Kafka,
+        /// SDK error for S3).
+        message: String,
+    },
+
     /// I/O error while reading input files (job YAML, driver
     /// manifest) or writing output.
     #[error("io error: {0}")]

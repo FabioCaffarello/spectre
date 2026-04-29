@@ -1,0 +1,66 @@
+# Sample ScrapeJob with the Webhook output sink (R5.1 —
+# ADR-0024 §4). The reconciler accepts the Webhook variant
+# since R5.1 wired the engine's `reqwest`-based webhook client
+# end-to-end. The job POSTs (or PUTs) extracted rows to the
+# configured URL — one row per request when batchSize=0 (the
+# CRD default), or N-row batches when batchSize>0.
+#
+# Webhook admission gating is per-job, not engine-level (per
+# ADR-0024 §5). The engine has no global state to validate at
+# startup; admission happens at the executor when the first
+# POST attempt connects (or fails to). The retry policy is
+# bounded exponential backoff (3 attempts, 200/400/800 ms with
+# jitter) for transient errors (connection refused, 5xx, 429);
+# fatal on first attempt for other 4xx. After retries exhaust,
+# the job terminates with `error_code = "WEBHOOK_POST_FAILED"`.
+#
+# Header schema (every request carries):
+#   - User-Agent: spectre-engine/<version>
+#   - Content-Type: application/x-ndjson
+#   - X-Spectre-Job-Id: the ScrapeJob UID
+#   - X-Spectre-Driver: playwright / seleniumbase / curl-impersonate
+#   - X-Spectre-Batch-Size: only when batchSize > 0
+#   - X-Spectre-Row-Count: number of rows in this body
+#
+# v1alpha1 does NOT add auth headers. ADR-0024 §8 defers HMAC
+# signing, bearer tokens, and signed-request envelopes to
+# v1alpha2.
+#
+# The URL below is a placeholder — real deployments substitute
+# their own. For local-dev verification, run something like
+# `python3 -m http.server 8088` and point the URL at
+# `http://host.docker.internal:8088/spectre` (on macOS) or
+# `http://172.17.0.1:8088/spectre` (on Linux).
+apiVersion: spectre.io/v1alpha2
+kind: ScrapeJob
+metadata:
+  name: hello-hackernews-webhook
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  jobDSL: |
+    spectre: v1alpha1
+    driver: playwright
+    steps:
+      - navigate: https://news.ycombinator.com
+      - extract:
+          selector: .titleline > a
+          fields:
+            title: textContent
+            url: href
+    output:
+      format: jsonl
+      path: ./stories.jsonl
+  engineRef:
+    service:
+      name: spectre-engine
+      namespace: spectre-system
+      port: 9090
+  outputSink:
+    webhook:
+      url: https://example-receiver.example.com/spectre
+      method: POST
+      # 0 → one row per HTTP request. Set >0 to batch N rows
+      # per request; the consumer must split on '\n'.
+      batchSize: 0

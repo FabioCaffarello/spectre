@@ -134,6 +134,47 @@ rdkafka = { version = "0.36", default-features = false, features = [
     "tokio",
 ] }
 
+# S3 client (R5.1 — ADR-0024 §3). The official AWS SDK for Rust;
+# production-parity choice over the third-party `rust-s3` crate.
+# Custom endpoints (MinIO, Cloudflare R2, Wasabi, Backblaze B2)
+# are supported via the `endpoint_url` builder so the same client
+# serves dev (Compose MinIO) and prod (real S3) without branching.
+#
+# `default-features = false` plus `rt-tokio` + `rustls` align the
+# TLS stack with sqlx's rustls 0.23 (single rustls in the tree;
+# rdkafka's vendored OpenSSL is a separate ABI handled by
+# librdkafka's C linkage). `behavior-version-latest` opts into the
+# SDK's stable behaviour pinning so a 1.x minor bump cannot silently
+# shift auth precedence, retry policy, or signing version.
+#
+# `aws-credential-types`'s `hardcoded-credentials` feature exposes
+# the constructor used when SPECTRE_S3_ACCESS_KEY_ID +
+# SPECTRE_S3_SECRET_ACCESS_KEY are set; without the feature the
+# SDK only accepts credentials from its default chain.
+aws-sdk-s3 = { version = "1", default-features = false, features = [
+    "rt-tokio",
+    "rustls",
+    "behavior-version-latest",
+] }
+aws-config = { version = "1", default-features = false, features = [
+    "rt-tokio",
+    "rustls",
+    "behavior-version-latest",
+] }
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
+
+# HTTP webhook client (R5.1 — ADR-0024 §4). reqwest is the
+# de-facto Rust HTTP client; rustls-tls-native-roots picks up the
+# OS trust store so corporate proxies / private CAs work without
+# env gymnastics. `default-features = false` skips `default-tls`
+# (native-tls) which would pull a second TLS stack; the chosen
+# rustls features align with sqlx's rustls 0.23.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls-native-roots",
+    "json",
+    "gzip",
+] }
+
 [build-dependencies]
 # tonic-build invokes prost-build at compile time to write the
 # generated code into Cargo's OUT_DIR. See `build.rs`. The version
@@ -146,6 +187,14 @@ tonic-build = { version = "0.13", default-features = false, features = ["prost"]
 # tempfile is used by output-sink unit tests to allocate a
 # deterministic JSONL output path.
 tempfile = "3"
+
+# axum drives the in-process test server used by
+# `tests/webhook_integration.rs` (R5.1 — ADR-0024 §4). The engine's
+# tonic 0.13 already pulls hyper transitively, so axum's added
+# build cost is small. wiremock was evaluated and rejected —
+# heavier abstraction, less control over the exact status sequence
+# the retry test needs.
+axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
 
 [lints.rust]
 unsafe_code = "forbid"

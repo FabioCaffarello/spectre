@@ -57,7 +57,68 @@ message RunJobRequest {
   // empty topic with `output_sink_kind = 'kafka'` causes the
   // engine to yield a `Failed` event with `error_code =
   // "KAFKA_TOPIC_REQUIRED"`.
+  //
+  // R5.1 (ADR-0024 §3) introduces nested S3SinkConfig +
+  // WebhookSinkConfig messages rather than flat fields; v1alpha2
+  // may promote `kafka_topic` to a `KafkaSinkConfig` message for
+  // symmetry but the field 4 wire format must stay R4.4-compatible.
   string kafka_topic = 4;
+
+  // S3 sink config the engine consumes when `output_sink_kind =
+  // 's3'` (R5.1 — ADR-0024 §3). Sourced from
+  // `ScrapeJob.Spec.OutputSink.S3`. Ignored for every other
+  // sink kind. Empty (default-valued message) when the sink is
+  // not S3; an empty bucket / key with `output_sink_kind = 's3'`
+  // causes the engine to yield a `Failed` event with
+  // `error_code = "S3_FIELD_REQUIRED"`.
+  S3SinkConfig s3 = 5;
+
+  // Webhook sink config the engine consumes when
+  // `output_sink_kind = 'webhook'` (R5.1 — ADR-0024 §4). Sourced
+  // from `ScrapeJob.Spec.OutputSink.Webhook`. Ignored for every
+  // other sink kind. An empty URL with `output_sink_kind =
+  // 'webhook'` causes the engine to yield a `Failed` event with
+  // `error_code = "WEBHOOK_FIELD_REQUIRED"`.
+  WebhookSinkConfig webhook = 6;
+}
+
+// Per-job S3 sink configuration mirroring v1alpha2's
+// `OutputSink.S3` shape. The reconciler extracts these fields
+// from `ScrapeJob.Spec.OutputSink.S3` and forwards them on the
+// `RunJobRequest.s3` field. The engine renders the key template
+// (currently `{{.JobID}}`) at upload time per ADR-0024 §3.
+message S3SinkConfig {
+  // S3 bucket name. Non-empty when `output_sink_kind = 's3'`;
+  // ignored for other sinks.
+  string bucket = 1;
+
+  // Object key, supports `{{.JobID}}` template substitution.
+  // Non-empty when `output_sink_kind = 's3'`.
+  string key = 2;
+
+  // Optional endpoint URL override (MinIO, Cloudflare R2,
+  // Wasabi, Backblaze B2). Empty for real AWS S3.
+  string endpoint = 3;
+
+  // AWS region. Empty falls back to the engine's
+  // `SPECTRE_S3_REGION` default (`us-east-1`).
+  string region = 4;
+}
+
+// Per-job webhook sink configuration mirroring v1alpha2's
+// `OutputSink.Webhook` shape. The reconciler extracts these
+// fields from `ScrapeJob.Spec.OutputSink.Webhook` and forwards
+// them on the `RunJobRequest.webhook` field per ADR-0024 §4.
+message WebhookSinkConfig {
+  // Receiver URL.
+  string url = 1;
+
+  // HTTP method ("POST" or "PUT"). Empty defaults to POST.
+  string method = 2;
+
+  // Number of rows per HTTP request. 0 means one row per
+  // request (the CRD default); >0 batches rows.
+  int32 batch_size = 3;
 }
 
 message RunJobResponse {

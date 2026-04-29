@@ -1,7 +1,7 @@
 ## Sample ScrapeJob CRs, one per reference adapter, plus an
-## EngineRef.Endpoint variant for ad-hoc local testing and a
-## functional Kafka sample (R4.4 wired the producer end-to-end —
-## ADR-0023 §3 R4.4 addendum).
+## EngineRef.Endpoint variant for ad-hoc local testing and the
+## three non-stdout sink samples (Kafka — R4.4; S3 + Webhook —
+## R5.1; ADR-0023 §3 R4.4 addendum + ADR-0024).
 ## Apply individually: kubectl apply -f spectre_v1alpha2_scrapejob_hello-hackernews.yaml
 resources:
 - spectre_v1alpha2_scrapejob_hello-hackernews.yaml
@@ -9,4 +9,6 @@ resources:
 - spectre_v1alpha2_scrapejob_seleniumbase.yaml
 - spectre_v1alpha2_scrapejob_curl-impersonate.yaml
 - spectre_v1alpha2_scrapejob_kafka.yaml
+- spectre_v1alpha2_scrapejob_s3.yaml
+- spectre_v1alpha2_scrapejob_webhook.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

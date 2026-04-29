@@ -9,6 +9,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **S3 + webhook output sinks; `OutputSink.S3` + `OutputSink.Webhook`
+  unblocked; ADR-0024 introduced (R5.1).** ADR-0024 documents
+  the engine's `aws-sdk-s3` 1.x uploader (rustls features,
+  custom-endpoint support for MinIO/R2/Wasabi,
+  `behavior-version-latest` pinning) and `reqwest` 0.12 webhook
+  client (rustls-tls-native-roots aligned with sqlx 0.23). The
+  S3 sink buffers extracted rows in memory as JSON Lines and
+  uploads as a single PutObject at job completion (multipart
+  streaming deferred to v1alpha2); the object key supports
+  `{{.JobID}}` template substitution; empty-result jobs upload
+  zero-byte objects so the presence-or-absence of the key
+  remains a reliable post-job signal; content type is
+  `application/x-ndjson`. The webhook sink POSTs (or PUTs) rows
+  to the configured URL with bounded exponential-backoff retry
+  on transient errors (3 attempts, 200/400/800 ms with jitter,
+  retryable on connection-refused / 5xx / 429, fatal on first
+  attempt for other 4xx); per-row when `BatchSize=0` (CRD
+  default) or batched at N-row threshold otherwise. Every
+  request carries the `User-Agent: spectre-engine/<version>`,
+  `X-Spectre-Job-Id`, `X-Spectre-Driver`, `X-Spectre-Row-Count`
+  header schema (auth deferred to v1alpha2). **Admission gating
+  asymmetry** (ADR-0024 §5): Kafka and S3 hold engine-level
+  state validated at startup (S3's env-unset arm logs INFO, not
+  WARN — BYO-credentials mode covers IAM-role / SSO / profile,
+  the production-typical shape); Webhook has no global state
+  and gates per-job at runtime. Engine-side errors:
+  `S3_UNAVAILABLE` / `S3_FIELD_REQUIRED` / `S3_UPLOAD_FAILED` /
+  `WEBHOOK_FIELD_REQUIRED` / `WEBHOOK_POST_FAILED`. `engine.proto`
+  evolves non-breakingly with nested `S3SinkConfig` (field 5,
+  bucket/key/endpoint/region) and `WebhookSinkConfig` (field 6,
+  url/method/batchSize) messages; `kafka_topic` (field 4) stays
+  as a flat string for R4.4 wire compat. The reconciler's
+  `validateOutputSink` unblocks both variants (defence-in-depth
+  on per-variant required fields); new helpers
+  `outputSinkS3Config` / `outputSinkWebhookConfig` parallel
+  R4.4's `outputSinkKafkaTopic`. The Compose stack adds **MinIO**
+  at `localhost:9000` (S3 API) + `localhost:9001` (web console)
+  plus a one-shot bucket-bootstrap container that pre-creates
+  `spectre-rows`. `.env.example` carries the `SPECTRE_S3_*`
+  block. Justfile recipes: `engine-s3-test`,
+  `engine-webhook-test`, `minio-console`, `minio-ls`. Two new
+  sample manifests (`spectre_v1alpha2_scrapejob_s3.yaml`,
+  `..._webhook.yaml`). The conformance suite gains
+  `test_s3_sink.py` (one test against Compose MinIO via boto3) +
+  `test_webhook_sink.py` (per-row + batched against an
+  in-process aiohttp server, no Compose dep) — full suite at
+  50 passed, 14 skipped (vs R4.4's 47 / 14 — the +3 are the
+  new tests). The 13 / 12 / 6 capability invariant holds
+  byte-for-byte. **Phase R5 closes with this PR — every
+  v1alpha2 `OutputSink` variant is behaviourally implemented.**
+
+### Changed
+
+- **`JobRunner.Run` signature evolves to seven parameters
+  (R5.1).** `s3Config *enginev1alpha1.S3SinkConfig` and
+  `webhookConfig *enginev1alpha1.WebhookSinkConfig` join the
+  R4.2 / R4.4 parameters. ADR-0019 §5 R5.1 addendum documents
+  the trade-off: a `RunRequest` struct refactor is the right
+  v1alpha2 shape but doing it inside an R5.1 PR that already
+  adds two new sinks would double the reviewable surface area;
+  the refactor lands as its own PR in v1alpha2.
+
+### Removed
+
+- **`TestFailedOnUnsupportedSink` deleted (R5.1).** Every
+  v1alpha2 `OutputSink` variant is now wired; the test's input
+  set (a sink the reconciler rejects) has gone to zero.
+  Preserving it would require fabricating an invalid sink
+  (a fifth variant), which is itself a schema violation. The
+  defence-in-depth `RejectsEmpty*` tests in
+  `scrapejob_controller_test.go` continue to cover the
+  remaining negative-path surface. ADR-0024 §1 records the
+  deletion.
+
 - **Kafka producer integration; `OutputSink.Kafka` unblocked
   (R4.4).** ADR-0023 §3 R4.4 addendum implements the engine's
   `rdkafka` producer end-to-end. The engine binary builds one

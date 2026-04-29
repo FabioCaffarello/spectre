@@ -29,7 +29,9 @@ use anyhow::{Context, Result};
 use spectre_engine::db::{Database, run_migrations};
 use spectre_engine::kafka::KafkaProducer;
 use spectre_engine::registry::AdapterRegistry;
+use spectre_engine::s3::{S3Error, S3Uploader};
 use spectre_engine::server::engine_server;
+use spectre_engine::webhook::WebhookClient;
 use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
@@ -95,11 +97,51 @@ async fn run() -> Result<()> {
         }
     };
 
+    // S3 uploader dial. ADR-0023 §6 + ADR-0024 §5 make S3 OPTIONAL
+    // with the soft-fail variant: the env-unset arm logs INFO
+    // (BYO-credentials mode is the production-typical shape — IAM
+    // role / SSO / profile cover most real deployments) rather than
+    // WARN, distinguishing it from the kafka-style "you forgot to
+    // configure this" misconfiguration. S3-sinked jobs against `None`
+    // fail fast at job-start with `S3_UNAVAILABLE` (ADR-0024 §3).
+    let s3: Option<Arc<S3Uploader>> = match S3Uploader::from_env() {
+        Ok(uploader) => {
+            info!(endpoint = uploader.endpoint_label(), "s3 uploader ready");
+            Some(Arc::new(uploader))
+        }
+        Err(S3Error::NotConfigured(_)) => {
+            info!(
+                "s3 uploader not configured: SPECTRE_S3_* env unset. \
+                 OutputSink.S3 jobs will fail fast at job-start with \
+                 S3_UNAVAILABLE. Set SPECTRE_S3_ENDPOINT (or rely on the \
+                 AWS default credential chain) and restart engine to enable.",
+            );
+            None
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "s3 uploader init failed; OutputSink.S3 jobs will fail fast \
+                 with S3_UNAVAILABLE",
+            );
+            None
+        }
+    };
+
+    // Webhook client. ADR-0024 §5 records the asymmetry vs Kafka and
+    // S3: webhook has no engine-level state to validate at startup,
+    // so construction is infallible and the field on
+    // EngineServiceImpl is always Some(...). Per-job admission
+    // happens at the executor (URL emptiness pre-flight) and at the
+    // first POST attempt (transport / status surface).
+    let webhook = Arc::new(WebhookClient::new());
+    info!("webhook client ready (per-job admission)");
+
     let registry = AdapterRegistry::from_env();
     log_registry(&registry);
 
     let engine = Engine::with_registry(registry);
-    let svc = engine_server(engine, db, kafka);
+    let svc = engine_server(engine, db, kafka, s3, webhook);
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter

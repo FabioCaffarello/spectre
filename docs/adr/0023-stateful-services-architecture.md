@@ -609,6 +609,35 @@ minimal-dependency variant. The trade-off — deployment-shape
 constraint for operational-clarity gain — is recorded honestly
 in R8.1's documentation refresh.
 
+### Update (R5.1) — admission-gating generalised
+
+The §6 framing of "admission gating is engine-level" carried
+implicitly into the R4.4 Kafka pattern. R5.1 makes the
+asymmetry explicit: **engine-level sinks (Kafka, S3) admit-gate
+at startup; per-job sinks (Webhook) admit at runtime.**
+
+ADR-0024 §5 records the reasoning and contrasts the two
+shapes. The summary for §6:
+
+- **Postgres** — REQUIRED; engine startup fails hard if
+  Postgres is unreachable. (Unchanged.)
+- **Redis** — REQUIRED; adapter startup fails hard. (Unchanged.)
+- **Kafka** — OPTIONAL; engine logs WARN at startup if
+  unreachable, threads `None`, jobs fail fast at job-start.
+  (R4.4 addendum.)
+- **S3** — OPTIONAL; engine logs **INFO** at startup if
+  unconfigured (BYO-credentials mode is the production-typical
+  shape), WARN if configured but unreachable. Jobs fail fast
+  at job-start with `S3_UNAVAILABLE` / `S3_FIELD_REQUIRED`.
+  (R5.1 / ADR-0024 §3 + §5.)
+- **Webhook** — OPTIONAL; **no engine-level state**. Engine
+  startup never mentions webhook. Jobs fail at runtime with
+  `WEBHOOK_POST_FAILED` after retries exhaust. (R5.1 /
+  ADR-0024 §4 + §5.)
+
+A future fifth-sink contributor consults ADR-0024 §5 to
+decide which model applies.
+
 ## §7 — Network topology
 
 The post-R4 topology has eight long-lived services: control-

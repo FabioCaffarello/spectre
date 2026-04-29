@@ -74,12 +74,13 @@ binaries:
 
 ```bash
 git clone https://github.com/FabioCaffarello/spectre && cd spectre
-cp .env.example .env                  # Postgres / Redis / Kafka URL + endpoint defaults
+cp .env.example .env                  # Postgres / Redis / Kafka / S3 URL + endpoint defaults
 just bootstrap                        # fetch every component's deps
 just pw-install-browsers              # Chromium for Playwright
 
 # Stateful services: Postgres (R4.2), Redis (R4.3), Kafka KRaft +
-# Redpanda Console (R4.4). All four healthcheck-gated.
+# Redpanda Console (R4.4), MinIO + bucket bootstrap (R5.1).
+# All seven containers healthcheck-gated.
 just compose-up                       # docker compose up -d
 
 # Application services — one terminal each.
@@ -104,10 +105,13 @@ ScrapeJob CR through the control plane's gRPC client, into the
 engine's `RunJob` stream, and out to the configured `OutputSink`.
 For per-service specifics see
 [docs/architecture/postgres.md](docs/architecture/postgres.md),
-[docs/architecture/redis.md](docs/architecture/redis.md), and
-[docs/architecture/kafka.md](docs/architecture/kafka.md). The
-Redpanda Console UI for Kafka inspection runs at
-<http://localhost:8080> (`just kafka-console`).
+[docs/architecture/redis.md](docs/architecture/redis.md),
+[docs/architecture/kafka.md](docs/architecture/kafka.md), and
+[docs/architecture/output-sinks.md](docs/architecture/output-sinks.md).
+The Redpanda Console UI for Kafka inspection runs at
+<http://localhost:8080> (`just kafka-console`); the MinIO
+Console for S3 / `OutputSink.S3` debugging runs at
+<http://localhost:9001> (`just minio-console`).
 
 ## How Spectre compares
 
