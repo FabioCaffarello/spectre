@@ -139,6 +139,12 @@ it backs.
   must match `PLAYWRIGHT_VERSION`. Bumping one without the
   other causes Chromium / API drift; the `playwright` package
   upgrade and the `versions.env` edit go in the same commit.
+- CI consumes the same pins via the same bake invocation. R6.5.2
+  routed every CI image build through `set -a; source
+  build/docker/versions.env; set +a; docker buildx bake --load
+  <target>` — local and CI are byte-for-byte aligned, so a
+  toolchain bump merged here flows through to CI without a
+  workflow edit.
 
 ---
 
