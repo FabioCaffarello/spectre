@@ -46,14 +46,13 @@ use serde::Deserialize;
 use thiserror::Error;
 use url::Url;
 
-/// Hardcoded list of drivers the engine knows about in v1alpha1. PR9
-/// added `seleniumbase` once the Python adapter implemented
-/// `Initialize` and `Navigate` against the conformance suite (ADR-0014);
-/// PR11 added `curl-impersonate` once the Go HTTP-only adapter shipped
-/// the same handshake floor (ADR-0016). The list is alphabetical to
-/// match the byte-for-byte conformance pattern. A driver registry
-/// replaces this list later in Phase 2 — see ADR-0012 §"Bad, because"
-/// for the hardcoded-list rationale.
+/// Hardcoded list of drivers the engine knows about in v1alpha1.
+/// `seleniumbase` is admitted by ADR-0014 (the Python adapter's
+/// initial landing) and `curl-impersonate` by ADR-0016 (the Go
+/// HTTP-only adapter's handshake floor). The list is alphabetical
+/// to match the byte-for-byte conformance pattern. A driver
+/// registry replaces this list later in Phase 2 — see ADR-0012
+/// §"Bad, because" for the hardcoded-list rationale.
 pub const KNOWN_DRIVERS: &[&str] = &["curl-impersonate", "playwright", "seleniumbase"];
 
 /// The protocol version string the DSL must declare under `spectre:`.
@@ -545,8 +544,8 @@ output:
 
     #[test]
     fn accepts_seleniumbase_driver() {
-        // ADR-0014: PR9 grew KNOWN_DRIVERS to include `seleniumbase`.
-        // A job declaring it must parse successfully.
+        // ADR-0014: KNOWN_DRIVERS includes `seleniumbase`. A job
+        // declaring it must parse successfully.
         let yaml = r#"
 spectre: v1alpha1
 driver: seleniumbase
@@ -562,9 +561,9 @@ output:
 
     #[test]
     fn accepts_curl_impersonate_driver() {
-        // ADR-0016: PR11 grew KNOWN_DRIVERS to include
-        // `curl-impersonate`. A job declaring it must parse
-        // successfully even though only the HTTP-only navigation
+        // ADR-0016: KNOWN_DRIVERS includes `curl-impersonate`. A
+        // job declaring it must parse successfully even though
+        // only the HTTP-only navigation
         // capability is honoured by the underlying adapter — the
         // engine's planner is responsible for capability checks
         // (validate_capabilities), not the DSL parser.
