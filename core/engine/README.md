@@ -18,8 +18,8 @@ produce JSON Lines output.
 
 ## Build the binary
 
-The crate produces a `[[bin]]` named `spectre` — the same binary
-that PR8 promoted from PR7's example. From the repository root:
+The crate produces a `[[bin]]` named `spectre` (ADR-0013). From
+the repository root:
 
 ```bash
 just spectre-build

@@ -5,13 +5,12 @@ DSL extraction jobs to the engine over gRPC, tracks their lifecycle,
 and (in Phase 3 follow-ups) orchestrates fan-out and scheduling.
 
 > **Status:** Phase 3 in progress, microservices refactor in
-> flight. PR14–PR18 shipped the scaffolding, the `ScrapeJob` CRD,
-> the state-machine reconciler, and the bundled-image execution
-> model with all three reference adapters running in one Pod.
-> R1.1–R2.3 turned the engine into a stateless gRPC service and
-> the adapters into long-running services. R3.1 retires the
-> bundled `SubprocessRunner` in favour of `EngineClientRunner`,
-> a thin gRPC client that streams `RunJob` events from the engine
+> flight. The scaffolding, the `ScrapeJob` CRD, and the
+> state-machine reconciler are in place. R1.1–R2.3 turned the
+> engine into a stateless gRPC service and the adapters into
+> long-running services. R3.1 retired the bundled
+> `SubprocessRunner` in favour of `EngineClientRunner`, a thin
+> gRPC client that streams `RunJob` events from the engine
 > service back into the reconciler. Subsequent phases (R4–R7)
 > add stateful services, output sinks beyond stdout, per-service
 > Dockerfiles, the Compose stack, and the Helm chart. See
@@ -43,7 +42,7 @@ The standard kubebuilder v4 layout. Notable files:
   — the state-machine reconciler. Pending → Running → Completed |
   Failed.
 - [`internal/runner/runner.go`](internal/runner/runner.go) — the
-  `JobRunner` interface and PR14's `StubRunner`. ADR-0019 §5.
+  `JobRunner` interface and `StubRunner` (envtest). ADR-0019 §5.
 - [`internal/runner/engine_client.go`](internal/runner/engine_client.go)
   — R3.1's `EngineClientRunner`: dials the engine's
   `spectre.engine.v1alpha1.Engine.RunJob` streaming RPC, copies
@@ -95,11 +94,11 @@ adapter is built in a `curl-impersonate-builder` stage (Go,
 the official Microsoft Playwright image
 (`mcr.microsoft.com/playwright:v1.59.1-noble`), pinned by digest in
 [`adapters/playwright/.playwright-base-image`](../../adapters/playwright/.playwright-base-image)
-so version bumps touch one file. PR17 extended the runtime stage
-with apt-installed Python 3.12, `google-chrome-stable`, and a
-matching ChromeDriver provisioned via SeleniumBase's installer.
-PR18 extended the runtime stage further with the upstream
-`curl-impersonate` release tarball; the version + SHA-256 are
+so version bumps touch one file. The runtime stage carries
+apt-installed Python 3.12, `google-chrome-stable`, and a
+matching ChromeDriver provisioned via SeleniumBase's installer,
+plus the upstream `curl-impersonate` release tarball; the
+version + SHA-256 are
 pinned in
 [`adapters/curl-impersonate/.curl-impersonate-version`](../../adapters/curl-impersonate/.curl-impersonate-version),
 the variant binaries (`curl_chrome116`, `curl_chrome110`, …) land
@@ -144,16 +143,16 @@ synthesise the LeaderElectionID.
 
 ## What this does not do (yet)
 
-- **Multi-arch images.** PR16 + PR17 + PR18 ship linux/amd64 only
-  — the engine Dockerfile cross-compiles to
+- **Multi-arch images.** Every Spectre image ships linux/amd64
+  only — the engine Dockerfile cross-compiles to
   `x86_64-unknown-linux-musl`, the manager / Microsoft base /
   Google Chrome apt repo / curl-impersonate release tarball all
   run on the same arch. linux/arm64 is release-engineering
-  follow-up.
+  follow-up (R6.5.3).
 - **Fan-out / scheduling.** `ScrapeFleet` and `ScrapeSchedule` CRDs
-  are PR19+ work.
-- **Deployment artifacts.** No Helm chart yet (PR19+); no
-  validating/mutating webhooks yet (PR19+); no Prometheus metrics
+  are Phase 3 follow-up work.
+- **Deployment artifacts.** No Helm chart yet (R7.1); no
+  validating/mutating webhooks yet; no Prometheus metrics
   beyond controller-runtime's defaults.
 - **Observability.** Structured logs, OpenTelemetry traces, and
   metrics are Phase 3 follow-up.
