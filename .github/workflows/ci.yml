@@ -608,80 +608,6 @@ jobs:
         if: matrix.changed == 'true'
         run: docker images "spectre-${{ matrix.target }}:ci" --format '{{.Repository}}:{{.Tag}}\t{{.Size}}'
 
-  engine-image:
-    name: Engine image (build + smoke test)
-    needs: changes
-    if: needs.changes.outputs.image_engine == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v4
-      # Build the engine image with the same Dockerfile contributors
-      # use locally. No registry push — see ADR-0018 §5. The smoke test
-      # runs the binary in the resulting image; image publishing is a
-      # release-engineering concern that fires on tagged releases, not
-      # every PR.
-      - name: Build engine image
-        run: |
-          docker buildx build \
-            --platform=linux/amd64 \
-            -t spectre-engine:ci \
-            -f core/engine/Dockerfile \
-            --load \
-            .
-      - name: Smoke test (spectre binary present)
-        # R2.3 retired the `version` subcommand alongside the rest of
-        # the CLI surface; the equivalent image-level smoke is "the
-        # binary exists at the canonical path". A start-and-probe
-        # smoke that binds a port and queries `grpc.health.v1.Health`
-        # is deferred to the operator-image / kind end-to-end jobs.
-        run: |
-          docker run --rm \
-            --entrypoint=test \
-            spectre-engine:ci -x /usr/local/bin/spectre
-      - name: Report image size
-        run: docker images spectre-engine:ci --format '{{.Size}}'
-
-  operator-image:
-    name: Operator image (build + smoke test)
-    needs: changes
-    # Build the operator image whenever the operator source, the
-    # protocol, the Dockerfile, or the workflow itself changes.
-    # R3.1 retired the bundled-image execution model — the operator
-    # image no longer carries the engine binary or the three
-    # adapters. Per-service Dockerfiles for them land in R6.1 and
-    # the multi-service end-to-end smoke comes back with the Helm
-    # chart in R7.2.
-    if: needs.changes.outputs.operator == 'true'
-    runs-on: ubuntu-latest
-    env:
-      DOCKER_BUILDKIT: "1"
-    steps:
-      - uses: actions/checkout@v6
-      - name: Build operator image
-        # Build context is the repository root because go.mod's local
-        # `replace` for the proto Go bindings resolves to
-        # ../../proto/gen/go from core/control-plane/. The Dockerfile
-        # stages both trees into the builder stage.
-        run: |
-          docker build \
-            -t spectre-control-plane:ci \
-            -f core/control-plane/Dockerfile \
-            .
-      - name: Smoke test (manager binary runs)
-        # The unbundled image is a Go static binary on
-        # gcr.io/distroless/static:nonroot. The only meaningful image-
-        # level smoke is "the manager binary exists at /manager and
-        # responds to --help". Deeper end-to-end smoke (engine + the
-        # three adapter services + sample ScrapeJobs) returns with
-        # the Helm production smoke (R7.2).
-        run: |
-          docker run --rm \
-            --entrypoint=/manager \
-            spectre-control-plane:ci --help 2>&1 | head -n 5
-      - name: Report image size
-        run: docker images spectre-control-plane:ci --format '{{.Size}}'
-
   # Full-stack gate (R6.5.2 — verifies master strategy §2.5
   # "Compose is the development environment" in CI). Runs the
   # post-R6.3 unified flow end-to-end: bake builds the five
@@ -805,7 +731,7 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, operator, operator-image, engine-integration, engine-image, images, full-stack]
+    needs: [changes, proto, rust, go, typescript, python, operator, engine-integration, images, full-stack]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -816,9 +742,7 @@ jobs:
           echo "typescript:           ${{ needs.typescript.result }}"
           echo "python:               ${{ needs.python.result }}"
           echo "operator:             ${{ needs.operator.result }}"
-          echo "operator-image:       ${{ needs.operator-image.result }}"
           echo "engine-integration:   ${{ needs.engine-integration.result }}"
-          echo "engine-image:         ${{ needs.engine-image.result }}"
           echo "images:               ${{ needs.images.result }}"
           echo "full-stack:           ${{ needs.full-stack.result }}"
       - name: Fail if any required job failed or was cancelled
