@@ -306,35 +306,17 @@ op-install-crds:
 op-uninstall-crds:
     cd core/control-plane && make uninstall
 
-# Build the operator image. Depends on the engine image because the
-# multi-stage Dockerfile copies /usr/local/bin/spectre out of it
-# (ADR-0019 §3 / PR15 §4.3). PR16 added a playwright-builder stage
-# that bundles the Playwright adapter at /opt/spectre/adapters/playwright
-# and switched the runtime base to the Microsoft Playwright image
-# pinned in adapters/playwright/.playwright-base-image. PR17 added a
-# seleniumbase-builder stage and an apt overlay for Google Chrome +
-# ChromeDriver. PR18 added a curl-impersonate-builder stage and a
-# runtime-stage tarball download whose version + SHA-256 come from
-# adapters/curl-impersonate/.curl-impersonate-version (one line:
-# "VERSION SHA256"). Build context is the repo root because each
-# builder stage regenerates its language's proto bindings from
-# proto/. Single-arch (linux/amd64) to match the engine image and the
-# Microsoft base; multi-arch is release-engineering work.
 # Build the operator image. R3.1 retired the bundled-image
 # execution model: the image carries only the kubebuilder manager
-# binary on top of a distroless static base. The engine and
-# adapters now run as separate services (per ADR-0020 §5);
-# per-service Dockerfiles for them are R6.1 work, the Compose stack
-# is R6.2, and the Helm chart is R7.1. Build context is the
-# repository root because the operator's go.mod has a local
-# `replace` for the proto Go bindings.
+# binary on top of a distroless static base. R6.1 routes this
+# through `docker buildx bake control-plane` so toolchain pins,
+# OCI labels, and platform args stay uniform across the five
+# images. Build context is the repository root because the
+# operator's go.mod has a local `replace` for the proto Go
+# bindings.
 op-build-image:
-    docker buildx build \
-        --platform=linux/amd64 \
-        -t spectre-control-plane:dev \
-        -f core/control-plane/Dockerfile \
-        --load \
-        .
+    set -a; source build/docker/versions.env; set +a; \
+        docker buildx bake --load control-plane
 
 # Smoke-test the operator image. The image is now a distroless Go
 # binary — no /usr/local/bin/spectre, no /opt/spectre/adapters/*. The
@@ -396,6 +378,33 @@ curl-imp-conf-test: curl-imp-build conf-bootstrap
         tests/test_curl_impersonate_initialize.py \
         tests/test_curl_impersonate_navigate.py
 
+# Build the curl-impersonate adapter image as
+# `spectre-curl-impersonate:dev` via docker buildx bake. R6.1 §4.2
+# routes every per-image build through bake so toolchain pins,
+# OCI labels, and platform args stay uniform across the five
+# images. Sources build/docker/versions.env first so RUST/GO/etc.
+# pins flow through.
+curl-imp-image:
+    set -a; source build/docker/versions.env; set +a; \
+        docker buildx bake --load curl-impersonate
+
+# Smoke-test the curl-impersonate adapter image. Per R6.1 §4.10:
+# the adapter requires SPECTRE_ADAPTER_GRPC_PORT at runtime (no
+# Compose / Helm machinery in the smoke), so a bare `docker run`
+# exits 1 with the canonical "SPECTRE_ADAPTER_GRPC_PORT is
+# required" message. The smoke greps for that exact text so a
+# regression where the binary fails to load (missing proto
+# bindings, wrong arch) surfaces as a different error.
+#
+# `docker run` exits 1 here on purpose — the justfile's pipefail
+# shell would propagate that as failure, so we capture the output
+# first and grep against the captured log.
+curl-imp-image-smoke: curl-imp-image
+    set +e; \
+      out=$(docker run --rm --platform=linux/amd64 spectre-curl-impersonate:dev 2>&1); \
+      echo "$out"; \
+      echo "$out" | grep -q 'SPECTRE_ADAPTER_GRPC_PORT is required'
+
 # ---------------------------------------------------------------------------
 # TypeScript Playwright adapter (adapters/playwright)
 # ---------------------------------------------------------------------------
@@ -442,6 +451,25 @@ pw-install-browsers: pw-bootstrap
     else \
       pnpm exec playwright install chromium; \
     fi
+
+# Build the Playwright adapter image as `spectre-playwright:dev` via
+# docker buildx bake. R6.1 §4.2.
+pw-image:
+    set -a; source build/docker/versions.env; set +a; \
+        docker buildx bake --load playwright
+
+# Smoke-test the Playwright adapter image. Per R6.1 §4.10: the
+# image bakes SPECTRE_ADAPTER_GRPC_PORT=9091 as a default ENV so
+# the adapter passes port resolution and proceeds to the Redis
+# ping; that ping fails with the canonical "redis ping failed"
+# message because no Redis is reachable in a bare `docker run`.
+# The smoke greps for that exact text. Capture-then-grep avoids
+# the justfile shell's pipefail propagating Node's exit-1.
+pw-image-smoke: pw-image
+    set +e; \
+      out=$(docker run --rm --platform=linux/amd64 spectre-playwright:dev 2>&1); \
+      echo "$out" | tail -3; \
+      echo "$out" | grep -q 'redis ping failed'
 
 # ---------------------------------------------------------------------------
 # Python SeleniumBase adapter (adapters/seleniumbase)
@@ -497,6 +525,27 @@ sb-conf-test: sb-bootstrap sb-install-chromedriver conf-bootstrap
         tests/test_seleniumbase_extract.py \
         tests/test_seleniumbase_screenshot.py
 
+# Build the SeleniumBase adapter image as `spectre-seleniumbase:dev`
+# via docker buildx bake. Slowest of the three adapter image builds
+# (Chrome apt install + ChromeDriver download); buildx layer cache
+# amortises subsequent builds. R6.1 §4.2.
+sb-image:
+    set -a; source build/docker/versions.env; set +a; \
+        docker buildx bake --load seleniumbase
+
+# Smoke-test the SeleniumBase adapter image. Per R6.1 §4.10: the
+# image bakes SPECTRE_ADAPTER_GRPC_PORT=9092 as a default ENV so
+# the adapter passes port resolution and proceeds to the Redis
+# ping; that ping fails with the canonical "redis ping" /
+# "Connection refused" message because no Redis is reachable in
+# a bare `docker run`. Capture-then-grep avoids the justfile
+# shell's pipefail propagating Python's exit-1.
+sb-image-smoke: sb-image
+    set +e; \
+      out=$(docker run --rm --platform=linux/amd64 spectre-seleniumbase:dev 2>&1); \
+      echo "$out" | tail -5; \
+      echo "$out" | grep -qE 'redis ping|Connection refused|ConnectionError'
+
 # ---------------------------------------------------------------------------
 # Python conformance suite (tools/conformance)
 # ---------------------------------------------------------------------------
@@ -528,32 +577,79 @@ conf-test: pw-build pw-install-browsers sb-bootstrap sb-install-chromedriver cur
     cd tools/conformance && uv run pytest
 
 # ---------------------------------------------------------------------------
-# Container images (Phase 2.5 — see ADR-0018)
+# Container images (R6.1 — see ADR-0018, docker-bake.hcl,
+# build/docker/versions.env, docs/architecture/container-images.md)
 # ---------------------------------------------------------------------------
+# R6.1 routes every image build through `docker buildx bake`
+# (docker-bake.hcl). The umbrella `images` / `images-smoke` /
+# `images-clean` / `images-list` recipes act on the full set of
+# five images (engine + control-plane + three adapters). Per-image
+# recipes (`engine-image`, `op-build-image`, `pw-image`,
+# `sb-image`, `curl-imp-image`) are thin bake-target wrappers
+# preserved for muscle-memory + CI compatibility. Every recipe
+# sources build/docker/versions.env first so toolchain pins flow
+# uniformly.
 
-# Build the engine Docker image as `spectre-engine:dev`. Single-arch
-# (linux/amd64) per ADR-0018 §5; multi-arch is release-engineering work.
-# Build context is the repo root so build.rs can resolve proto/ at the
-# same relative path it uses for native cargo builds.
+# Build all five images via `docker buildx bake default`. First
+# clean build pulls upstream bases (~3 GB total: Microsoft Playwright
+# ~700 MB, Chrome apt ~200 MB, distroless ~30 MB, language toolchains)
+# plus toolchain compile time — expect 15–25 minutes total. Subsequent
+# rebuilds amortise via buildx's per-stage cache (~1–2 min when only
+# source changes locally).
+images:
+    set -a; source build/docker/versions.env; set +a; \
+        docker buildx bake --load default
+
+# Smoke-test all five images in sequence. Each per-image smoke
+# matches its adapter / service shape (binary-exists check for
+# engine + control-plane; canonical "port required" / "redis ping
+# failed" error for the three adapters). See R6.1 §4.10.
+images-smoke: engine-image-run op-image-smoke curl-imp-image-smoke pw-image-smoke sb-image-smoke
+
+# `docker rmi` the five spectre-* images. Useful after a
+# Dockerfile / versions.env change to force a clean rebuild that
+# exercises the layer ordering from scratch.
+images-clean:
+    docker rmi -f \
+      spectre-engine:dev \
+      spectre-control-plane:dev \
+      spectre-curl-impersonate:dev \
+      spectre-playwright:dev \
+      spectre-seleniumbase:dev \
+      2>/dev/null || true
+
+# Pretty-print the local spectre image set. Useful for verifying
+# the size targets after a clean build. Uses the default
+# `docker images` output rather than `--format` because Docker's
+# Go template `{{...}}` delimiters collide with just's recipe
+# interpolation syntax (the four-brace `{{{{...}}}}` escape only
+# round-trips cleanly for opening braces).
+images-list:
+    @docker images "spectre-*"
+
+# Build the engine Docker image as `spectre-engine:dev` via bake.
+# Single-arch (linux/amd64) per ADR-0018 §5 reaffirmed for R6.1;
+# multi-arch is release-engineering work (R7.1).
 engine-image:
-    docker buildx build \
-        --platform=linux/amd64 \
-        -t spectre-engine:dev \
-        -f core/engine/Dockerfile \
-        --load \
-        .
+    set -a; source build/docker/versions.env; set +a; \
+        docker buildx bake --load engine
 
-# Smoke-test the image by confirming the engine binary exists at the
-# canonical path. Mirrors the CI engine-image job. R2.3 retired the
-# `version` subcommand alongside the rest of the CLI surface; the
-# binary is now a gRPC service entry point. A deeper start-and-probe
-# smoke (bind a port, query `grpc.health.v1.Health`) belongs to the
-# Compose stack landing in R6.2. The --platform flag is required on
-# Apple Silicon hosts (Docker emulates linux/amd64 via QEMU there).
+# Smoke-test the engine image. R2.3 retired the `version` subcommand
+# alongside the rest of the CLI surface; the binary is now a gRPC
+# service entry point that reads SPECTRE_POSTGRES_URL at startup.
+# A bare `docker run` exits 1 with the canonical
+# "SPECTRE_POSTGRES_URL must be set" message because no Postgres
+# is reachable in a one-shot smoke (Compose / Helm provide the
+# env var). Capture-then-grep avoids the justfile shell's pipefail
+# propagating the engine's exit-1. Distroless ships no shell or
+# `test` binary so an "exists" probe is not available; the
+# canonical-error path is the closest equivalent. Deeper end-to-
+# end start-and-probe lives in R6.2's Compose stack work.
 engine-image-run: engine-image
-    docker run --rm --platform=linux/amd64 \
-        --entrypoint=test \
-        spectre-engine:dev -x /usr/local/bin/spectre
+    set +e; \
+      out=$(docker run --rm --platform=linux/amd64 spectre-engine:dev 2>&1); \
+      echo "$out"; \
+      echo "$out" | grep -q 'SPECTRE_POSTGRES_URL must be set'
 
 # Devcontainer post-create entry point. Equivalent to running
 # `bash .devcontainer/post-create.sh`. Useful inside the container if

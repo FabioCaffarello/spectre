@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (partially superseded; see status notes in §4 and §5)
 date: 2026-04-26
 deciders: [Fabio Caffarello]
 ---
@@ -94,6 +94,17 @@ distroless's debug-image variant for triage).
 
 ### 4. Per-adapter Dockerfiles deferred to PR14
 
+> **Status — retired by R6.1 (2026-04-29).** Per-adapter
+> Dockerfiles for Playwright, SeleniumBase, and curl-impersonate
+> landed in R6.1 alongside `docker-bake.hcl` orchestration and the
+> `build/docker/versions.env` single-source-of-truth. The PR14-era
+> deferral is closed. R6.1's Dockerfiles diverge slightly from this
+> §4's sketch — see
+> [`docs/architecture/container-images.md`](../architecture/container-images.md)
+> for the runtime-base matrix and the curl-impersonate deviation
+> (Alpine upstream image rather than distroless, because the variant
+> binaries are POSIX shell wrappers).
+
 Each adapter's Docker packaging is a separate engineering
 concern with its own quirks: Playwright bundles a ~400MB
 Chromium and needs `--no-sandbox` / `--disable-dev-shm-usage`
@@ -105,6 +116,16 @@ PR scoped to discuss them. PR14 ships the three adapter images
 (or splits further if any one proves painful).
 
 ### 5. No image registry publishing in PR13
+
+> **Status — reaffirmed for R6.1; revisited in R7.1 (2026-04-29).**
+> Single-arch (linux/amd64) builds and no-registry-publish remain
+> in effect through R6.1: every target in `docker-bake.hcl` pins
+> `platforms = ["linux/amd64"]` and the `REGISTRY` bake variable
+> defaults to empty (local-only). Multi-arch matrix (linux/amd64
+> + linux/arm64), ghcr.io publishing, image signing (`cosign`), and
+> SBOMs (`syft`) land in R7.1 release-engineering — the bake
+> variables (`TAG`, `REGISTRY`, `VCS_REF`, `BUILD_DATE`) are the
+> hooks; nothing in R6.1 forecloses any of it.
 
 Chosen: **the new CI job builds the engine image locally on the
 runner and runs it; no `docker push` to any registry.** Image

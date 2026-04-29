@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-service container images for the engine, control plane,
+  and three reference adapters; `docker buildx bake` orchestration;
+  `build/docker/versions.env` single-source-of-truth for toolchain
+  pins (R6.1).** Three new Dockerfiles
+  (`adapters/{curl-impersonate,playwright,seleniumbase}/Dockerfile`)
+  bring the service-per-image story to all five components. The
+  curl-impersonate runtime base is the upstream
+  `lwthiker/curl-impersonate:0.6-chrome` Alpine image used directly
+  (the variant binaries are POSIX shell wrappers and the R6.1 §4.3
+  sketch's distroless base ships no shell — see
+  [container-images.md](docs/architecture/container-images.md));
+  the Playwright runtime is the canonical
+  `mcr.microsoft.com/playwright:v1.49.0-noble` (Microsoft-maintained,
+  Chromium pre-baked, version locked in step with the npm dep);
+  the SeleniumBase runtime is `python:3.12-slim-bookworm` with
+  Chrome stable + ChromeDriver provisioned at image build time
+  and `SPECTRE_SELENIUMBASE_CONTAINER=1` baked as a default ENV.
+  `docker-bake.hcl` at the repo root declares five targets, three
+  groups (default / core / adapters), and two functions (`image()`
+  for registry-aware naming, `labels()` for the OCI annotation
+  schema injected uniformly across every image).
+  `build/docker/versions.env` consolidates `RUST_VERSION` (1.85
+  → 1.88; aws-sdk-sts 1.94 transitive dep MSRV), `GO_VERSION`,
+  `NODE_VERSION`, `PYTHON_VERSION`, `PROTOC_VERSION`,
+  `BUF_VERSION`, `UV_VERSION`, `PLAYWRIGHT_VERSION`,
+  `CURL_IMPERSONATE_IMAGE`, and `CHROME_VERSION` into one POSIX
+  shell-sourceable file every consumer reads. Existing engine +
+  control-plane Dockerfiles refactored to drop inline `ARG`
+  defaults and `LABEL` directives (bake supplies both); engine
+  Dockerfile gains apt installs for `cmake`, `g++`,
+  `libcurl4-openssl-dev` plus a `x86_64-linux-musl-g++` symlink
+  and a curl-headers copy into musl's sysroot so librdkafka 2.12
+  builds under the musl target. `.dockerignore` consolidated to
+  deny-by-default + negate-include shape so the build context
+  shrinks below 50 MB. ADR-0018 status frontmatter updated to
+  "accepted (partially superseded)"; §4 (per-adapter Dockerfile
+  deferral) **retired**; §5 (single-arch + no-publish)
+  **reaffirmed for R6.1; revisited in R7.1**. New justfile
+  umbrella recipes: `images`, `images-smoke`, `images-clean`,
+  `images-list`; per-adapter `*-image` + `*-image-smoke`
+  recipes; `engine-image` + `op-build-image` refactored to wrap
+  `docker buildx bake`. **Phase R6 opens with this PR** (R6.2 wires
+  the images into Compose; R6.3 revisits the Devcontainer; R7.1
+  adds release-engineering — multi-arch matrix, ghcr.io
+  publishing, signing). Capability invariant 13/12/6 holds
+  byte-for-byte; conformance suite count unchanged at 50/14
+  (no behavioural tests added).
 - **S3 + webhook output sinks; `OutputSink.S3` + `OutputSink.Webhook`
   unblocked; ADR-0024 introduced (R5.1).** ADR-0024 documents
   the engine's `aws-sdk-s3` 1.x uploader (rustls features,
