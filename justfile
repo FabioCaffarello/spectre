@@ -470,6 +470,25 @@ pw-install-browsers: pw-bootstrap
       pnpm exec playwright install chromium; \
     fi
 
+# Build the Playwright adapter image as `spectre-playwright:dev` via
+# docker buildx bake. R6.1 §4.2.
+pw-image:
+    set -a; source build/docker/versions.env; set +a; \
+        docker buildx bake --load playwright
+
+# Smoke-test the Playwright adapter image. Per R6.1 §4.10: the
+# image bakes SPECTRE_ADAPTER_GRPC_PORT=9091 as a default ENV so
+# the adapter passes port resolution and proceeds to the Redis
+# ping; that ping fails with the canonical "redis ping failed"
+# message because no Redis is reachable in a bare `docker run`.
+# The smoke greps for that exact text. Capture-then-grep avoids
+# the justfile shell's pipefail propagating Node's exit-1.
+pw-image-smoke: pw-image
+    set +e; \
+      out=$(docker run --rm --platform=linux/amd64 spectre-playwright:dev 2>&1); \
+      echo "$out" | tail -3; \
+      echo "$out" | grep -q 'redis ping failed'
+
 # ---------------------------------------------------------------------------
 # Python SeleniumBase adapter (adapters/seleniumbase)
 # ---------------------------------------------------------------------------
