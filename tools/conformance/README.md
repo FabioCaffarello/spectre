@@ -124,7 +124,7 @@ harness API is the seed; the CLI wraps it.
 - element-scoped JPEG against an `/elements` ref, with JPEG
   magic-byte verification and a `content_type: image/jpeg` check;
 - element-scoped Screenshot after a Navigate returning the
-  stale-ref `CODE_INVALID_ARGUMENT` message PR5 established for
+  stale-ref `CODE_INVALID_ARGUMENT` message established for
   `Extract`.
 
 ## Manual full-cycle demo
@@ -132,7 +132,7 @@ harness API is the seed; the CLI wraps it.
 `demo_full_cycle.py` drives the complete RPC sequence
 (`Initialize → Navigate → Query → Extract → Close`) against an
 already-running adapter and prints each response. It is the
-canonical human smoke test for PR5; the conformance suite covers
+canonical human smoke test; the conformance suite covers
 the same surface automatically.
 
 ```bash

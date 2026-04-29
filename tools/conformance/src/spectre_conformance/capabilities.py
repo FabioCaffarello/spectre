@@ -6,12 +6,12 @@ Test code references the constants below rather than embedding raw
 string literals; a typo at the call site becomes an import-time
 ``AttributeError`` instead of a silent runtime mismatch.
 
-The list mirrors the comment block in ``capabilities.proto``. PR3
-declared no capabilities at runtime; PR4 added ``navigation`` and
-``js_execution``; PR5 added the eight ``query_*``/``extract_*``
-names covering ``Query`` and ``Extract``; PR6 adds the three
-``screenshot_*`` names covering the three ``Screenshot`` scopes.
-Future RPCs add to ``ALL`` as they ship.
+The list mirrors the comment block in ``capabilities.proto``: the
+v1alpha1 set comprises ``navigation``, ``js_execution``, the four
+``query_*``/four ``extract_*`` names covering ``Query`` and
+``Extract``, and the three ``screenshot_*`` names covering the
+three ``Screenshot`` scopes. Future RPCs add to ``ALL`` as they
+ship.
 """
 
 from __future__ import annotations

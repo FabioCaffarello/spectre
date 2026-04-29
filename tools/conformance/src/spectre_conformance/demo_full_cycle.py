@@ -7,7 +7,7 @@ response. The cycle is::
 
     Initialize → Navigate → Query → Extract → Close
 
-This is the canonical manual smoke test for PR5. The conformance
+This is the canonical manual smoke test. The conformance
 suite (``test_close.py``, ``test_query.py``, ``test_extract.py``)
 covers the same surface automatically; this script exists for
 human verification when iterating on the adapter.

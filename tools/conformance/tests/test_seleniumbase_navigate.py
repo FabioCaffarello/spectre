@@ -1,12 +1,11 @@
 """Live ``Navigate`` conformance tests for the SeleniumBase adapter.
 
-PR9 covers the happy path against the local HTTP fixture's ``/ok``
+Covers the happy path against the local HTTP fixture's ``/ok``
 route plus the strict ``session_id`` validation contract from
 ADR-0009 §2 (carried over to SeleniumBase by ADR-0014 §2). The
-richer Navigate scenarios (redirect, 4xx, timeout) land in PR10
-once Extract gives the suite a way to read post-navigation state
-and once the test surface justifies running multiple Chrome
-launches per CI job.
+richer Navigate scenarios (redirect, 4xx, timeout) are out of
+scope for this file; once the test surface justifies running
+multiple Chrome launches per CI job they belong here.
 
 Each test does its own ``Initialize`` to obtain a fresh session;
 the adapter's lazy-launch contract means Chrome only boots on the

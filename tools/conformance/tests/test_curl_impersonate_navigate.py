@@ -1,7 +1,7 @@
 """Live ``Navigate`` conformance tests for the curl-impersonate adapter.
 
-PR11 covers the happy path against the local HTTP fixture's
-``/ok`` route plus a redirect against ``/redirect → /ok``.
+Covers the happy path against the local HTTP fixture's ``/ok``
+route plus a redirect against ``/redirect → /ok``.
 ADR-0016 §1 records why this adapter spawns one curl subprocess
 per Navigate; the conformance suite exercises that subprocess
 end-to-end without mocking.
