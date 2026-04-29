@@ -16,13 +16,18 @@ connect) was settled in earlier ADRs (ADR-0019, ADR-0020, ADR-0023).
 
 Five images, each multi-stage, each shipped from this repo:
 
-| Service | Builder base | Runtime base | UID:GID | Size (R6.1 baseline) |
+| Service | Builder base | Runtime base | UID:GID | Size (R6.1 measured) |
 |---|---|---|---|---|
-| `spectre-engine` | `rust:1.88-bookworm` (musl target) | `gcr.io/distroless/static:nonroot` | 65532 | < 50 MB |
-| `spectre-control-plane` | `golang:1.25` | `gcr.io/distroless/static:nonroot` | 65532 | < 50 MB |
-| `spectre-curl-impersonate` | `golang:1.25` (codegen + builder) | `lwthiker/curl-impersonate:0.6-chrome` (Alpine) | 65534 (`nobody`) | ~22 MB |
-| `spectre-playwright` | `node:20-bookworm-slim` | `mcr.microsoft.com/playwright:v1.49.0-noble` | 1000 (`pwuser`) | ~877 MB |
-| `spectre-seleniumbase` | `python:3.12-slim-bookworm` (uv) | `python:3.12-slim-bookworm` + Chrome + ChromeDriver | 1000 (`seluser`) | ~323 MB |
+| `spectre-engine` | `rust:1.88-bookworm` (musl target) | `gcr.io/distroless/static:nonroot` | 65532 | 11.4 MB |
+| `spectre-control-plane` | `golang:1.25` | `gcr.io/distroless/static:nonroot` | 65532 | 17.6 MB |
+| `spectre-curl-impersonate` | `golang:1.25` (codegen + builder) | `lwthiker/curl-impersonate:0.6-chrome` (Alpine) | 65534 (`nobody`) | 20.5 MB |
+| `spectre-playwright` | `node:20-bookworm-slim` | `mcr.microsoft.com/playwright:v1.49.0-noble` | 1000 (`pwuser`) | 836 MB |
+| `spectre-seleniumbase` | `python:3.12-slim-bookworm` (uv) | `python:3.12-slim-bookworm` + Chrome + ChromeDriver | 1000 (`seluser`) | 308 MB |
+
+> Sizes via `docker image inspect --format '{{.Size}}'`. The
+> `docker images` listing reports a larger value because it
+> aggregates manifest-list entries (incl. attestations); inspect
+> reads the per-platform layer total.
 
 The orchestration entry point is `docker buildx bake` driven by
 `docker-bake.hcl` at the repo root. Toolchain pins live in
@@ -143,7 +148,7 @@ in lock-step with the npm `playwright` dep via
 ships a non-root `pwuser` (UID 1000) — `USER pwuser` works without
 a `useradd`.
 
-**Image size (~877 MB) is above the 650 MB target in the R6.1
+**Image size (~836 MB) is above the 650 MB target in the R6.1
 phase prompt.** The Microsoft image carries Chromium + Firefox +
 WebKit and the system deps for all three; we only use Chromium but
 stripping the others would mean forking the supply chain (and is

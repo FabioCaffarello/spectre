@@ -38,9 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shell-sourceable file every consumer reads. Existing engine +
   control-plane Dockerfiles refactored to drop inline `ARG`
   defaults and `LABEL` directives (bake supplies both); engine
-  Dockerfile gains a `g++` apt install + a
-  `x86_64-linux-musl-g++` symlink so librdkafka's CMake build can
-  find a C++ compiler. `.dockerignore` consolidated to
+  Dockerfile gains apt installs for `cmake`, `g++`,
+  `libcurl4-openssl-dev` plus a `x86_64-linux-musl-g++` symlink
+  and a curl-headers copy into musl's sysroot so librdkafka 2.12
+  builds under the musl target. `.dockerignore` consolidated to
   deny-by-default + negate-include shape so the build context
   shrinks below 50 MB. ADR-0018 status frontmatter updated to
   "accepted (partially superseded)"; §4 (per-adapter Dockerfile
