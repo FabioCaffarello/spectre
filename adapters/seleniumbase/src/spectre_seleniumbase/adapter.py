@@ -1,7 +1,7 @@
 """SeleniumBase driver adapter — entry point.
 
 Resolves a TCP port from the ``SPECTRE_ADAPTER_GRPC_PORT`` env var
-(ADR-0021 §4 — production default 9092), a Redis URL from
+(ADR-0021 §4 / ADR-0025 §7 — production default 8092), a Redis URL from
 ``SPECTRE_REDIS_URL`` (ADR-0023 §4 + §6), and (optionally — for
 the conformance suite only) ``SPECTRE_ADAPTER_INSTANCE_ID``
 (ADR-0023 §5 R4.3 addendum). PINGs Redis at startup and exits
@@ -60,7 +60,7 @@ def resolve_port(env: dict[str, str]) -> int:
     The env var is required and must parse to an integer in the
     valid TCP port range. The conformance harness sets it to a
     free ephemeral port at start time; production deployments use
-    the canonical 9092 reserved by ADR-0021 §4.
+    the canonical 8092 reserved by ADR-0021 §4 (ADR-0025 §7).
     """
     raw = env.get(PORT_ENV_VAR, "")
     if not raw:

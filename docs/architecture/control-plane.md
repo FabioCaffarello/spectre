@@ -27,8 +27,9 @@ Webhook variants, CEL-validated).
 | `OutputSink.S3`                    | shipped           | R5.1       |
 | `OutputSink.Webhook`               | shipped           | R5.1       |
 | PostgreSQL job state               | shipped           | R4.2       |
-| Per-service Dockerfiles            | not started       | R6.1       |
-| Compose stack                      | not started       | R6.2       |
+| Per-service Dockerfiles            | shipped           | R6.1       |
+| Compose stack (app services)       | shipped           | R6.2       |
+| Operator in Compose + DinD/kind    | not started       | R6.3       |
 | Helm chart                         | not started       | R7.1       |
 | `ScrapeFleet` / `ScrapeSchedule`   | not started       | post-Phase3|
 
@@ -40,11 +41,11 @@ nested subprocesses inside one Pod. The R1.1–R3.1 refactor
 
 - The engine is a stateless gRPC service (R2.3, ADR-0020 §3) that
   exposes `spectre.engine.v1alpha1.Engine.RunJob` on
-  `0.0.0.0:9090` and dials adapters from `AdapterRegistry` via
+  `0.0.0.0:8090` and dials adapters from `AdapterRegistry` via
   env vars (ADR-0021 §5).
 - The three reference adapters (Playwright, SeleniumBase,
   curl-impersonate) are long-running gRPC services (R2.2) that
-  bind `0.0.0.0:909{1,2,3}` and register `grpc.health.v1.Health`
+  bind `0.0.0.0:809{1,2,3}` and register `grpc.health.v1.Health`
   (ADR-0021 §6).
 - The control plane (R3.1) is a thin gRPC client of the engine
   service. `EngineClientRunner` dials the engine, opens a
@@ -70,15 +71,28 @@ Per R3.1, the operator image is a Go static binary on
 `gcr.io/distroless/static:nonroot`:
 
 ```
-spectre-control-plane:dev (~50 MB on disk)
+spectre-control-plane:dev (~17 MB on disk)
 └── /manager      # kubebuilder manager (Go, CGO_ENABLED=0)
 ```
 
 `/usr/local/bin/spectre` and `/opt/spectre/adapters/*` are gone —
 the engine and adapters run as separate services. Per-service
-Dockerfiles for them are R6.1 work; the multi-service local-dev
-flow (`docker compose up`) is R6.2 (ADR-0025); production
-packaging via Helm chart is R7.1 (ADR-0026).
+Dockerfiles for them shipped in R6.1 (orchestrated via
+`docker buildx bake`). R6.2 wired the application services
+(engine + three adapters) into the Compose stack
+(`docker-compose.yml`, ADR-0025); the operator stays a host
+process for R6.2 (ADR-0025 §6 deferral) and joins the unified
+shape in R6.3 (Devcontainer with Docker-in-Docker).
+Production packaging via Helm chart is R7.1 (ADR-0026).
+
+### Deployment shapes
+
+| Shape                         | Operator location | Engine location                            | Status              |
+|-------------------------------|-------------------|--------------------------------------------|---------------------|
+| Pre-R6.2 hybrid               | host              | host (`just engine-run`)                   | retired in R6.2     |
+| **R6.2** (current)            | host (`just op-run`) | Compose container, host port 8090       | **shipped**         |
+| R6.3 unified Compose          | Compose container | Compose container                         | not started         |
+| R7.1+ Kubernetes (Helm)       | Pod               | Pod                                       | not started         |
 
 ## Engine endpoint resolution
 
@@ -91,14 +105,15 @@ R3.2 introduces per-`ScrapeJob` engine selection via
 2. `Spec.EngineRef.Service` — rendered as
    `<name>.<namespace>.svc.cluster.local:<port>`. The Service
    namespace defaults to the ScrapeJob's own namespace; the port
-   defaults to 9090 (ADR-0021's canonical engine port). The
-   Service form is the canonical in-cluster pattern.
+   defaults to 8090 (ADR-0021's canonical engine port,
+   ADR-0025 §7). The Service form is the canonical in-cluster
+   pattern.
 3. `Spec.EngineRef` is `nil` — the operator falls back to its
    startup-time configuration:
    - `--engine-endpoint=<host:port>` flag, or
    - `SPECTRE_ENGINE_ENDPOINT` env var, or
-   - the hard-coded default `127.0.0.1:9090` (matches
-     `just engine-run`'s local listener).
+   - the hard-coded default `127.0.0.1:8090` (the Compose host
+     port for the engine container — R6.2 / ADR-0025).
 
 The `EngineRef` CR field is CEL-validated by the apiserver:
 
@@ -199,7 +214,7 @@ spec:
   engineRef:
     service:
       name: spectre-engine
-    endpoint: 1.2.3.4:9090   # both set — should reject
+    endpoint: 1.2.3.4:8090   # both set — should reject
   outputSink:
     stdout: {}
 EOF
@@ -307,26 +322,30 @@ over an in-process bufconn gRPC server), and prints coverage.
 First run takes ~2 minutes (binary downloads); cached runs
 complete in under 30 seconds.
 
-### Host operator against a local engine + adapter
+### Host operator against a Compose-running engine
 
-R3.1 splits execution across services. To exercise the operator
-end-to-end against a `kubectl apply`-driven `ScrapeJob`, run the
-engine, an adapter, and the operator in three terminals:
+R6.2 wires the engine and the three adapters into the Compose
+stack but keeps the operator a host process (ADR-0025 §6
+deferral). To exercise the operator end-to-end against a
+`kubectl apply`-driven `ScrapeJob`:
 
 ```bash
-# Terminal 1 — engine (gRPC service on 127.0.0.1:9090)
-just engine-run
+# Bring up the Compose stack — engine on 127.0.0.1:8090,
+# adapters on 8091/8092/8093, stateful deps on their canonical
+# ports.
+just images
+just compose-up
 
-# Terminal 2 — Playwright adapter (gRPC service on 127.0.0.1:9091)
-just pw-run 9091
-
-# Terminal 3 — operator against the current kubectl context.
-# SPECTRE_ENGINE_ENDPOINT defaults to 127.0.0.1:9090; this
-# becomes the EngineRef-nil fallback.
+# Ensure a kind cluster exists; install the v1alpha2 CRD.
+kind get clusters || kind create cluster
 just op-install-crds
+
+# Run the operator from the host. SPECTRE_ENGINE_ENDPOINT
+# defaults to 127.0.0.1:8090 (the Compose host-port mapping for
+# the engine container); this becomes the EngineRef-nil fallback.
 just op-run
 
-# Terminal 4 — apply a sample and watch.
+# In another terminal, apply a sample and watch.
 kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
 kubectl get scrapejob -w
 ```
@@ -334,13 +353,15 @@ kubectl get scrapejob -w
 Phase transitions: `Pending → Running → Completed`. JSONL rows
 stream from the engine to the operator's stdout (the foreground
 terminal running `just op-run`) per ADR-0019 §6. The `_endpoint`
-sample uses the `EngineRef.Endpoint` form (`127.0.0.1:9090`) so
-the operator dials the host engine without needing a Kubernetes
-Service.
+sample uses the `EngineRef.Endpoint` form (`127.0.0.1:8090`) so
+the operator dials the host-mapped engine port without needing a
+Kubernetes Service.
 
-The Compose stack (R6.2) replaces this multi-terminal flow with a
-single `docker compose up`; that becomes the canonical local-dev
-loop once R6.2 lands.
+R6.3 (Devcontainer with Docker-in-Docker) replaces this
+host/Compose split with a unified Compose-in-DinD shape: the
+operator container, the kind API server, and the Compose stack
+all live in the same Docker daemon, eliminating the cross-network
+bridging the R6.2 `host.docker.internal`-shaped flow leans on.
 
 ### Tearing down
 

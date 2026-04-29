@@ -115,10 +115,10 @@ RUN apk add --no-cache ca-certificates \
 COPY --from=builder /out/adapter /usr/local/bin/adapter
 USER 65534:65534
 
-# ADR-0021 §4 reserves 9093 for the curl-impersonate adapter. The
+# ADR-0021 §4 reserves 8093 for the curl-impersonate adapter. The
 # adapter requires SPECTRE_ADAPTER_GRPC_PORT to be set explicitly at
 # run time (the env var has no Dockerfile-side default — Compose /
 # Helm provide it).
-EXPOSE 9093
+EXPOSE 8093
 
 ENTRYPOINT ["/usr/local/bin/adapter"]

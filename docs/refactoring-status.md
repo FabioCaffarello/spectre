@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-29
-Current phase: **R6.1 — Per-service Dockerfiles + bake orchestration (complete on merge of this PR, 2026-04-29)** — opens Phase R6
-Next PR: **R6.2 — ADR-0025 Compose stack (application services + three stateful deps)**
+Current phase: **R6.2 — ADR-0025 Compose stack (application services + profile topology + 8090–8093 port migration) (complete on merge of this PR, 2026-04-29)** — Phase R6 still open
+Next PR: **R6.3 — Devcontainer with Docker-in-Docker (operator + kind cluster join the unified Compose stack)**
 
 ## Phases
 
@@ -30,51 +30,48 @@ for the per-phase ADR deltas.
 - [x] **R4.3 — Redis for adapter session cache** *(merged 2026-04-28)*
 - [x] **R4.4 — Kafka producer (engine → topic)** *(merged 2026-04-28, PR #63 — closes Phase R4)*
 - [x] **R5.1 — ADR-0024 output sinks (S3 + webhook)** *(merged 2026-04-28, PR #64 — closes Phase R5)*
-- [x] **R6.1 — Per-service Dockerfiles (engine, control plane, three adapters) + `docker-bake.hcl` orchestration** *(complete on merge of this PR, 2026-04-29 — opens Phase R6)*
-- [ ] **R6.2 — ADR-0025 Compose stack (application services + three stateful deps)** *(next)*
-- [ ] R6.3 — Devcontainer with Docker-in-Docker
+- [x] **R6.1 — Per-service Dockerfiles (engine, control plane, three adapters) + `docker-bake.hcl` orchestration** *(merged 2026-04-29, PR #65 — opened Phase R6)*
+- [x] **R6.2 — ADR-0025 Compose stack (application services + profile topology + 8090–8093 port migration)** *(complete on merge of this PR, 2026-04-29)*
+- [ ] **R6.3 — Devcontainer with Docker-in-Docker (operator + kind into the unified Compose stack)** *(next)*
 - [ ] R7.1 — ADR-0026 Helm chart
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R6.1)
+## Current PR checklist (R6.2)
 
-The R6.1 PR's per-step checklist mirrors Section 7 of the phase
-prompt. R6.1 introduces per-service Dockerfiles for the three
-reference adapters, harmonises the two existing Dockerfiles
-(engine + control-plane) under a uniform `docker buildx bake`
-orchestrator, and consolidates toolchain version pins into
-`build/docker/versions.env`. **Opens Phase R6** — R6.2 wires
-these images into the Compose stack; R6.3 revisits the
-Devcontainer.
+The R6.2 PR's per-step checklist mirrors Section 7 of the phase
+prompt. R6.2 wires the five service images R6.1 produced into a
+unified `docker-compose.yml` with profile-based topology, enacts
+the ADR-0021 §4 port plan (8090–8093), retires the native-binary
+adapter run recipes, and introduces ADR-0025. **Phase R6 still
+open** — R6.3 brings the operator + a kind cluster into the
+unified Compose stack via Docker-in-Docker.
 
-- [x] Step 1 — Inventory: R5.1 merge confirmed; existing engine + control-plane Dockerfiles read; ADR-0018 (§3 distroless / §4 deferred / §5 single-arch) re-read; `proto/buf.gen.yaml` + `tools/codegen/post-generate.sh` re-read; adapter source paths confirmed; ten Section 4 decisions settled
-- [x] Step 2 — `build/docker/versions.env` (RUST 1.88, GO 1.25, NODE 20, PYTHON 3.12, PROTOC 27.2, BUF 1.55.1, UV 0.5.11, PLAYWRIGHT 1.49.0, CURL_IMPERSONATE_IMAGE pin, CHROME_VERSION reference); `.gitignore` widened with `/build/docker/` carve-out so the file survives the existing `build/` Node/TS exclusion
-- [x] Step 3 — `docker-bake.hcl` (~220 lines): five targets (engine / control-plane / curl-impersonate / playwright / seleniumbase), three groups (default / core / adapters), eleven variables (TAG / REGISTRY + nine toolchain pins + VCS_REF / BUILD_DATE), two functions (`image()` for registry-aware naming, `labels()` for the OCI annotation schema); HCL parses clean; `bake --print` resolves all five targets with the correct args + labels
-- [x] Step 4 — `adapters/curl-impersonate/Dockerfile`: three-stage (codegen → builder → runtime). **Runtime-base deviation** from R6.1 §4.3 sketch: distroless/base-debian12 sketched, but the variant binaries are POSIX shell wrappers and distroless ships no shell; the upstream `lwthiker/curl-impersonate:0.6-chrome` Alpine image is used as the runtime base directly. Final image 22 MB (target <80 MB). Smoke green ("SPECTRE_ADAPTER_GRPC_PORT is required" canonical exit-1)
-- [x] Step 5 — `adapters/playwright/Dockerfile`: two-stage (builder → runtime). Builder uses `node:20-bookworm-slim` + corepack-managed pnpm, regenerates TS proto bindings via buf, runs `pnpm install --frozen-lockfile` + `pnpm run build`, prunes devDeps. Runtime is `mcr.microsoft.com/playwright:v1.49.0-noble` — pinned in lock-step with the npm `playwright` dep. Image 877 MB (above the 650 MB target — Microsoft image carries Chromium + Firefox + WebKit; documented in `container-images.md`). Smoke green ("redis ping failed" canonical exit-1)
-- [x] Step 6 — `adapters/seleniumbase/Dockerfile`: two-stage (builder → runtime) using `python:3.12-slim-bookworm` + uv (added UV_VERSION=0.5.11 to `versions.env`). Builder builds the venv at the FINAL runtime path `/opt/spectre/adapters/seleniumbase/.venv` because uv hard-codes absolute paths; proto python bindings staged at `/opt/spectre/proto/gen/python` so the editable source resolves identically in builder + runtime. Runtime adds Google Chrome stable (apt) + ChromeDriver via `seleniumbase install chromedriver` at build time. SPECTRE_SELENIUMBASE_CONTAINER=1 baked. Final image 323 MB (target <850 MB). Smoke green
-- [x] Step 7 — `core/engine/Dockerfile` + `core/control-plane/Dockerfile` refactored: removed inline ARG defaults so bake supplies `RUST_VERSION` / `PROTOC_VERSION` / `GO_VERSION` / `BUF_VERSION` from `versions.env`; header comments updated to reference `docker buildx bake`; control-plane Dockerfile gains `ARG GO_VERSION` so the `FROM golang:${GO_VERSION}` line consumes the bake-supplied pin. **`RUST_VERSION` bumped from 1.85 → 1.88** because aws-sdk-sts 1.94 (transitive dep added by R5.1) requires rustc 1.88
-- [x] Step 8 — `.dockerignore` consolidated to deny-by-default + negate-include shape: `*` denies everything, `!proto/`, `!core/`, `!adapters/`, `!tools/codegen/`, `!build/docker/` re-include the directories any image needs, then per-pattern denies for generated trees (`proto/gen/`, `**/node_modules/`, `**/target/`, `**/.venv/`, etc.)
-- [x] Step 9 — Justfile umbrella recipes (`images`, `images-smoke`, `images-clean`, `images-list`); per-adapter `pw-image` / `sb-image` / `curl-imp-image` + `*-image-smoke` recipes; `engine-image` + `op-build-image` refactored to wrap `docker buildx bake`. The engine-image-run smoke pivoted from a `--entrypoint=test -x …` "binary exists" probe (broken — distroless ships no `test`) to a canonical-error grep ("SPECTRE_POSTGRES_URL must be set") matching the three adapter smokes
-- [x] Step 10 — `docs/architecture/container-images.md` (~280 lines: overview, build context, toolchain pinning, per-service notes including the curl-impersonate runtime-base deviation rationale, bake orchestration, OCI label schema, smoke testing, forward references); ADR-0018 status frontmatter updated to "accepted (partially superseded)"; ADR-0018 §4 status note "retired by R6.1"; ADR-0018 §5 status note "reaffirmed for R6.1; revisited in R7.1"
-- [x] Step 11 — This entry; CHANGELOG `Unreleased` block; refactor-audit R6.1 row + Phase R6 OPEN note; README quick-start mention of `just images`
-- [x] Step 12 — Final verification: all five images build via `docker buildx bake default`; `just images-smoke` green; image sizes via `docker image inspect` — engine 11.4 MB, control-plane 17.6 MB, curl-impersonate 20.5 MB, seleniumbase 308 MB (all under target); playwright 836 MB above the 650 MB target (Microsoft runtime carries Chromium + Firefox + WebKit; documented exception). OCI labels + nonroot users present on every image (engine/control-plane 65532, curl-impersonate 65534, pwuser/seluser 1000). 13 / 12 / 6 capability invariant holds; conformance suite count unchanged at 50 / 14 (no behavioural tests added). R5.1 Compose stack unaffected
-- [ ] Step 13 — Open the PR
+- [x] Step 1 — Inventory: R6.1 merge confirmed; ADR-0021 §4 + §6, ADR-0023 §6 + §9, ADR-0024 §3 re-read; existing `docker-compose.yml` (six stateful services) and `docker-bake.hcl` (five build targets) re-read; engine binary `SPECTRE_ENGINE_PORT` env var name confirmed (the prompt's `SPECTRE_ENGINE_GRPC_PORT` sketch deviates from the binary; R6.2 uses what the binary reads); adapter Dockerfile bases verified for healthcheck-tool availability (Playwright Ubuntu Noble has bash; SeleniumBase python-slim has python but not nc; curl-impersonate Alpine has busybox nc; engine distroless static has nothing); six Section 4 decisions settled
+- [x] Step 2 — ADR-0025 (~470 lines: §1 context · §2 decision summary · §3 service topology + healthcheck strategy · §4 profiles · §5 conformance subprocess-harness rationale · §6 operator deferral to R6.3 + precise R6.3 problem statement · §7 port migration · §8 image-source policy · §9 R6.3 deferrals · §10 out of scope · §11 references); ADR-0021 §4 R6.2 implementation note added; ADR-0023 §9 cross-reference updated to point at ADR-0025; ADR-0019 §3 R6.2 forward-link to ADR-0025 §6; `docs/adr/README.md` indexed
+- [x] Step 3 — `docker-compose.yml` extended: four application services (engine, playwright-adapter, seleniumbase-adapter, curl-impersonate-adapter) added with `image:` + `pull_policy: never` + asymmetric per-base healthchecks + `depends_on` on stateful deps; SeleniumBase service sets `shm_size: 1gb`; existing six stateful services tagged with profile membership (`infra`, `core`, `adapters`, `app`, `full`); kafka-console deliberately excluded from `app`. Validated via `docker compose --profile <name> config --services` for each profile
+- [x] Step 4 — Port migration sweep 9090–9093 → 8090–8093 across `core/engine/src/bin/spectre.rs` (DEFAULT_PORT + module docs), `core/engine/src/server.rs` (module docs), `core/engine/src/registry.rs` (PLAYWRIGHT/SELENIUMBASE/CURL_IMPERSONATE_DEFAULT_ENDPOINT + module docs + tests), `core/engine/src/client.rs` (test fixtures), `core/control-plane/cmd/main.go` (defaultEngineEndpoint + flag help text), `core/control-plane/internal/runner/engine_client.go` (doc comment), `core/control-plane/internal/runner/engine_client_test.go` (dial-failure test endpoints), `core/control-plane/internal/controller/scrapejob_controller.go` (defaultEnginePort + comment), `core/control-plane/internal/controller/scrapejob_controller_test.go` (10 occurrences across resolveEngineEndpoint tests), `core/control-plane/internal/db/db_test.go` (Service-FQDN endpoint), `core/control-plane/api/v1alpha2/scrapejob_types.go` (kubebuilder default), `core/control-plane/config/crd/bases/spectre.io_scrapejobs.yaml` (regenerated CRD's port default), `core/control-plane/README.md` (operator port doc), eight `core/control-plane/config/samples/spectre_v1alpha2_scrapejob_*.yaml` manifests, `adapters/playwright/Dockerfile` + `adapters/seleniumbase/Dockerfile` + `adapters/curl-impersonate/Dockerfile` (EXPOSE + ENV defaults), three adapter READMEs (rewrote pw-run/sb-run/curl-imp-run sections to point at compose-up), `adapters/seleniumbase/src/spectre_seleniumbase/adapter.py` (module docstring), three adapter test fixtures (Playwright TS, SeleniumBase Python, curl-impersonate Go), `tools/conformance/src/spectre_conformance/demo_navigate.py` + `demo_full_cycle.py` (CLI help text), three example READMEs (hello-hackernews, seleniumbase-extract, curl-impersonate-extract — quick-start blocks rewritten for compose-up), `.env.example` (six default values + comment block referencing ADR-0021 §4 / ADR-0025 §7). Kafka 9092 broker + Kafka container internal listener ports 9092/9093/9094 untouched
+- [x] Step 5 — justfile recipe surgery: deleted `pw-run` / `sb-run` / `curl-imp-run` (no fallback); renamed `engine-run` → `engine-run-native` (debugging escape hatch with comment block pointing readers at compose-up); renamed `op-build-image` → `op-image` (parallel to engine-image / pw-image / sb-image / curl-imp-image); `compose-up` body becomes `docker compose --profile full up -d`; `compose-reset` chains `--profile full`; `compose-logs` accepts an optional SERVICE argument; new `compose-up-app` / `compose-up-core` / `compose-up-adapters` / `compose-up-infra` recipes; new `compose-restart SERVICE` and `compose-rebuild SERVICE` recipes (the latter chains `bake SERVICE && docker compose up -d --no-deps SERVICE` with bake-target-name → Compose-service-name mapping for adapters). `engine-grpc-test` default port flips 9090 → 8090. `just --list` confirms recipe set
+- [x] Step 6 — `docs/architecture/development-environment.md` rewritten (~150 lines: quick start, profiles, what runs where, port reference, conformance-suite flow, operator dev flow, devcontainer, native-binary debugging, related ADRs); `docs/architecture/control-plane.md` updated (Phase 3 status table flips Compose-stack row to "shipped"; engine port 0.0.0.0:8090; engine endpoint resolution defaults; operator-image deployment-shapes table added; "Host operator against a Compose-running engine" section replaces the multi-terminal native-binary flow); `docs/architecture/engine.md` adapter discovery defaults flipped 8091/8092/8093; `docs/architecture/redis.md` and `postgres.md` adapter run examples updated for compose-up
+- [x] Step 7 — `docs/refactor-audit.md` R6.2 row appended; `docs/refactoring-status.md` R6.2 → complete on merge, R6.3 → next; CHANGELOG Unreleased entries (Added: Compose stack + ADR-0025; Changed: port migration + recipe surgery); README quick-start rewritten for `just images && just compose-up`
+- [ ] Step 8 — Final verification: build images via `just images`; bring up `--profile full`; eleven services healthy; submit ScrapeJob via grpcurl against 127.0.0.1:8090; profile selectivity (infra / core / adapters / full); operator dev flow via `just op-run` against external kind; conformance suite passes unchanged
+- [ ] Step 9 — Open the PR
 
 ## Surfaced decisions
 
 No open architectural questions awaiting maintainer input. The
-ten decisions for R6.1 (Dockerfile co-location with services;
-bake as orchestrator; runtime-base matrix; OCI labels via bake;
-single repo-root .dockerignore; CI work deferred; no HEALTHCHECK
-in Dockerfiles; versions.env as plain shell; no multi-arch;
-binary-exists / canonical-error smokes) are settled by Section 4
-of the phase prompt. The curl-impersonate runtime-base deviation
-from §4.3 (Alpine upstream image rather than distroless) is
-documented in `container-images.md` and reflects an infeasibility
-discovered during execution: the variant binaries are shell
-wrappers, distroless ships no shell.
+six decisions for R6.2 (operator outside Compose for R6.2;
+8090–8093 port migration enacted; conformance stays subprocess-
+based; single-file profile-based Compose; asymmetric per-base
+healthchecks; `image:` + `pull_policy: never`) are settled by
+Section 4 of the phase prompt. One pre-existing implementation
+discrepancy was discovered during inventory: the engine binary
+reads `SPECTRE_ENGINE_PORT` (not `SPECTRE_ENGINE_GRPC_PORT` as
+ADR-0021 §4's table documents). R6.2 uses the env var name the
+binary actually reads in the Compose env block; correcting the
+binary or the ADR table would be source-modification beyond
+R6.2's port-default-only scope (ADR-0025 §10) and is left for a
+future small PR.
 
 ## Known issues
 

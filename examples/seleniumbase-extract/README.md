@@ -23,22 +23,22 @@ changing the job shape: only the `driver:` field differs.
 
 ## Run it
 
-The pieces, three terminals (or three `tmux` panes — the engine
-and adapter are both long-running services):
+The pieces — bring up the unified Compose stack (R6.2,
+ADR-0025) and submit the job from the host:
 
 ```bash
-# Terminal 1 — engine gRPC service on 127.0.0.1:9090
-just engine-run
+# Build the five service images, then start the full
+# development graph (engine on 8090, SeleniumBase adapter on
+# 8092 with Chrome + ChromeDriver pre-installed in the image,
+# stateful deps on their canonical ports).
+just images
+just compose-up
 
-# Terminal 2 — SeleniumBase adapter gRPC service on 127.0.0.1:9092
-just sb-install-chromedriver   # one-time, see notes below
-just sb-run 9092
-
-# Terminal 3 — submit the job
+# Submit the job.
 grpcurl -plaintext \
     -import-path proto -proto spectre/engine/v1alpha1/engine.proto \
     -d "$(jq -n --arg dsl "$(cat examples/seleniumbase-extract/job.yaml)" '{job_dsl: $dsl}')" \
-    127.0.0.1:9090 \
+    127.0.0.1:8090 \
     spectre.engine.v1alpha1.Engine/RunJob
 ```
 
@@ -65,8 +65,10 @@ page, a documentation site — is one YAML edit away.
    plan is identical to the one the engine produces for
    `hello-hackernews`; only the driver name differs.
 2. The engine resolves `driver: seleniumbase` to
-   `SPECTRE_SELENIUMBASE_ENDPOINT` (default `127.0.0.1:9092`)
-   via `AdapterRegistry`, dials the TCP listener over gRPC
+   `SPECTRE_SELENIUMBASE_ENDPOINT` (defaults to
+   `grpc://seleniumbase-adapter:8092` inside Compose, or
+   `127.0.0.1:8092` from the host) via `AdapterRegistry`, dials
+   the TCP listener over gRPC
    (ADR-0022), and waits for `grpc.health.v1.Health.Check` to
    return `SERVING` (ADR-0021 §6).
 3. The engine sends the RPC sequence. `Query(a)` returns one

@@ -3,7 +3,7 @@
 //! gRPC service implementation for `spectre.engine.v1alpha1.Engine`.
 //!
 //! The engine binary registers two services on a single TCP listener
-//! (default `0.0.0.0:9090` — see [`bin/spectre.rs`](crate)):
+//! (default `0.0.0.0:8090` — see [`bin/spectre.rs`](crate)):
 //!
 //! * the `Engine` service this module implements;
 //! * `grpc.health.v1.Health` from `tonic-health`, returning

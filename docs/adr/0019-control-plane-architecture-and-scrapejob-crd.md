@@ -387,6 +387,15 @@ implementation that PR15 will introduce).
 >
 > §3 (subprocess execution model) was already marked superseded by
 > ADR-0020 (R1.1).
+>
+> **R6.2 forward-link.** The control-plane operator stays a host
+> process for R6.2 (`just op-run` against the developer's
+> external `kind` cluster, dialling the Compose-running engine
+> via `127.0.0.1:8090`); placing it inside the unified Compose
+> stack alongside a Compose-managed `kind` cluster is the
+> R6.3 problem (Devcontainer with Docker-in-Docker).
+> [ADR-0025](0025-compose-stack.md) §6 records the precise
+> R6.3 problem statement.
 
 ```go
 type JobRunner interface {

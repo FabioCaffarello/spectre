@@ -45,7 +45,8 @@ type EngineClientRunner struct {
 	// engine service the operator dials. Empty values are rejected
 	// at Run time. Production deployments set this from the
 	// SPECTRE_ENGINE_ENDPOINT env var; local development defaults
-	// to 127.0.0.1:9090 (the engine's canonical port).
+	// to 127.0.0.1:8090 (the engine's canonical port — ADR-0021 §4
+	// enacted by ADR-0025 §7).
 	EngineEndpoint string
 
 	// dialFunc is the gRPC dial seam. Production code leaves this

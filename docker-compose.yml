@@ -1,22 +1,57 @@
 # Spectre — local-development Compose stack.
 #
-# R4.2 lands the first slice: PostgreSQL for engine job state and
-# control-plane reads (ADR-0023 §2). R4.3 added Redis for adapter
-# session metadata externalisation (ADR-0023 §4 + §5). R4.4 adds
-# Apache Kafka in KRaft mode for `OutputSink.Kafka` jobs
-# (ADR-0023 §3 R4.4 addendum) and Redpanda Console as the topic /
-# offset / message-browser UI. R6.2 will move engine / adapters /
-# control plane into Compose services here. For now the
-# application services still run as native binaries via the
-# `just engine-run` / `just pw-run` / `just op-run` recipes; the
-# binaries connect to Postgres on localhost:5432, Redis on
-# localhost:6379, and Kafka on localhost:9092.
+# R6.2 brings the application services (engine + three reference
+# adapters) into the Compose stack alongside the stateful services
+# from R4.x and R5.1. The full development graph is eleven services
+# under one network; the recommended invocation is
+# `docker compose --profile full up -d` (aliased as
+# `just compose-up`). See ADR-0025 for the topology, profile
+# design, port-migration scope, conformance-suite scope, and the
+# operator-outside-Compose deferral.
+#
+# Operator deferral (ADR-0025 §6). The control-plane operator
+# (`core/control-plane/`) stays a host process for R6.2; running
+# it from `just op-run` against the developer's external `kind`
+# cluster, dialling the Compose-running engine via the host-port
+# mapping `127.0.0.1:8090`. R6.3 (Devcontainer with
+# Docker-in-Docker) brings the operator into the unified shape.
+#
+# Profiles (ADR-0025 §4):
+#   infra    — six stateful services only (pre-R6.2 default).
+#              Used by the conformance suite (subprocess-spawned
+#              adapters) and by contributors running native-binary
+#              application services via `just engine-run-native`.
+#   core     — postgres + kafka + minio + minio-bootstrap + engine.
+#              Engine integration tests target this profile.
+#   adapters — redis + the three adapter services. Adapter-only
+#              experimentation via `grpcurl`.
+#   app      — headless full stack (no observability UIs). Aimed
+#              at CI runs.
+#   full     — everything (app + kafka-console). Default human
+#              dev flow. The README quick-start uses this profile.
+#
+# Image source policy (ADR-0025 §8): every application service
+# uses `image: spectre-<name>:dev` + `pull_policy: never`. Images
+# must be built first via `just images` (the bake umbrella). No
+# `build:` directives — bake is the canonical build path; a
+# missing image surfaces immediately as "image not found".
+#
+# Port reservations (ADR-0025 §7 + ADR-0021 §4):
+#   8090 — engine                      (Compose-internal `engine:8090`)
+#   8091 — playwright-adapter          (`playwright-adapter:8091`)
+#   8092 — seleniumbase-adapter        (`seleniumbase-adapter:8092`)
+#   8093 — curl-impersonate-adapter    (`curl-impersonate-adapter:8093`)
+#   8080 — kafka-console (UI)
+#   9000 — minio (S3 API), 9001 — minio (UI)
+#   9092 — kafka broker (Compose-internal `kafka:9092`, host 9092)
+#   5432 — postgres
+#   6379 — redis
 #
 # Usage:
-#   docker compose up -d        # start
-#   docker compose ps           # health
-#   docker compose down         # stop, keep volumes
-#   docker compose down -v      # stop, drop volumes (full reset)
+#   docker compose --profile full up -d   # start (recommended)
+#   docker compose ps                     # health
+#   docker compose down                   # stop, keep volumes
+#   docker compose down -v                # stop, drop volumes (full reset)
 #
 # DEV-ONLY: the credentials below are visible in source control.
 # Production deployments populate `SPECTRE_POSTGRES_URL`,
@@ -42,6 +77,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    profiles: ["infra", "core", "app", "full"]
 
   # Redis — adapter session metadata cache (ADR-0023 §4).
   # AOF persistence keeps session metadata across `docker compose
@@ -69,6 +105,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    profiles: ["infra", "adapters", "app", "full"]
 
   # Apache Kafka in KRaft mode (no ZooKeeper) — engine producer
   # target for `OutputSink.Kafka` jobs (ADR-0023 §3 R4.4 addendum).
@@ -125,6 +162,7 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    profiles: ["infra", "core", "app", "full"]
 
   # Redpanda Console — web UI over Apache Kafka API (works
   # against any Kafka-compatible broker; the name is historical).
@@ -153,6 +191,10 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    # `kafka-console` is excluded from `app` (ADR-0025 §4): the UI
+    # adds startup time and serves no purpose in a non-interactive
+    # CI run. `full` is the human-facing profile that includes it.
+    profiles: ["infra", "full"]
 
   # MinIO — S3-compatible object store for OutputSink.S3 jobs
   # (R5.1 — ADR-0024 §3). Single-node single-drive for dev;
@@ -187,6 +229,7 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+    profiles: ["infra", "core", "app", "full"]
 
   # MinIO bucket bootstrap — runs once on stack-up and pre-
   # creates the `spectre-rows` bucket so the engine integration
@@ -213,6 +256,139 @@ services:
     environment:
       MINIO_ROOT_USER: spectre_dev_access
       MINIO_ROOT_PASSWORD: spectre_dev_secret_key
+    profiles: ["infra", "core", "app", "full"]
+
+  # ---------------------------------------------------------------------------
+  # Application services (R6.2 — see ADR-0025 §3 + §7 + §8).
+  #
+  # Every application service consumes a local-built image produced
+  # by `just images` (the bake umbrella from R6.1). `pull_policy:
+  # never` prevents Compose from contacting a registry — local
+  # images are the only source. Run `just images` before
+  # `just compose-up`.
+  # ---------------------------------------------------------------------------
+
+  # Engine — gRPC service for `RunJob` execution. Reads
+  # SPECTRE_POSTGRES_URL + SPECTRE_KAFKA_BROKERS + SPECTRE_S3_*
+  # at startup; dials adapters lazily per-job via
+  # SPECTRE_PLAYWRIGHT_ENDPOINT / SPECTRE_SELENIUMBASE_ENDPOINT /
+  # SPECTRE_CURL_IMPERSONATE_ENDPOINT. ADR-0025 §3 documents the
+  # absence of a Compose-level healthcheck: the distroless static
+  # runtime ships no shell or probe binary, and dependent-service
+  # gRPC dial retry (ADR-0022 §4) covers liveness without a
+  # bundled `grpc_health_probe`. R7.1's Helm chart will use
+  # Kubernetes's native `grpc:` readinessProbe syntax.
+  engine:
+    image: spectre-engine:dev
+    container_name: spectre-engine
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      minio-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      SPECTRE_ENGINE_PORT: "8090"
+      SPECTRE_POSTGRES_URL: "postgres://spectre:spectre_dev_password@postgres:5432/spectre"
+      SPECTRE_KAFKA_BROKERS: "kafka:9092"
+      SPECTRE_PLAYWRIGHT_ENDPOINT: "grpc://playwright-adapter:8091"
+      SPECTRE_SELENIUMBASE_ENDPOINT: "grpc://seleniumbase-adapter:8092"
+      SPECTRE_CURL_IMPERSONATE_ENDPOINT: "grpc://curl-impersonate-adapter:8093"
+      SPECTRE_S3_ENDPOINT: "http://minio:9000"
+      SPECTRE_S3_ACCESS_KEY_ID: "spectre_dev_access"
+      SPECTRE_S3_SECRET_ACCESS_KEY: "spectre_dev_secret_key"
+      SPECTRE_S3_REGION: "us-east-1"
+      RUST_LOG: "${RUST_LOG:-info,spectre_engine=debug}"
+    ports:
+      - "8090:8090"
+    profiles: ["core", "app", "full"]
+
+  # Playwright adapter — TypeScript/Node, Chromium runtime.
+  # Healthcheck uses bash's built-in /dev/tcp redirect because the
+  # Microsoft Playwright Ubuntu Noble base ships bash but not
+  # `nc` (ADR-0025 §3 healthcheck-asymmetry note).
+  playwright-adapter:
+    image: spectre-playwright:dev
+    container_name: spectre-playwright-adapter
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      SPECTRE_ADAPTER_GRPC_PORT: "8091"
+      SPECTRE_REDIS_URL: "redis://redis:6379/0"
+    ports:
+      - "8091:8091"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'cat < /dev/tcp/127.0.0.1/8091' >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    profiles: ["adapters", "app", "full"]
+
+  # SeleniumBase adapter — Python, Google Chrome stable runtime.
+  #
+  # `shm_size: 1gb` matches the upstream selenium/standalone-chrome
+  # convention; Chrome's tab-isolation crashes with the default
+  # 64 MiB /dev/shm (ADR-0025 §3). R7.1's Helm chart sets the
+  # equivalent on the Pod spec.
+  #
+  # Healthcheck uses Python's socket module because the slim-bookworm
+  # base does not ship `nc` (ADR-0025 §3 healthcheck-asymmetry note).
+  seleniumbase-adapter:
+    image: spectre-seleniumbase:dev
+    container_name: spectre-seleniumbase-adapter
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      SPECTRE_ADAPTER_GRPC_PORT: "8092"
+      SPECTRE_REDIS_URL: "redis://redis:6379/0"
+      SPECTRE_SELENIUMBASE_CONTAINER: "1"
+    ports:
+      - "8092:8092"
+    shm_size: "1gb"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8092)); s.close()\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    profiles: ["adapters", "app", "full"]
+
+  # curl-impersonate adapter — Go, upstream Alpine runtime.
+  # Healthcheck uses busybox `nc -z` (Alpine's busybox ships it).
+  curl-impersonate-adapter:
+    image: spectre-curl-impersonate:dev
+    container_name: spectre-curl-impersonate-adapter
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      SPECTRE_ADAPTER_GRPC_PORT: "8093"
+      SPECTRE_REDIS_URL: "redis://redis:6379/0"
+    ports:
+      - "8093:8093"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8093 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    profiles: ["adapters", "app", "full"]
 
 volumes:
   spectre_postgres_data:

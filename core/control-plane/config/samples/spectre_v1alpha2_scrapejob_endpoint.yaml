@@ -1,10 +1,11 @@
 # Sample ScrapeJob using the EngineRef.Endpoint form for ad-hoc /
 # out-of-cluster testing. The operator dials the host:port verbatim
 # rather than resolving a Kubernetes Service. Useful when running
-# `make run` locally with `just engine-run` on the host:
+# `just op-run` locally against a Compose-running engine
+# (`just compose-up`) reachable on the host via the 1:1 port mapping:
 #
-#   $ just engine-run               # 127.0.0.1:9090
-#   $ make run -- --engine-endpoint=127.0.0.1:9090
+#   $ just images && just compose-up   # engine on 127.0.0.1:8090
+#   $ just op-run                      # operator dials 127.0.0.1:8090
 #   $ kubectl apply -f config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
 #
 # Prefer the Service form (spectre_v1alpha2_scrapejob_hello-hackernews.yaml)
@@ -31,6 +32,6 @@ spec:
       format: jsonl
       path: ./stories.jsonl
   engineRef:
-    endpoint: 127.0.0.1:9090
+    endpoint: 127.0.0.1:8090
   outputSink:
     stdout: {}

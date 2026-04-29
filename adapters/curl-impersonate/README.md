@@ -33,7 +33,7 @@ From the repository root:
 just curl-imp-build       # go build -o bin/adapter ./cmd/adapter
 just curl-imp-test        # go test ./...
 just curl-imp-lint        # go vet + golangci-lint
-just curl-imp-run         # bind 0.0.0.0:9093 (ADR-0021 §4)
+just images && just compose-up  # bring up the adapter on 127.0.0.1:8093
 just curl-imp-conf-test   # run the curl-impersonate conformance suite
 ```
 
@@ -45,11 +45,11 @@ drains in-flight RPCs, removes every session's cookie-jar file,
 and exits zero. The bind port is read from
 `SPECTRE_ADAPTER_GRPC_PORT` — the conformance harness allocates a
 free ephemeral port at start time; production deployments use the
-canonical 9093 reserved by ADR-0021 §4.
+canonical 8093 reserved by ADR-0021 §4 (ADR-0025 §7).
 
-> The R6.2 Compose stack will replace `just curl-imp-run` as the
-> canonical local-dev path. Until then this recipe survives as a
-> convenience. The engine talks to this adapter over TCP gRPC
+> R6.2 enacted the Compose stack (ADR-0025) as the canonical
+> local-dev path; the native-binary `curl-imp-run` recipe is
+> retired. The engine talks to this adapter over TCP gRPC
 > after R2.3 (ADR-0022); the engine binary itself is also a gRPC
 > service after R2.3 (`just engine-run`).
 

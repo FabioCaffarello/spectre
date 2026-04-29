@@ -46,9 +46,10 @@ import (
 
 // defaultEngineEndpoint is the host:port the operator dials when
 // neither --engine-endpoint nor SPECTRE_ENGINE_ENDPOINT is set. It
-// matches the canonical engine port from ADR-0021 §4 so `make run`
-// against a locally-running engine binary works out of the box.
-const defaultEngineEndpoint = "127.0.0.1:9090"
+// matches the canonical engine port from ADR-0021 §4 so `just op-run`
+// against a locally-running engine binary (or the Compose-running
+// engine via the host-port mapping) works out of the box.
+const defaultEngineEndpoint = "127.0.0.1:8090"
 
 var (
 	scheme   = runtime.NewScheme()
@@ -97,9 +98,11 @@ func main() {
 	flag.StringVar(&engineEndpoint, "engine-endpoint", endpointDefault,
 		"host:port of the spectre.engine.v1alpha1.Engine service the operator dials "+
 			"when a ScrapeJob's spec.engineRef is unset. Override via "+
-			"SPECTRE_ENGINE_ENDPOINT env var or this flag. Defaults to 127.0.0.1:9090 "+
-			"(matches `just engine-run`'s local listener). Compose deployments set this "+
-			"to engine:9090; Helm renders it from values. Per-job EngineRef "+
+			"SPECTRE_ENGINE_ENDPOINT env var or this flag. Defaults to 127.0.0.1:8090 "+
+			"(R6.2 — the operator runs as a host process and dials the Compose-running "+
+			"engine via its host-port mapping, ADR-0025 §6). Compose-internal callers "+
+			"(post-R6.3, when the operator joins the Compose stack) set this to "+
+			"engine:8090; Helm renders it from values. Per-job EngineRef "+
 			"(spectre.io/v1alpha2 ScrapeJobSpec.engineRef) overrides this default; see "+
 			"docs/architecture/control-plane.md for the resolution order.")
 	opts := zap.Options{

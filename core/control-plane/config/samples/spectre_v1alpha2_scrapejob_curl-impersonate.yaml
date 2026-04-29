@@ -27,6 +27,6 @@ spec:
     service:
       name: spectre-engine
       namespace: spectre-system
-      port: 9090
+      port: 8090
   outputSink:
     stdout: {}

@@ -50,17 +50,22 @@ the adapter through the v1alpha1 RPC surface.
 just conf-test
 ```
 
-For ad-hoc manual runs, `just pw-run` exposes the adapter on the
-canonical port (ADR-0021 §4 reserves `9091` for Playwright).
+For ad-hoc manual runs, the canonical path post-R6.2 is the
+Compose stack: `just images && just compose-up` brings the
+adapter up on `127.0.0.1:8091` (ADR-0021 §4 / ADR-0025 §7
+reserve `8091` for Playwright). The native-binary `pw-run`
+recipe was retired in R6.2 (ADR-0025); for live-coding flows
+that need a native binary, build with `just pw-build` and
+launch directly via `node dist/index.js` after exporting
+`SPECTRE_ADAPTER_GRPC_PORT` and `SPECTRE_REDIS_URL`.
 
 ```bash
-# Terminal A — start the adapter on port 9091.
-just pw-run               # binds 0.0.0.0:9091
-# or pick a different port:
-just pw-run 19091
+# Bring up the Compose stack (engine + adapters + stateful deps).
+just images
+just compose-up
 
-# Terminal B — probe the gRPC health check.
-grpc_health_probe -addr=127.0.0.1:9091   # → status: SERVING
+# Probe the gRPC health check from the host.
+grpc_health_probe -addr=127.0.0.1:8091   # → status: SERVING
 ```
 
 The adapter logs a single `listening on 0.0.0.0:<port>` line on

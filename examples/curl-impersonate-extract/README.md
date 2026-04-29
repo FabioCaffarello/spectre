@@ -25,24 +25,23 @@ engine, one protocol, three runtimes.**
 
 ## Run it
 
-The pieces, three terminals (or three `tmux` panes — the engine
-and adapter are both long-running services):
+The pieces — bring up the unified Compose stack (R6.2,
+ADR-0025) and submit the job from the host:
 
 ```bash
-# Terminal 1 — engine gRPC service on 127.0.0.1:9090
-just engine-run
+# Build the five service images, then start the full
+# development graph. The curl-impersonate adapter image bundles
+# every variant binary (`curl_chrome116` and friends) on the
+# Alpine upstream base — no separate release-tarball install
+# needed.
+just images
+just compose-up
 
-# Terminal 2 — curl-impersonate adapter on 127.0.0.1:9093
-just curl-imp-build
-# Install a curl-impersonate release if needed:
-#   https://github.com/lwthiker/curl-impersonate/releases
-just curl-imp-run 9093
-
-# Terminal 3 — submit the job
+# Submit the job.
 grpcurl -plaintext \
     -import-path proto -proto spectre/engine/v1alpha1/engine.proto \
     -d "$(jq -n --arg dsl "$(cat examples/curl-impersonate-extract/job.yaml)" '{job_dsl: $dsl}')" \
-    127.0.0.1:9090 \
+    127.0.0.1:8090 \
     spectre.engine.v1alpha1.Engine/RunJob
 ```
 
@@ -69,8 +68,10 @@ page, a documentation site — is one YAML edit away.
    plan is identical to the one produced for `hello-hackernews`
    and `seleniumbase-extract`; only the driver name differs.
 2. The engine resolves `driver: curl-impersonate` to
-   `SPECTRE_CURL_IMPERSONATE_ENDPOINT` (default
-   `127.0.0.1:9093`) via `AdapterRegistry`, dials the TCP
+   `SPECTRE_CURL_IMPERSONATE_ENDPOINT` (defaults to
+   `grpc://curl-impersonate-adapter:8093` inside Compose, or
+   `127.0.0.1:8093` from the host) via `AdapterRegistry`, dials
+   the TCP
    listener over gRPC (ADR-0022), and waits for
    `grpc.health.v1.Health.Check` to return `SERVING`
    (ADR-0021 §6).

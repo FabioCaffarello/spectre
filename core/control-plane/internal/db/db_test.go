@@ -41,7 +41,7 @@ func TestGetJobReturnsHydratedRow(t *testing.T) {
 	startedAt := createdAt.Add(time.Second)
 	completedAt := startedAt.Add(5 * time.Second)
 	rowsExtracted := int64(42)
-	endpoint := "engine.spectre-system.svc.cluster.local:9090"
+	endpoint := "engine.spectre-system.svc.cluster.local:8090"
 
 	mock.ExpectQuery("SELECT id, status, driver, output_sink_kind").
 		WithArgs(id).

@@ -134,12 +134,14 @@ the `.env` file the justfile auto-loads via `set dotenv-load
 the Compose service binding.
 
 ```bash
-# Start an adapter; it PINGs Redis at startup and exits non-zero
-# if Redis is unreachable (ADR-0023 §6).
-just pw-run 9091
-# stderr:
-#   redis ready at redis://127.0.0.1:6379/0 (adapter_instance_id=...)
-#   spectre-playwright 0.1.0-alpha.0 (driver protocol spectre.driver.v1alpha1) listening on 0.0.0.0:9091
+# Bring up the Compose stack — adapters PING Redis at startup
+# and exit non-zero if Redis is unreachable (ADR-0023 §6). The
+# Compose `depends_on` graph waits for the Redis healthcheck so
+# the ping never fails in practice.
+just images && just compose-up
+# logs:
+#   spectre-playwright    | redis ready at redis://redis:6379/0 (adapter_instance_id=...)
+#   spectre-playwright    | spectre-playwright 0.1.0-alpha.0 (driver protocol spectre.driver.v1alpha1) listening on 0.0.0.0:8091
 ```
 
 Inspect a live session:

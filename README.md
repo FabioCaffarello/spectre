@@ -66,41 +66,50 @@ output:
 ```
 
 v1alpha1's runtime is a multi-process gRPC stack (R2.x →
-ADR-0020 / ADR-0022): an engine binary, one or more adapter
-binaries, the control-plane operator, and the stateful services
-the engine and operator persist to. Local development brings the
-stateful services up via Compose and runs the rest as native
-binaries:
+ADR-0020 / ADR-0022): an engine, three reference adapters, and
+the stateful services they persist to (Postgres, Redis, Kafka,
+MinIO). R6.2 (ADR-0025) brings every application service into a
+unified `docker-compose.yml`; local development is one
+invocation:
 
 ```bash
 git clone https://github.com/FabioCaffarello/spectre && cd spectre
-cp .env.example .env                  # Postgres / Redis / Kafka / S3 URL + endpoint defaults
+cp .env.example .env                  # Postgres / Redis / Kafka / S3 defaults
 just bootstrap                        # fetch every component's deps
-just pw-install-browsers              # Chromium for Playwright
+just images                           # build the five service images via bake
+just compose-up                       # docker compose --profile full up -d
+docker compose ps                     # 10 services healthy
 
-# Stateful services: Postgres (R4.2), Redis (R4.3), Kafka KRaft +
-# Redpanda Console (R4.4), MinIO + bucket bootstrap (R5.1).
-# All seven containers healthcheck-gated.
-just compose-up                       # docker compose up -d
+# Submit a job via grpcurl against the Compose-running engine.
+grpcurl -plaintext \
+    -import-path proto -proto spectre/engine/v1alpha1/engine.proto \
+    -d "$(jq -n --arg dsl "$(cat examples/hello-hackernews/job.yaml)" '{job_dsl: $dsl}')" \
+    127.0.0.1:8090 \
+    spectre.engine.v1alpha1.Engine/RunJob
+```
 
-# Application services — one terminal each.
-just engine-run                       # gRPC service on :9090
-just pw-run 9091                      # Playwright adapter on :9091
-just op-run                           # operator (dials engine + Postgres)
+The control-plane operator stays a host process for R6.2 (see
+[ADR-0025 §6](docs/adr/0025-compose-stack.md#§6-—-operator-outside-compose-for-r6.2));
+R6.3 brings it into the Compose stack alongside a Compose-managed
+`kind` cluster. To exercise the operator end-to-end:
 
-# In another terminal: apply a sample ScrapeJob CR.
-kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob.yaml
-kubectl get scrapejob -w
+```bash
+kind get clusters || kind create cluster
+just op-install-crds
+just op-run                           # operator dials Compose engine on 127.0.0.1:8090
+kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
+kubectl get scrapejob -w              # Pending → Running → Completed
 ```
 
 > Contributors who prefer not to install Rust + Go + Node + Python
 > locally: see
 > [docs/architecture/development-environment.md](docs/architecture/development-environment.md)
-> for the recommended Devcontainer setup.
+> for the Devcontainer setup (R6.3 adds Docker-in-Docker so the
+> Compose stack and the kind cluster live inside the
+> devcontainer).
 
-R6.1 ships per-service container images (engine, control-plane, and
-the three reference adapters) orchestrated by `docker buildx bake`
-(see
+The five service images shipped in R6.1 are orchestrated by
+`docker buildx bake` (see
 [docs/architecture/container-images.md](docs/architecture/container-images.md)):
 
 ```bash
@@ -108,10 +117,6 @@ just images           # build all five via docker buildx bake default
 just images-smoke     # smoke each (binary exists / canonical missing-env error)
 just images-list      # docker images "spectre-*" with sizes
 ```
-
-R6.2 will wire these images into the Compose stack so application
-services join the stateful ones under `docker compose up`; until
-then, the local-dev path above (native binaries) remains canonical.
 
 R2.3 retired the standalone `spectre run` / `validate` CLI; the
 `spectre` binary is now the engine's gRPC service entry point

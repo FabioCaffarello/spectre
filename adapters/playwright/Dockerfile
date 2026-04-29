@@ -95,11 +95,11 @@ COPY --from=builder --chown=pwuser:pwuser /workspace/adapters/playwright/package
 COPY --from=builder --chown=pwuser:pwuser /workspace/adapters/playwright/driver.yaml  /app/driver.yaml
 USER pwuser
 
-# ADR-0021 §4 reserves 9091 for the Playwright adapter; the env var
+# ADR-0021 §4 reserves 8091 for the Playwright adapter; the env var
 # is the canonical port input. NODE_ENV=production silences npm
 # debug paths.
-ENV SPECTRE_ADAPTER_GRPC_PORT=9091 \
+ENV SPECTRE_ADAPTER_GRPC_PORT=8091 \
     NODE_ENV=production
-EXPOSE 9091
+EXPOSE 8091
 
 ENTRYPOINT ["node", "/app/dist/index.js"]
