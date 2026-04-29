@@ -63,17 +63,15 @@ ARG CURL_IMPERSONATE_IMAGE=lwthiker/curl-impersonate:0.6-chrome
 # Stage 1 — regenerate Go protocol bindings (gitignored — ADR-0007)
 # ---------------------------------------------------------------------------
 FROM golang:${GO_VERSION} AS codegen
+# Cache-key only — buf binary itself comes from buf-base; ARG
+# declared so per-target args invalidates the codegen stage when
+# version changes.
 ARG BUF_VERSION
 WORKDIR /workspace
-RUN BUF_ARCH=$(case "$(uname -m)" in \
-        x86_64) echo "x86_64" ;; \
-        aarch64) echo "aarch_64" ;; \
-        *) echo "unsupported BUF arch: $(uname -m)"; exit 1 ;; \
-    esac) \
- && curl -fsSL -o /usr/local/bin/buf \
-      "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-${BUF_ARCH}" \
- && chmod +x /usr/local/bin/buf \
- && buf --version
+# buf comes from the shared codegen base — built by bake's
+# `buf-base` target and injected as a build context. See
+# `build/docker/buf-base.Dockerfile` and `docker-bake.hcl`.
+COPY --from=buf-base /usr/local/bin/buf /usr/local/bin/buf
 COPY proto/                          /workspace/proto/
 COPY tools/codegen/post-generate.sh  /workspace/tools/codegen/post-generate.sh
 RUN cd /workspace/proto && buf generate
