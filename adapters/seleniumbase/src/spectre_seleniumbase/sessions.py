@@ -1,7 +1,7 @@
 """Session manager for the SeleniumBase adapter.
 
 Owns the lazy WebDriver launch, the per-session driver
-allocation, and (PR10) the per-session :class:`ElementRegistry`
+allocation, and the per-session :class:`ElementRegistry`
 that backs ``Query``, ``Extract``, and the element-scoped
 ``Screenshot``. R4.3 externalises session metadata to Redis
 (ADR-0023 §4 + §5): ``register`` writes the metadata document,
@@ -36,8 +36,7 @@ Contract (R4.3):
   Navigate not yet called").
 - ``bump_generation`` / ``current_generation`` /
   ``register_element`` / ``register_elements`` /
-  ``lookup_element`` — element-registry delegation, unchanged
-  from PR10/ADR-0010.
+  ``lookup_element`` — element-registry delegation per ADR-0010.
 - ``close_session(session_id)`` — quits the WebDriver if one was
   launched, evicts the local entry, forgets the ElementRegistry
   entry, and best-effort deletes the Redis key (TTL is the
@@ -52,8 +51,8 @@ The class is constructed with a ``DriverFactory``, a
 pass a ``fakeredis``-backed client and any ``instance_id``
 string.
 
-See ADR-0014 (PR9), ADR-0015 (PR10), ADR-0023 §4–§5 (R4.3) and
-ADR-0009 for the lifecycle rationale.
+See ADR-0014, ADR-0015, ADR-0023 §4–§5 (R4.3), and ADR-0009 for
+the lifecycle rationale.
 """
 
 from __future__ import annotations

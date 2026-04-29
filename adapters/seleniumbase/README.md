@@ -2,7 +2,7 @@
 
 Spectre's reference SeleniumBase driver adapter.
 
-> **Status:** v0.1.0a0 — PR10 closes the v1alpha1 unary surface
+> **Status:** v0.1.0a0. The v1alpha1 unary surface is complete
 > for this driver: `Initialize`, `Navigate`, `Close`, `Query`,
 > `Extract`, and `Screenshot` ship over gRPC on a TCP listener.
 > The R2.2 refactor retired the original Unix-domain-socket
@@ -16,7 +16,7 @@ Spectre's reference SeleniumBase driver adapter.
 > [ADR-0015 §5](../../docs/adr/0015-seleniumbase-element-lifecycle-and-screenshot-coverage.md#5-screenshot_full_page-is-omitted-from-the-seleniumbase-capability-list).
 > See
 > [ADR-0014](../../docs/adr/0014-seleniumbase-adapter-and-cross-language-conformance.md)
-> for the PR9 decisions, ADR-0015 for the PR10 deviations from
+> for the initial decisions, ADR-0015 for the deviations from
 > the Playwright contract, and the
 > [roadmap](../../docs/roadmap.md) for the full Phase 2 picture.
 
@@ -129,7 +129,7 @@ seconds; in-flight RPCs that exceed it are aborted.
   matching driver for the local Chrome install. If either is
   missing, `Navigate` surfaces `CODE_INTERNAL` with a hint
   pointing at the recipe (ADR-0014 §3).
-- **Headless by default.** PR9's factory builds `Driver(browser="chrome",
+- **Headless by default.** The factory builds `Driver(browser="chrome",
   headless=True, uc=False)`. UC (undetected) mode is a v1alpha2
   capability candidate.
 - **No mTLS or authentication in v1alpha1.** ADR-0022 §6 defers
@@ -139,8 +139,9 @@ seconds; in-flight RPCs that exceed it are aborted.
 
 ## Container deployment
 
-The adapter runs inside the spectre control-plane operator image
-(PR17). That image extends the Microsoft Playwright base with Google
+The adapter runs inside the dedicated SeleniumBase image
+(R6.1 / `adapters/seleniumbase/Dockerfile`). The image extends
+`python:3.12-slim-bookworm` with Google
 Chrome, ChromeDriver, and a uv-built virtualenv at
 `/opt/spectre/adapters/seleniumbase/.venv`; the manager Pod runs
 under the Kubernetes `restricted` PodSecurityStandard (no
@@ -228,8 +229,7 @@ adapters/seleniumbase/
   directly; the adapter probes
   `performance.getEntriesByType('navigation')[0].responseStatus`
   and returns `0` when the timing API is unavailable. The
-  conformance suite tolerates either value for the happy path
-  until PR10's Extract is available to inspect the page directly.
+  conformance suite tolerates either value for the happy path.
 - **Selenium error mapping.** `TimeoutException` →
   `CODE_TIMEOUT`; `net::ERR_*` messages → `CODE_TARGET_UNREACHABLE`;
   `SessionNotCreatedException` and chromedriver-missing patterns →
@@ -291,11 +291,11 @@ the v1alpha2 path forward (likely a Chromium-specific
 
 The startup invariant `assert_capability_coherence` rejects a
 declared list with `extract_eval` but not `js_execution`. The
-SeleniumBase adapter's PR9 list (`["navigation"]`) satisfies the
-rule trivially; the assertion is in place so a future maintainer
-who declares a contradictory list sees the error at module load
-rather than as a confusing first-RPC failure. ADR-0010 introduced
-this invariant for Playwright; ADR-0014 carries it forward.
+SeleniumBase adapter declares both, so the rule is satisfied; the
+assertion is in place so a future maintainer who declares a
+contradictory list sees the error at module load rather than as
+a confusing first-RPC failure. ADR-0010 introduced this invariant
+for Playwright; ADR-0014 carries it forward.
 
 ## Generated code
 

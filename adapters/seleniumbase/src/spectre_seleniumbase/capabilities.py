@@ -1,10 +1,10 @@
 """Capabilities declared by the SeleniumBase adapter at handshake time.
 
 Each capability lands once its RPC and the conformance tests for it
-ship together — see ADR-0014 §1. PR9 declared ``navigation`` only.
-PR10 adds ``js_execution`` plus the four ``query_*`` names, the
-four ``extract_*`` names, and **two** of the three ``screenshot_*``
-names. ``screenshot_full_page`` is intentionally absent — Selenium
+ship together — see ADR-0014 §1. The declared set is ``navigation``,
+``js_execution``, the four ``query_*`` names, the four ``extract_*``
+names, and **two** of the three ``screenshot_*`` names.
+``screenshot_full_page`` is intentionally absent — Selenium
 WebDriver has no reliable, browser-independent full-page capture
 API and the capability progression contract says declared = tested.
 ADR-0015 §5 records the rationale; this is the first time a driver
@@ -21,7 +21,7 @@ The capability mechanism splits into two roles (see ADR-0010 §3):
   driver. They do not gate behaviour at runtime.
 - Gating capabilities bind a specific runtime path to a declared
   capability. v1alpha1 has one gating capability: ``js_execution``,
-  which gates ``MODE_EVAL`` extracts. PR10's Extract handler calls
+  which gates ``MODE_EVAL`` extracts. The Extract handler calls
   ``missing_capability_for_mode`` at the start of each request; an
   under-declared driver fails the whole request with
   ``CODE_CAPABILITY_MISSING`` rather than partial-success.
@@ -95,10 +95,9 @@ def has_capability(declared: tuple[str, ...], name: str) -> bool:
 def missing_capability_for_mode(mode: int, declared: tuple[str, ...]) -> str | None:
     """Return the missing capability name if a ``Field.Mode`` would be gated.
 
-    PR9 has no Extract handler so this function is unused on the live
-    path. PR10 will call it before evaluating each field. Defining it
-    now keeps the gate symmetric with the Playwright adapter and lets
-    PR10 add the call site without touching this module.
+    The Extract handler calls this before evaluating each field; a
+    declared capability list missing ``js_execution`` rejects every
+    ``MODE_EVAL`` field at the start of the request.
     """
     if mode == MODE_EVAL and not has_capability(declared, JS_EXECUTION):
         return JS_EXECUTION

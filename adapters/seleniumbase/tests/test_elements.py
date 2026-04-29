@@ -1,6 +1,6 @@
 """Unit tests for the SeleniumBase ElementRegistry.
 
-Mirrors the Playwright ``elements.test.ts`` suite from PR5: the
+Mirrors the Playwright ``elements.test.ts`` suite: the
 registry is the load-bearing contract for the strict
 ElementRef invalidation rule, and these tests are how we know
 the contract holds without standing up Chrome.

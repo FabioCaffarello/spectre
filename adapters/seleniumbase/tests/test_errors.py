@@ -1,8 +1,8 @@
 """Unit tests for the Selenium-to-DriverError mapping.
 
-The mapping is the most reusable artifact of PR9 (and PR10/PR11
-will add rows to it). These tests cover every Navigate-relevant
-row in the ADR-0014 §3 table.
+These tests cover every Navigate-relevant row in the ADR-0014 §3
+table plus the ADR-0015 §2 / §4 additions for ``Query``,
+``Extract``, and ``Screenshot``.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def test_non_webdriver_exception_falls_back_to_internal() -> None:
     assert mapped.message == "plain error"
 
 
-# -- PR10 additions (ADR-0015 §2 and §4) --------------------------------
+# -- ADR-0015 §2 / §4 additions -----------------------------------------
 
 
 def test_stale_element_maps_to_invalid_argument_with_page_state_change_message() -> None:
