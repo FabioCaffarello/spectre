@@ -66,19 +66,27 @@ output:
 ```
 
 v1alpha1's runtime is a multi-process gRPC stack (R2.x →
-ADR-0020 / ADR-0022): an engine, three reference adapters, and
-the stateful services they persist to (Postgres, Redis, Kafka,
-MinIO). R6.2 (ADR-0025) brings every application service into a
-unified `docker-compose.yml`; local development is one
-invocation:
+ADR-0020 / ADR-0022): an engine, three reference adapters, the
+control-plane operator, and the stateful services they persist
+to (Postgres, Redis, Kafka, MinIO). R6.2 (ADR-0025) brought every
+application service into a unified `docker-compose.yml`; R6.3
+(ADR-0025 §6 R6.3 update + ADR-0018 §3a) closed the loop by
+adding Docker-in-Docker to the devcontainer, so the Compose stack
+and a local `kind` Kubernetes cluster live inside one
+Reopen-in-Container session. Local development is one
+"Reopen in Container" plus three commands:
 
 ```bash
 git clone https://github.com/FabioCaffarello/spectre && cd spectre
+code .                                # VS Code → "Reopen in Container"
+# (first-time devcontainer build is ~10–15 minutes; post-create.sh
+#  runs `just kind-up` + `just crds-install` automatically.)
+
+# From inside the devcontainer:
 cp .env.example .env                  # Postgres / Redis / Kafka / S3 defaults
-just bootstrap                        # fetch every component's deps
 just images                           # build the five service images via bake
 just compose-up                       # docker compose --profile full up -d
-docker compose ps                     # 10 services healthy
+docker compose ps                     # 11 services healthy
 
 # Submit a job via grpcurl against the Compose-running engine.
 grpcurl -plaintext \
@@ -88,25 +96,22 @@ grpcurl -plaintext \
     spectre.engine.v1alpha1.Engine/RunJob
 ```
 
-The control-plane operator stays a host process for R6.2 (see
-[ADR-0025 §6](docs/adr/0025-compose-stack.md#§6-—-operator-outside-compose-for-r6.2));
-R6.3 brings it into the Compose stack alongside a Compose-managed
-`kind` cluster. To exercise the operator end-to-end:
+The control-plane operator joins the Compose stack as the
+`control-plane` service (post-R6.3 unified shape, see
+[ADR-0025 §6 R6.3 update](docs/adr/0025-compose-stack.md#r63-update--resolution)).
+End-to-end via the kind cluster:
 
 ```bash
-kind get clusters || kind create cluster
-just op-install-crds
-just op-run                           # operator dials Compose engine on 127.0.0.1:8090
 kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
 kubectl get scrapejob -w              # Pending → Running → Completed
+docker compose logs control-plane     # reconciler events
 ```
 
-> Contributors who prefer not to install Rust + Go + Node + Python
-> locally: see
+> Contributors who decline VS Code can build the devcontainer
+> image manually (`docker build -f .devcontainer/Dockerfile`)
+> and `docker run` it with the DinD feature enabled. See
 > [docs/architecture/development-environment.md](docs/architecture/development-environment.md)
-> for the Devcontainer setup (R6.3 adds Docker-in-Docker so the
-> Compose stack and the kind cluster live inside the
-> devcontainer).
+> for the supported flow and the host-side Docker prerequisite.
 
 The five service images shipped in R6.1 are orchestrated by
 `docker buildx bake` (see

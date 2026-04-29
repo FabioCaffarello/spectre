@@ -1,34 +1,48 @@
 # Development environment
 
-This guide describes the post-R6.2 local-development flow: the
-unified Compose stack that runs every application service alongside
-its stateful dependencies on a single network. After R6.2 the
-canonical inner-loop invocation is one command:
-`just images && just compose-up`.
+This guide describes the post-R6.3 local-development flow: a
+single Reopen-in-Container session that hosts the entire Compose
+stack, a local kind Kubernetes cluster, and the control-plane
+operator — all in one Docker daemon (Docker-in-Docker). After R6.3
+the canonical inner-loop invocation from inside the devcontainer
+is `just images && just compose-up`; on first devcontainer build
+the post-create script runs `just kind-up` and `just crds-install`
+automatically.
 
 For the architectural commitment behind the Compose-as-environment
-shape, see [ADR-0025](../adr/0025-compose-stack.md). For the
+shape, see [ADR-0025](../adr/0025-compose-stack.md) (with the §6
+R6.3 update resolving the operator deferral). For the
 container-image build orchestration that produces what Compose
 runs, see [container-images.md](container-images.md) and
-[ADR-0018](../adr/0018-devcontainer-and-engine-image.md).
+[ADR-0018](../adr/0018-devcontainer-and-engine-image.md) (with
+§3a R6.3 evolution recording the Docker-in-Docker addition).
 
 ## Quick start
 
-From a clean checkout:
+From a clean checkout, the supported path is the devcontainer:
 
 ```bash
 git clone https://github.com/FabioCaffarello/spectre && cd spectre
-cp .env.example .env                  # Postgres / Redis / Kafka / S3 defaults
-just bootstrap                        # fetch every component's deps
-just images                           # build the five service images via bake
-just compose-up                       # docker compose --profile full up -d
-docker compose ps                     # 10 services healthy
+code .                                # VS Code → "Reopen in Container"
+# First build runs ~10–15 minutes (DinD + multi-language toolchains
+# + Playwright Chromium download + post-create.sh's kind-up +
+# crds-install). Subsequent reopens are instant.
 ```
 
-The first `just images` build is slow (15–25 minutes for upstream
-base pulls + toolchain compile). Subsequent rebuilds amortise via
-buildx's per-stage cache (~1–2 minutes when only one component's
-source changes).
+Inside the devcontainer terminal:
+
+```bash
+cp .env.example .env                  # Postgres / Redis / Kafka / S3 defaults
+just images                           # build the five service images via bake
+just compose-up                       # docker compose --profile full up -d
+docker compose ps                     # 11 services healthy
+```
+
+Contributors who do not use VS Code can build the devcontainer
+image manually with `docker build -f .devcontainer/Dockerfile`,
+then run it with the DinD feature enabled — but VS Code's "Reopen
+in Container" is the supported path. GitHub Codespaces consumes
+the same `devcontainer.json` config.
 
 The `--profile full` invocation brings up:
 
@@ -37,13 +51,14 @@ The `--profile full` invocation brings up:
   bootstrap one-shot.
 - **Application services**: engine, playwright-adapter,
   seleniumbase-adapter, curl-impersonate-adapter.
+- **Control plane**: the `control-plane` operator, joining both
+  the Compose default network (for `engine:8090`, `postgres:5432`)
+  and the external `kind` Docker network (for the local kind API
+  server's `spectre-dev-control-plane:6443`).
 
-The control-plane operator is **not** part of the Compose stack
-in R6.2 — it stays a host process per the
-[ADR-0025 §6](../adr/0025-compose-stack.md#§6-—-operator-outside-compose-for-r6.2)
-deferral. R6.3 (Devcontainer with Docker-in-Docker) brings the
-operator into the unified shape alongside a Compose-managed `kind`
-cluster.
+The control-plane operator joins the Compose stack via R6.3's
+DinD + kind shape ([ADR-0025 §6 R6.3 update](../adr/0025-compose-stack.md#r63-update--resolution)).
+The host-process `op-run` recipe is gone.
 
 ## Profiles
 
@@ -67,22 +82,27 @@ nothing — pass `--profile <name>` (or use the justfile recipes).
 
 ## What runs where
 
-| Service                  | Image                                                            | Host port | Compose DNS                  |
-|--------------------------|------------------------------------------------------------------|-----------|------------------------------|
-| postgres                 | `postgres:16-alpine`                                             | 5432      | `postgres:5432`              |
-| redis                    | `redis:7-alpine`                                                 | 6379      | `redis:6379`                 |
-| kafka                    | `apache/kafka:3.7.1`                                             | 9092      | `kafka:9092`                 |
-| kafka-console            | `redpandadata/console:latest`                                    | 8080      | `kafka-console:8080`         |
-| minio                    | `quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z`               | 9000/9001 | `minio:9000`                 |
-| minio-bootstrap          | `quay.io/minio/mc:latest`                                        | —         | (one-shot, exits)            |
-| engine                   | `spectre-engine:dev` (built via `bake engine`)                   | 8090      | `engine:8090`                |
-| playwright-adapter       | `spectre-playwright:dev` (built via `bake playwright`)           | 8091      | `playwright-adapter:8091`    |
-| seleniumbase-adapter     | `spectre-seleniumbase:dev` (built via `bake seleniumbase`)       | 8092      | `seleniumbase-adapter:8092`  |
-| curl-impersonate-adapter | `spectre-curl-impersonate:dev` (built via `bake curl-impersonate`)| 8093     | `curl-impersonate-adapter:8093` |
+| Service                  | Image                                                            | Host port  | Compose DNS                  |
+|--------------------------|------------------------------------------------------------------|------------|------------------------------|
+| postgres                 | `postgres:16-alpine`                                             | 5432       | `postgres:5432`              |
+| redis                    | `redis:7-alpine`                                                 | 6379       | `redis:6379`                 |
+| kafka                    | `apache/kafka:3.7.1`                                             | 9092       | `kafka:9092`                 |
+| kafka-console            | `redpandadata/console:latest`                                    | 8080       | `kafka-console:8080`         |
+| minio                    | `quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z`               | 9000/9001  | `minio:9000`                 |
+| minio-bootstrap          | `quay.io/minio/mc:latest`                                        | —          | (one-shot, exits)            |
+| engine                   | `spectre-engine:dev` (built via `bake engine`)                   | 8090       | `engine:8090`                |
+| playwright-adapter       | `spectre-playwright:dev` (built via `bake playwright`)           | 8091       | `playwright-adapter:8091`    |
+| seleniumbase-adapter     | `spectre-seleniumbase:dev` (built via `bake seleniumbase`)       | 8092       | `seleniumbase-adapter:8092`  |
+| curl-impersonate-adapter | `spectre-curl-impersonate:dev` (built via `bake curl-impersonate`)| 8093      | `curl-impersonate-adapter:8093` |
+| control-plane            | `spectre-control-plane:dev` (built via `bake control-plane`)     | (8081 unmapped) | `control-plane`         |
 
 Host-port mappings are 1:1: container 8090 → host 8090, and so on.
 The same address resolves both inside Compose (`engine:8090`) and
-from the host (`127.0.0.1:8090`).
+from the devcontainer host (`127.0.0.1:8090`). The operator's
+`--health-probe-bind-address=:8081` port is unmapped by default
+([ADR-0025 §6 R6.3 update](../adr/0025-compose-stack.md#r63-update--resolution))
+— operator activity surfaces through `kubectl get scrapejob -w`
+and `docker compose logs control-plane` rather than HTTP probes.
 
 ## Port reference
 
@@ -164,76 +184,166 @@ test against the Compose stack.
 
 ## Operator dev flow
 
-R6.2 keeps the operator a host process while the Compose stack
-hosts the application services. The operator runs against the
-developer's external `kind` cluster and dials the Compose-running
-engine via the host-port mapping:
+R6.3 places the operator inside the Compose stack as the
+`control-plane` service. There is no separate "run the operator
+from the host" step — `just compose-up` brings it up alongside
+the engine, the adapters, and the stateful deps. CRD applies and
+ScrapeJob reconciliation work end-to-end without leaving the
+unified shape:
 
 ```bash
-# Bring up the Compose stack first (engine on 127.0.0.1:8090).
+# From inside the devcontainer, with the kind cluster + CRDs
+# already provisioned by post-create.sh on first build:
 just images && just compose-up
 
-# In a separate terminal, ensure a kind cluster exists.
-kind get clusters || kind create cluster
-
-# Install the v1alpha2 CRD into the kind cluster.
-just op-install-crds
-
-# Run the operator from the host. SPECTRE_ENGINE_ENDPOINT defaults
-# to 127.0.0.1:8090, which is the Compose host-port mapping for
-# the engine container.
-just op-run
-
-# In another terminal, apply a sample ScrapeJob.
+# Apply a sample ScrapeJob. The Endpoint-form sample dials the
+# Compose-internal `engine:8090` hostname directly — the
+# canonical post-R6.3 dev-flow demo.
 kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
-kubectl get scrapejob -w     # Pending → Running → Completed
+kubectl get scrapejob -w       # Pending → Running → Completed
+
+# Inspect operator activity.
+docker compose logs -f control-plane | grep -E 'reconciling|completed|failed'
+
+# Confirm Postgres has the row.
+docker exec spectre-postgres psql -U spectre -d spectre \
+  -c 'SELECT id, status, output_sink_kind, rows_extracted FROM jobs ORDER BY created_at DESC LIMIT 1'
 ```
 
-The `_endpoint` sample uses `EngineRef.Endpoint` form
-(`127.0.0.1:8090`) so the operator dials the host-mapped port
-without needing a Kubernetes Service. Service-form samples
-(`spectre_v1alpha2_scrapejob_hello-hackernews.yaml` etc.) require
-a `spectre-engine` Service in the cluster — useful for in-cluster
-testing once R7.1's Helm chart lands.
+The `_endpoint` sample's `engineRef.endpoint: engine:8090` is the
+post-R6.3 idiom: the operator container's network reach lets
+service-name DNS resolve directly. The same address matches the
+operator's `SPECTRE_ENGINE_ENDPOINT` fallback, so a sample
+without an `engineRef` field would resolve identically.
 
-R6.3 will resolve the host/Compose split: the devcontainer adds
-Docker-in-Docker so the operator container, the kind API server,
-and the Compose stack all live in one Docker daemon. Until then,
-`just op-run` is the canonical operator flow.
+`spectre_v1alpha2_scrapejob_hello-hackernews.yaml` (Service form,
+`spectre-engine.spectre-system.svc.cluster.local:8090`) is the
+in-cluster pattern R7.1's Helm chart targets — it does not work
+in the post-R6.3 dev flow because the engine runs as a Compose
+service rather than a Kubernetes Pod.
+
+## Kubernetes-in-Docker (kind)
+
+R6.3 ships a local `spectre-dev` kind cluster as the operator's
+Kubernetes API surface. The cluster runs in the devcontainer's
+Docker-in-Docker daemon (see "DinD model" below); recipes manage
+its lifecycle:
+
+| Recipe              | Effect                                                                       |
+|---------------------|-------------------------------------------------------------------------------|
+| `just kind-up`      | Idempotent. Creates `spectre-dev` if missing; writes `build/kind/kubeconfig`. |
+| `just kind-down`    | Deletes `spectre-dev`; removes `build/kind/kubeconfig`.                       |
+| `just kind-status`  | Lists the kind clusters known to the local Docker daemon.                     |
+| `just crds-install` | Applies the v1alpha2 ScrapeJob CRD (kustomize build of `config/crd`).         |
+| `just crds-uninstall` | Removes the v1alpha2 ScrapeJob CRD.                                         |
+
+The cluster is independent of Compose's lifecycle — `compose-down`
+and `compose-reset` do **not** touch the kind cluster. Run
+`kind-down` separately for a clean reset.
+
+The kubeconfig dance has two server URLs by design:
+
+- **`build/kind/kubeconfig`** is written by
+  `kind get kubeconfig --internal` — server URL
+  `https://spectre-dev-control-plane:6443` (in-network DNS). The
+  operator container mounts it read-only at
+  `/home/nonroot/.kube/config`. Reachable only from containers on
+  the `kind` Docker network (the operator joins it explicitly in
+  Compose).
+- **`~/.kube/config`** is written by `kind create cluster` —
+  server URL `https://127.0.0.1:<random-port>` (host-port forward).
+  Used by `kubectl` from the devcontainer terminal directly. The
+  contributor does not need to set `KUBECONFIG`; kind populates
+  this file automatically.
+
+The two-config dance is standard kind practice; documented here
+so the operator container's mount and the contributor's terminal
+do not look like project-specific magic.
+
+## DinD model
+
+R6.3's devcontainer ships the official VS Code
+`docker-in-docker:2` feature (Moby variant). Inside the
+devcontainer, `docker` talks to a `dockerd` running **inside** the
+devcontainer — not the host's Docker daemon. Implications:
+
+- `docker images` from inside the devcontainer shows DinD-internal
+  images. The host's images are invisible (Docker Desktop's
+  layer-cache is shared at the VM level — first-build savings;
+  not a runtime concern).
+- `docker volume ls` similarly shows DinD-internal volumes.
+- Tearing down the devcontainer (Dev Containers: Rebuild
+  Container) destroys the DinD volumes, the Compose stack, and
+  the kind cluster — clean slate.
+
+This is **deliberate** and matches ADR-0020 §85's commitment.
+ADR-0018 §3a R6.3 evolution records the audit trail.
+
+Failure modes worth knowing:
+
+- **Codespaces compatibility.** The DinD feature works in
+  Codespaces — the host VM supports DinD. First-build cost is the
+  same ~10–15 minutes as a local Reopen-in-Container.
+- **macOS / Apple Silicon.** Docker Desktop on macOS runs Linux
+  containers in a lightweight VM; the devcontainer's nested
+  daemon runs inside that VM. ARM64 / AMD64 mismatches are
+  invisible at the DinD layer because the devcontainer is
+  single-arch (`linux/amd64` per ADR-0018 §5; emulated under
+  Rosetta on Apple Silicon).
+- **Linux native host.** The DinD feature runs without Docker
+  Desktop's VM layer; cgroups + privileged-mode requirements are
+  the most common failure surface. The official feature handles
+  these uniformly.
+- **kind network missing.** Compose's `external: true name: kind`
+  declaration on the operator service expects the network to
+  exist. If a contributor runs `compose-up` before `kind-up`,
+  Compose errors with "network kind not found". The fix:
+  `just kind-up && just compose-up`. The post-create script
+  arranges this on first devcontainer build.
 
 ## Toolchain prerequisites
 
-For the Compose flow:
+The supported path is the devcontainer; the only host
+prerequisite is Docker (Docker Desktop on macOS / Windows;
+Docker Engine on Linux). Everything else — Rust, Go, Node 20 +
+pnpm 9, Python 3.12 + uv, Chrome, ChromeDriver, curl-impersonate,
+kind, kubectl, kubebuilder, buf, just, actionlint, gitleaks —
+ships inside the devcontainer image.
 
-- Docker (any recent version; Apple Silicon, Linux, and
-  Windows-WSL2 all work).
-- `just`, `grpcurl`, `jq` on PATH.
-
-For the conformance flow (in addition to the above):
-
-- Rust stable (engine native builds for `engine-run-native`).
-- Go 1.25.
-- Node 20 + pnpm 9.
-- Python 3.12 + uv.
-- `kubectl` and `kind` for the operator dev flow.
-
-The Devcontainer (revisited in R6.3 with DinD) provisions every
-toolchain plus Chrome / ChromeDriver / curl-impersonate for the
-conformance flow.
+For contributors who decline the devcontainer, the host needs the
+toolchains listed above. The conformance suite (which spawns
+adapter subprocesses in three languages) is the most demanding
+consumer; the devcontainer exists primarily to keep that suite
+turnkey.
 
 ### Devcontainer
 
 Open the repository in VS Code → Command Palette →
-**Dev Containers: Reopen in Container**. The current devcontainer
-(R6.1 era, pre-DinD) provides every toolchain `just check` /
-`just conf-test` need. R6.3 adds Docker-in-Docker so the
-devcontainer also hosts the Compose stack and the kind cluster
-the operator targets — at which point `just compose-up` and
-`just op-run` from inside the devcontainer cover the unified flow.
+**Dev Containers: Reopen in Container**. The R6.3 devcontainer
+ships:
 
-For the pre-R6.3 devcontainer, run the Compose stack on the host
-and run `just check` / `just conf-test` from within the
-devcontainer.
+- Docker-in-Docker (`docker-in-docker:2` feature) — the Compose
+  stack and the kind cluster run inside the devcontainer's own
+  Docker daemon. ADR-0018 §3a R6.3 evolution + ADR-0025 §6 R6.3
+  update.
+- Every language toolchain (Rust 1.88, Go 1.25, Node 20, Python
+  3.12) plus Chrome / ChromeDriver / curl-impersonate for the
+  conformance suite.
+- Kubernetes tooling — `kind` 0.24.0, `kubectl` 1.31.0, `kubebuilder`
+  4.13.1.
+- `just`, `buf`, `actionlint`, `gitleaks`, `pre-commit`.
+
+First-build cost is ~10–15 minutes (DinD install +
+multi-language toolchains + Playwright Chromium download +
+post-create.sh's `kind-up` + `crds-install`). Subsequent reopens
+are instant. The post-create script is idempotent — rebuilding
+the container is safe and re-runs are cheap.
+
+`forwardPorts` in `.devcontainer/devcontainer.json` exposes every
+application + stateful service port (8080 / 8090–8093 / 5432 /
+6379 / 9000 / 9001 / 9092) through VS Code's port-forwarding
+tunnel, so a browser / `grpcurl` invocation on the contributor's
+host machine reaches the in-DinD services without extra setup.
 
 ## Engine native binary (debugging)
 
