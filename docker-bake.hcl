@@ -54,9 +54,9 @@ variable "TAG" {
 // `fabiocaffarello/spectre-engine:<tag>` (Docker resolves the bare
 // owner reference to `docker.io/fabiocaffarello/...`
 // automatically). The `image()` function below is registry-
-// agnostic — it works identically for any non-empty REGISTRY,
-// including future moves to `ghcr.io/<owner>` or a private
-// registry. See ADR-0018 §5 R6.5.3 update for the pivot rationale.
+// agnostic — any non-empty value works (alternative public
+// registries, a private registry, etc.). See ADR-0018 §5 R6.5.3
+// update for the pivot rationale.
 variable "REGISTRY" {
   default = ""
 }

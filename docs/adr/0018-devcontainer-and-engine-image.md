@@ -186,23 +186,128 @@ PR scoped to discuss them. PR14 ships the three adapter images
 
 ### 5. No image registry publishing in PR13
 
-> **Status — reaffirmed for R6.1; revisited in R7.1 (2026-04-29).**
-> Single-arch (linux/amd64) builds and no-registry-publish remain
-> in effect through R6.1: every target in `docker-bake.hcl` pins
+> **Status — reaffirmed for R6.1; updated in R6.5.3 (2026-04-29).**
+> ghcr.io is replaced by Docker Hub `fabiocaffarello/spectre-<name>`
+> as the publish target; multi-arch ships for control-plane +
+> playwright; three deferrals (engine, seleniumbase,
+> curl-impersonate) are recorded with explicit unblock criteria.
+> See "R6.5.3 update — Docker Hub registry + multi-arch reality"
+> below.
+
+> **Status (R6.1) — reaffirmed.**
+> Single-arch (linux/amd64) builds and no-registry-publish remained
+> in effect through R6.1: every target in `docker-bake.hcl` pinned
 > `platforms = ["linux/amd64"]` and the `REGISTRY` bake variable
-> defaults to empty (local-only). Multi-arch matrix (linux/amd64
-> + linux/arm64), ghcr.io publishing, image signing (`cosign`), and
-> SBOMs (`syft`) land in R7.1 release-engineering — the bake
-> variables (`TAG`, `REGISTRY`, `VCS_REF`, `BUILD_DATE`) are the
-> hooks; nothing in R6.1 forecloses any of it.
+> defaulted to empty (local-only). Multi-arch matrix, registry
+> publishing, image signing (`cosign`), and SBOMs (`syft`) were
+> deferred — the bake variables (`TAG`, `REGISTRY`, `VCS_REF`,
+> `BUILD_DATE`) are the hooks; nothing in R6.1 foreclosed any of it.
 
 Chosen: **the new CI job builds the engine image locally on the
 runner and runs it; no `docker push` to any registry.** Image
 publishing belongs to a release-engineering workflow that fires
 on tagged releases, not on every PR. PR13's CI proves the image
-*builds and runs*. Multi-arch buildx and `ghcr.io` publishing
-stay out of scope until the artifact has versioned releases to
+*builds and runs*. Multi-arch buildx and registry publishing
+stayed out of scope until the artifact had versioned releases to
 attach to.
+
+#### R6.5.3 update — Docker Hub registry + multi-arch reality
+
+R6.5.3 makes the publish flow operational. Two pivots from the
+R6.1 reaffirmation, plus three explicit deferrals.
+
+**Pivot 1: Docker Hub, not ghcr.io.** The maintainer's decision
+is to publish to **Docker Hub** under the personal account
+`fabiocaffarello` (flat namespace — Docker Hub does not support
+nested paths under a personal account). The five image
+references become:
+
+- `fabiocaffarello/spectre-engine`
+- `fabiocaffarello/spectre-control-plane`
+- `fabiocaffarello/spectre-playwright`
+- `fabiocaffarello/spectre-seleniumbase`
+- `fabiocaffarello/spectre-curl-impersonate`
+
+The bake `image()` function is registry-agnostic — it produces
+`<registry>/spectre-<name>:<tag>` for any non-empty `REGISTRY`,
+including `fabiocaffarello`, `ghcr.io/<owner>`, or a private
+registry. Only the documented value of `REGISTRY` changes; no
+bake function or target structure is touched.
+
+**Pivot 2: Multi-arch where it is achievable today.** Of the
+five images, only two can practically ship multi-arch
+(`linux/amd64,linux/arm64`) without engineering work that would
+exceed the scope of a hygiene-phase PR:
+
+| Image | Multi-arch ready? | Blocker / unblock criteria |
+|-------|-------------------|----------------------------|
+| **control-plane** | ✅ today | None. Pure Go cross-compile (CGO_ENABLED=0 + GOARCH=${TARGETARCH}). Multi-arch from R6.5.3 publish. |
+| **playwright** | ✅ today | None. Microsoft Playwright runtime image is multi-arch; Node `pnpm install` runs under QEMU emulation on amd64 runners (~3-5x slowdown — acceptable for v1alpha1; native arm64 runners are a v1alpha2 optimisation). Multi-arch from R6.5.3 publish. |
+| **engine** | ❌ deferred | `MUSL_TARGET` hardcoded to `x86_64-unknown-linux-musl`; the apt-installed `musl-tools` + the `x86_64-linux-musl-g++` symlink + the `cp -r .../x86_64-linux-gnu/curl .../x86_64-linux-musl/curl` step are all amd64-specific. Unblock: select `MUSL_TARGET` per `${TARGETARCH}` (`aarch64-unknown-linux-musl` on arm64), install matching cross-compiler (`gcc-aarch64-linux-gnu` + `g++-aarch64-linux-gnu`), create `aarch64-linux-musl-g++` symlink, select libcurl include-path source per `${TARGETARCH}`. ~30-line Dockerfile change in a focused PR. |
+| **seleniumbase** | ❌ deferred | Google Chrome stable for Linux is published amd64-only as of R6.5.3 (Chromium has arm64 builds; Chrome stable does not). The `[arch=amd64]` apt-source pin and the `seleniumbase install chromedriver` runtime step both depend on the amd64-only `google-chrome-stable` package. Unblock paths: (a) wait for Google to publish a Linux/arm64 stable channel; (b) switch the adapter from Chrome to Chromium — multi-arch but changes the project's tested driver surface, an ADR-level decision deferred to v1alpha2. |
+| **curl-impersonate** | ❌ deferred | Runtime base `lwthiker/curl-impersonate:0.6-chrome` is published amd64-only on Docker Hub. Unblock paths: (a) wait for upstream to publish a multi-arch manifest list; (b) fork the upstream image build and publish our own multi-arch tag; (c) cross-compile curl-impersonate from source per [their `INSTALL.md`](https://github.com/lwthiker/curl-impersonate/blob/main/INSTALL.md)'s ARM64 instructions and skip the upstream base entirely. |
+
+The forward-readiness work in R6.5.3's Dockerfiles
+(`ARG TARGETPLATFORM` / `ARG TARGETARCH` declarations in the
+deferred three; `R7.x: multi-arch unblock` comment blocks
+referencing this subsection) narrows v1alpha2 work to the
+specific blocker per image, not wholesale Dockerfile rewrites.
+
+**Per-target platform set declared at publish time, not in
+`docker-bake.hcl`.** The bake targets keep
+`platforms = ["linux/amd64"]` as their default; the publish
+workflow declares multi-arch via per-target `--set` overrides
+(`--set control-plane.platform=linux/amd64,linux/arm64`). The
+platform set is a deployment concern, not a build concern; CI's
+verify-only matrix doesn't need overrides, and adding new
+multi-arch targets later is one line in `publish.yml` rather
+than a bake structural change.
+
+**`workflow_dispatch` only in R6.5.3; tag-triggered and `:edge`
+deferred.** The repo has no tags as of R6.5.3 merge (`VERSION =
+0.1.0-alpha.0`); auto-trigger on tag pushes before any tags
+exist is theoretical. Manual dispatch + manifest verification
+builds maintainer confidence before automation. Tag-triggered
+publish (`v*.*.*` → `:<tag>` and `:latest`) and main-branch
+publish (`:edge`) are ~5-line additions to `publish.yml`'s `on:`
+block when the project is ready (R7.x or v1alpha2). The R6.5.3
+design doesn't preempt that future step.
+
+**Deliverables of R6.5.3:**
+
+- `.github/workflows/publish.yml` (workflow_dispatch only;
+  three inputs: `tag`, `targets`, `multi_arch`)
+- `.github/workflows/ci.yml` `publish-dry-run` job (multi-arch
+  build path validation, no push)
+- `docker-bake.hcl` comment block updated for Docker Hub
+- five Dockerfiles annotated with multi-arch posture
+  (control-plane + playwright as ready; engine, seleniumbase,
+  curl-impersonate as deferred with R7.x comments)
+- this ADR-0018 §5 amendment
+- new `docs/architecture/releases.md` (operator-facing)
+- `docs/architecture/container-images.md` updated with the
+  Multi-arch status subsection
+
+**What stays unchanged:**
+
+- ADR-0007 (proto codegen at build time)
+- ADR-0016 §1 (subprocess-over-cgo)
+- The `image()` function in bake (registry-agnostic from R6.1)
+- The `images` matrix and `full-stack` jobs in CI (verify-only,
+  single-arch — `--load` cannot represent a manifest list)
+- All five service binaries' source trees (R6.5.3 is packaging
+  only — capability invariant 13/12/6 holds byte-for-byte)
+- Phase R6.5's no-new-ADR posture (R6.5.1 §9.8) — this is an
+  amendment, not a new record
+
+**Maintainer prerequisite (operator action, not contributor
+action).** The first publish requires a Docker Hub Personal
+Access Token added to the repo as the `DOCKERHUB_TOKEN` secret.
+Token generation: Docker Hub → Account Settings → Security →
+New Access Token, scoped Read/Write/Delete on
+`fabiocaffarello/spectre-*`. R6.5.3 ships the workflow that
+consumes the secret; the secret is added separately by the
+maintainer before the first manual dispatch.
 
 ## Consequences
 
