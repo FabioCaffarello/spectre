@@ -4,9 +4,8 @@
 // curl-impersonate adapter sees one uniform shape for HTML
 // parsing, CSS selection, and XPath selection.
 //
-// PR12 introduces this package so Query and Extract have a
-// consistent surface against the response body cached by
-// Navigate. The contract:
+// Query and Extract use this package for a consistent surface
+// against the response body cached by Navigate. The contract:
 //
 //   - Parse(body) -> *goquery.Document. The document is
 //     immutable for the lifetime of the session generation

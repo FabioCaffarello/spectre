@@ -3,8 +3,8 @@ version: 0.1.0-alpha.0
 protocol_version: spectre.driver.v1alpha1
 
 # Capabilities follow the "declared = tested" rule from ADR-0014 §1.
-# Six entries, alphabetical, declared by PR12 (Close + Query +
-# Extract). The capability list will not grow further in v1alpha1:
+# Six entries, alphabetical (Close + Query + Extract). The
+# capability list will not grow further in v1alpha1:
 #
 #   - `js_execution` and `extract_eval` are absent — no JavaScript
 #     engine, the coherence rule from ADR-0010 §3 forbids declaring

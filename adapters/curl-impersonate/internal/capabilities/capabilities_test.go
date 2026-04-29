@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestNamesReturnsPR12List(t *testing.T) {
+func TestNamesMatchesCapabilityManifest(t *testing.T) {
 	got := Names()
 	want := []string{
 		"extract_attribute",
@@ -19,7 +19,7 @@ func TestNamesReturnsPR12List(t *testing.T) {
 		"query_xpath",
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("PR12 capability list must be exactly %v; got %v", want, got)
+		t.Fatalf("capability list must be exactly %v; got %v", want, got)
 	}
 }
 

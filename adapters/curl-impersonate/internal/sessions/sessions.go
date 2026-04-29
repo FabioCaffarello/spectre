@@ -5,9 +5,9 @@
 // for the §5 restart-invalidation contract.
 //
 // Each session owns a cookie-jar file path that curl uses to
-// persist cookies across multiple Navigates (ADR-0016 §4). PR12
-// added the cached *goquery.Document per session for Query and
-// Extract; R4.3 (this revision) externalises the session
+// persist cookies across multiple Navigates (ADR-0016 §4) and a
+// cached *goquery.Document for Query and Extract. R4.3
+// externalises the session
 // metadata to Redis under ``session:curl-impersonate:<id>`` per
 // ADR-0023 §4 and adds the ``adapter_instance_id`` validation
 // path the gRPC server uses to surface foreign-instance sessions

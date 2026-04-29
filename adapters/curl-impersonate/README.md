@@ -7,8 +7,8 @@ server on a TCP listener. The R2.2 refactor retired the original
 Unix-domain-socket transport in favour of TCP + the gRPC standard
 health check (ADR-0021, ADR-0022).
 
-> **Status:** v0.1.0-alpha.0 — Phase 2 closing. PR12 closes the
-> v1alpha1 unary surface for this adapter: full `Close`, `Query`
+> **Status:** v0.1.0-alpha.0. The v1alpha1 unary surface is
+> complete for this adapter: full `Close`, `Query`
 > (CSS + XPath), and `Extract` (TEXT_CONTENT, INNER_TEXT,
 > INNER_HTML, OUTER_HTML, ATTR), with the `MODE_EVAL` runtime
 > gate from ADR-0010 §3 firing on every request that asks for it.
@@ -183,11 +183,9 @@ which depends on it) before `go build`/`go test`. See
 - [curl-impersonate](https://github.com/lwthiker/curl-impersonate)
 - [ADR-0016](../../docs/adr/0016-curl-impersonate-adapter-and-third-runtime-divergence.md)
   — subprocess-over-cgo, WaitCondition no-op, default variant,
-  cookie-jar architecture, and the third capability divergence
-  (PR11).
+  cookie-jar architecture, and the third capability divergence.
 - [ADR-0017](../../docs/adr/0017-curl-impersonate-extraction-and-final-capability-divergence.md)
   — `query_text` / `query_attribute` omission as the
   semantic-equivalence contract, goquery + htmlquery integration,
   ElementRef simplification, SelectorKind mapping, Field.Mode
-  mapping for static HTML, and the MODE_EVAL conformance test
-  (PR12).
+  mapping for static HTML, and the MODE_EVAL conformance test.
