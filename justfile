@@ -40,23 +40,30 @@ build: engine-build cp-build curl-imp-build pw-build
 check: lint test
 
 # ---------------------------------------------------------------------------
-# Compose stack (R6.2 — see ADR-0025; ADR-0023 §9)
+# Compose stack (R6.2 + R6.3 — see ADR-0025; ADR-0023 §9)
 # ---------------------------------------------------------------------------
-# R6.2 brings application services (engine + three adapters) into
-# `docker-compose.yml` alongside the stateful services from R4.x and
-# R5.1. `just compose-up` brings up the full development graph
-# (engine on 8090, adapters on 8091/8092/8093, Postgres / Redis /
-# Kafka / MinIO + Console / minio-bootstrap). The operator stays a
-# host process (R6.2 deferral, ADR-0025 §6); `just op-run` continues
-# to be the dev flow until R6.3 brings it into the unified shape.
+# R6.2 brought the application services (engine + three adapters)
+# into `docker-compose.yml` alongside the stateful services from
+# R4.x and R5.1. R6.3 added the control-plane operator as the
+# eleventh service (ADR-0025 §6 R6.3 update); `just compose-up`
+# brings up the full development graph: operator + engine on 8090,
+# adapters on 8091/8092/8093, Postgres / Redis / Kafka / MinIO +
+# Console / minio-bootstrap. The operator joins both the Compose
+# default network and the `kind` Docker network (managed via
+# `just kind-up`); `just kind-up` must run before `compose-up`
+# the first time (post-create.sh handles that automatically on
+# devcontainer first-build).
 #
 # Profiles (ADR-0025 §4): infra (stateful only — pre-R6.2 default),
 # core (engine + stateful deps), adapters (three adapters + redis),
-# app (headless full stack), full (default — everything).
+# app (headless full stack incl. operator), full (default —
+# everything).
 
-# Bring up the full development graph (10 services across the
-# `full` profile). Requires images built first via `just images`
-# — Compose uses `pull_policy: never` per ADR-0025 §8.
+# Bring up the full development graph (eleven services across the
+# `full` profile — six stateful + engine + three adapters +
+# control-plane operator). Requires images built first via
+# `just images` — Compose uses `pull_policy: never` per ADR-0025
+# §8 — and the `kind` Docker network present (via `just kind-up`).
 compose-up:
     docker compose --profile full up -d
 
@@ -126,7 +133,9 @@ compose-rebuild SERVICE:
 
 # Full reset: stop, drop volumes, restart under `--profile full`.
 # Useful when the schema advances or you want a clean Postgres /
-# Redis / Kafka / MinIO state.
+# Redis / Kafka / MinIO state. The kind cluster is independent of
+# Compose's lifecycle — `compose-reset` does NOT recreate it. Run
+# `just kind-down && just kind-up` separately for a clean cluster.
 compose-reset:
     docker compose down -v && docker compose --profile full up -d
 
@@ -351,37 +360,17 @@ cp-build:
     cd core/control-plane && make build
 
 # Operator development: discoverable aliases over the kubebuilder
-# Makefile targets. op-test and op-build mirror cp-test and cp-build;
-# the install/uninstall/run trio operates against the current kubectl
-# context (the equivalent of `make install/uninstall/run` from the
-# kubebuilder convention).
+# Makefile targets. op-test and op-build mirror cp-test and cp-build.
+# The R6.2 `op-run` host-process recipe was retired in R6.3 (ADR-0025
+# §6 R6.3 update): the operator now runs as a Compose service
+# (`control-plane`) under the `app`/`full` profiles, joining both the
+# Compose default network and the kind Docker network. Local CRD
+# management lives in the `crds-install` / `crds-uninstall` recipes
+# below; kind cluster lifecycle in `kind-up` / `kind-down` /
+# `kind-status`.
 
 op-test: cp-test
 op-build: cp-build
-
-# Run the operator from your host against the current kubectl
-# context. R3.1's EngineClientRunner dials the engine over gRPC,
-# so the dev flow needs the engine listening; the recipe does not
-# spawn it.
-#
-# Post-R6.2 (ADR-0025 §6 deferral): the operator stays a host
-# process and dials the Compose-running engine via the host-port
-# mapping `127.0.0.1:8090`. Bring up the Compose stack first with
-# `just images && just compose-up`. R6.3 brings the operator into
-# the unified shape via DinD + kind-in-Compose.
-#
-# Override the engine endpoint via `SPECTRE_ENGINE_ENDPOINT=...`
-# in the environment.
-op-run:
-    cd core/control-plane && \
-        GOTOOLCHAIN=go1.25.3 go run ./cmd/main.go \
-            --engine-endpoint="${SPECTRE_ENGINE_ENDPOINT:-127.0.0.1:8090}"
-
-op-install-crds:
-    cd core/control-plane && make install
-
-op-uninstall-crds:
-    cd core/control-plane && make uninstall
 
 # Build the operator image. R3.1 retired the bundled-image
 # execution model: the image carries only the kubebuilder manager
@@ -408,6 +397,78 @@ op-image-smoke: op-image
     docker run --rm --platform=linux/amd64 \
         --entrypoint=/manager \
         spectre-control-plane:dev --help
+
+# ---------------------------------------------------------------------------
+# Kubernetes-in-Docker (kind) — ADR-0025 §6 R6.3 update
+# ---------------------------------------------------------------------------
+# R6.3 places the control-plane operator inside the Compose stack
+# alongside a `kind` cluster running in the same Docker daemon
+# (Docker-in-Docker, devcontainer-managed). The operator container
+# joins kind's Docker network and dials `kind-control-plane:6443`
+# directly; `kubectl` from the devcontainer terminal reaches the same
+# cluster via kind's host-side kubeconfig at `~/.kube/config` (kind
+# writes that automatically on cluster creation).
+#
+# Lifecycle is independent of Compose: `kind-up` is idempotent and
+# the post-create script runs it once per devcontainer build;
+# `compose-up` / `compose-down` do not touch the kind cluster.
+
+# Create the local kind cluster used by the operator container
+# (ADR-0025 §6 resolution / R6.3). Idempotent — skips creation if
+# the cluster exists. Writes the in-DinD-rewritten kubeconfig
+# (server URL `https://kind-control-plane:6443`) to
+# `build/kind/kubeconfig`, which `docker-compose.yml`'s
+# `control-plane` service mounts read-only at
+# `/home/nonroot/.kube/config`.
+kind-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if kind get clusters 2>/dev/null | grep -q '^spectre-dev$'; then
+        echo "kind cluster 'spectre-dev' already exists"
+    else
+        kind create cluster --config build/kind/cluster.yaml
+    fi
+    mkdir -p build/kind
+    kind get kubeconfig --name spectre-dev --internal \
+        > build/kind/kubeconfig
+    echo "wrote build/kind/kubeconfig (server: https://kind-control-plane:6443)"
+
+# Tear down the kind cluster. Used by the contributor when they
+# want a clean reset; not run by `compose-down` (the cluster is
+# independent of Compose's service lifecycle).
+kind-down:
+    kind delete cluster --name spectre-dev || true
+    rm -f build/kind/kubeconfig
+
+# Print the kind clusters known to this devcontainer's Docker
+# daemon. Useful for sanity-checking the post-create script's
+# idempotence.
+kind-status:
+    @kind get clusters
+
+# Apply the v1alpha2 ScrapeJob CRD to the local kind cluster.
+# Idempotent — `kubectl apply -f` is the canonical way to bring
+# CRDs into a cluster. Targets `build/kind/kubeconfig` so
+# re-running outside of the `kind-up` flow still works.
+crds-install:
+    cd core/control-plane && \
+        KUBECONFIG=$(realpath ../../build/kind/kubeconfig) make install
+
+crds-uninstall:
+    cd core/control-plane && \
+        KUBECONFIG=$(realpath ../../build/kind/kubeconfig) make uninstall
+
+# Deprecated R6.2 names. R6.3 renames `op-install-crds` →
+# `crds-install` and `op-uninstall-crds` → `crds-uninstall`; the old
+# names remain as one-cycle aliases for muscle memory. Removed in
+# R7.1.
+op-install-crds:
+    @echo 'note: `op-install-crds` is deprecated; use `crds-install` (removed in R7.1)' >&2
+    @just crds-install
+
+op-uninstall-crds:
+    @echo 'note: `op-uninstall-crds` is deprecated; use `crds-uninstall` (removed in R7.1)' >&2
+    @just crds-uninstall
 
 # ---------------------------------------------------------------------------
 # Go curl-impersonate adapter (adapters/curl-impersonate)
