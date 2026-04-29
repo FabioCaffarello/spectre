@@ -619,9 +619,13 @@ images-clean:
       2>/dev/null || true
 
 # Pretty-print the local spectre image set. Useful for verifying
-# the size targets after a clean build.
+# the size targets after a clean build. Uses the default
+# `docker images` output rather than `--format` because Docker's
+# Go template `{{...}}` delimiters collide with just's recipe
+# interpolation syntax (the four-brace `{{{{...}}}}` escape only
+# round-trips cleanly for opening braces).
 images-list:
-    @docker images "spectre-*" --format 'table {{{{.Repository}}}}:{{{{.Tag}}}}\t{{{{.Size}}}}\t{{{{.CreatedSince}}}}'
+    @docker images "spectre-*"
 
 # Build the engine Docker image as `spectre-engine:dev` via bake.
 # Single-arch (linux/amd64) per ADR-0018 §5 reaffirmed for R6.1;
