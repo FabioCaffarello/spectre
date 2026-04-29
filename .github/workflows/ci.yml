@@ -30,6 +30,7 @@ jobs:
       image_playwright: ${{ steps.filter.outputs.image_playwright }}
       image_seleniumbase: ${{ steps.filter.outputs.image_seleniumbase }}
       full_stack: ${{ steps.filter.outputs.full_stack }}
+      publish_dry_run: ${{ steps.filter.outputs.publish_dry_run }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -126,6 +127,22 @@ jobs:
               - 'build/kind/**'
               - 'core/control-plane/config/samples/**'
               - 'core/control-plane/config/crd/**'
+              - '.github/workflows/ci.yml'
+            # Publish dry-run gate (R6.5.3). Triggers on anything
+            # that affects the publish path — any Dockerfile, the
+            # bake config, the toolchain pins, the publish workflow
+            # itself, or the CI workflow. The dry-run job below
+            # builds multi-arch where supported (control-plane +
+            # playwright) without `--push` or `--load`, validating
+            # the publish workflow's build path is sound. CI is
+            # the only consumer; the actual publish runs via
+            # `.github/workflows/publish.yml` workflow_dispatch.
+            publish_dry_run:
+              - 'core/**/Dockerfile'
+              - 'adapters/**/Dockerfile'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/publish.yml'
               - '.github/workflows/ci.yml'
 
   proto:
@@ -728,10 +745,44 @@ jobs:
         if: always()
         run: docker compose --profile full down -v || true
 
+  # Publish dry-run (R6.5.3). Validates that the multi-arch
+  # publish path works without actually pushing to Docker Hub. The
+  # actual publish runs via `.github/workflows/publish.yml`
+  # (workflow_dispatch). control-plane and playwright build
+  # linux/amd64 + linux/arm64 manifest lists; the other three
+  # build linux/amd64 only per the deferral list in ADR-0018 §5
+  # R6.5.3 update. No `--load` (multi-arch can't load into a
+  # single-arch local daemon); no `--push` (no Docker Hub
+  # credentials in CI). Build artefacts live in BuildKit's local
+  # cache and are discarded with the runner.
+  publish-dry-run:
+    name: Publish dry-run (build + manifest check, no push)
+    needs: changes
+    if: needs.changes.outputs.publish_dry_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - name: Bake build (multi-arch where supported, no push)
+        env:
+          REGISTRY: fabiocaffarello
+          TAG: ci-dry-run
+          VCS_REF: ${{ github.sha }}
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
+        run: |
+          set -a
+          source build/docker/versions.env
+          set +a
+          docker buildx bake \
+            --set control-plane.platform=linux/amd64,linux/arm64 \
+            --set playwright.platform=linux/amd64,linux/arm64
+
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, operator, engine-integration, images, full-stack]
+    needs: [changes, proto, rust, go, typescript, python, operator, engine-integration, images, full-stack, publish-dry-run]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -745,6 +796,7 @@ jobs:
           echo "engine-integration:   ${{ needs.engine-integration.result }}"
           echo "images:               ${{ needs.images.result }}"
           echo "full-stack:           ${{ needs.full-stack.result }}"
+          echo "publish-dry-run:      ${{ needs.publish-dry-run.result }}"
       - name: Fail if any required job failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1
