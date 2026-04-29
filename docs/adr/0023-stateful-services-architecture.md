@@ -716,8 +716,10 @@ library, not the version number.
 
 ## §9 — Compose stack composition
 
-R6.2 lands the full Compose stack; ADR-0025 will record the
-design. The stateful slice committed here so R4.2 / R4.3 / R4.4
+R6.2 lands the full Compose stack; the design is recorded in
+[ADR-0025](0025-compose-stack.md) (§3 service topology,
+§4 profile design, §7 port migration, §8 image-source policy).
+The stateful slice committed here so R4.2 / R4.3 / R4.4
 integration tests have a stable target:
 
 - **Postgres**: `postgres:16-alpine`, ~80 MB compressed,

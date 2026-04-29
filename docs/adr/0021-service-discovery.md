@@ -145,6 +145,24 @@ expose a gRPC interface; its job is to reconcile `ScrapeJob`
 resources and dial the engine over gRPC. Its 8080 port carries
 HTTP-only traffic (probes, metrics) that the cluster scrapes.
 
+### Implementation note (R6.2)
+
+R6.2 enacts the 8090–8093 port plan recorded above. From R2.1
+to R6.1 the implementation read 8090–8093 in this ADR but
+9090–9093 in code (engine `DEFAULT_PORT`, adapter Dockerfile
+ENV directives, justfile recipe defaults, conformance demos,
+example READMEs, sample manifests). The hybrid pre-R6.2 dev
+flow (stateful services in Compose, application services as
+native binaries on host loopback) tolerated the discrepancy
+because each native binary bound its own loopback port lazily;
+the unified Compose stack R6.2 introduces forces every service
+to bind a host port simultaneously, where the 9092 collision
+with Kafka becomes a hard failure. The migration scope and
+mechanism are recorded in
+[ADR-0025](0025-compose-stack.md) §7. The numeric table above
+is unchanged — the ADR was right since R2.1; the implementation
+was lazy. R6.2 is the correction.
+
 ## Environment variable contract
 
 Each consumer reads the endpoints of the services it talks to

@@ -47,6 +47,7 @@ A decision moves through three states:
 | 0022  | [TCP / gRPC transport](0022-tcp-grpc-transport.md)                            | accepted (supersedes ADR-0008 §2) |
 | 0023  | [Stateful services architecture](0023-stateful-services-architecture.md)      | accepted (§5 gains R4.3 addendum on `adapter_instance_id`; §6 admission-gating asymmetry refined by ADR-0024 §5 in R5.1) |
 | 0024  | [Output sinks (S3 and HTTP webhook)](0024-output-sinks.md)                    | accepted |
+| 0025  | [Compose stack (application services + profile-based topology)](0025-compose-stack.md) | accepted |
 
 ## When to write an ADR
 
