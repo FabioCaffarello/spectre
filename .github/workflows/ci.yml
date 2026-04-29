@@ -682,10 +682,130 @@ jobs:
       - name: Report image size
         run: docker images spectre-control-plane:ci --format '{{.Size}}'
 
+  # Full-stack gate (R6.5.2 — verifies master strategy §2.5
+  # "Compose is the development environment" in CI). Runs the
+  # post-R6.3 unified flow end-to-end: bake builds the five
+  # images, Compose brings up the eleven services, kind provides
+  # the Kubernetes API the operator dials, the v1alpha2 CRD is
+  # installed, and the hello-hackernews sample ScrapeJob is
+  # asserted to reach `Completed`. The 5-minute Completed-poll
+  # absorbs CI cold-start; the local flow finishes the same
+  # ScrapeJob in well under a minute.
+  full-stack:
+    name: Full-stack gate (compose + kind + sample ScrapeJob)
+    needs: [changes, images]
+    if: needs.changes.outputs.full_stack == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: extractions/setup-just@v3
+      - uses: actions/setup-go@v6
+        with:
+          # Match the toolchain kubebuilder v4 scaffolds in go.mod;
+          # `make install` invokes controller-gen.
+          go-version: "1.25"
+      # Build the five images at TAG=dev so docker-compose.yml's
+      # `image: spectre-<name>:dev` references resolve without
+      # re-tagging. Local-flow byte-for-byte parity (just images).
+      - name: Build images via bake
+        env:
+          VCS_REF: ${{ github.sha }}
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
+          TAG: dev
+        run: |
+          set -a
+          source build/docker/versions.env
+          set +a
+          docker buildx bake --load
+      # Spin up the kind cluster on the runner's Docker daemon.
+      # `cluster_name: spectre-ci` overrides build/kind/cluster.yaml's
+      # `name:` so the runner's daemon doesn't collide with a
+      # `spectre-dev` from a parallel job. helm/kind-action exports
+      # KUBECONFIG to the runner; subsequent kubectl calls work
+      # without extra setup.
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: spectre-ci
+          config: build/kind/cluster.yaml
+      - name: Sanity-check kind cluster
+        run: kubectl get nodes -o wide
+      # Regenerate kubeconfig with --internal so the operator
+      # container — which joins the `kind` Docker network — can
+      # reach the API server at `spectre-ci-control-plane:6443`
+      # (kind names the API node `<cluster>-control-plane`). The
+      # runner's host-side kubectl keeps its own KUBECONFIG from
+      # helm/kind-action; the operator reads the file mounted at
+      # /home/nonroot/.kube/config.
+      - name: Generate operator kubeconfig (--internal)
+        run: |
+          mkdir -p build/kind
+          kind get kubeconfig --name spectre-ci --internal \
+            > build/kind/kubeconfig
+      # docker-compose.yml's `control-plane` service hardcodes the
+      # in-DinD URL `spectre-dev-control-plane:6443` (the
+      # cluster-name suffix is baked into the kubeconfig, not the
+      # Compose env). CI's kind cluster is named `spectre-ci`, so
+      # the kubeconfig's server URL resolves at
+      # `spectre-ci-control-plane:6443` — the operator follows the
+      # kubeconfig, not the Compose env, so this works without
+      # touching docker-compose.yml.
+      - name: Bring up Compose stack (--profile full)
+        run: |
+          docker compose --profile full up -d
+          docker compose ps
+      - name: Wait for Compose services to start
+        run: |
+          # Compose reports `running` when each container is up.
+          # The engine has no Compose healthcheck (ADR-0025 §3 —
+          # distroless ships no probe binary), so we count
+          # `running` services rather than `healthy`. Eleven
+          # services on `--profile full` (minio-bootstrap exits
+          # `service_completed_successfully` and is not running).
+          timeout 120 bash -c '
+            until [ "$(docker compose ps --status running --format json | jq -s "length")" -ge 10 ]; do
+              docker compose ps
+              sleep 5
+            done
+          '
+          docker compose ps
+      - name: Apply v1alpha2 CRDs to kind
+        working-directory: core/control-plane
+        run: make install
+      - name: Apply hello-hackernews sample ScrapeJob
+        run: kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml
+      - name: Wait for ScrapeJob phase=Completed
+        run: |
+          # Hello-hackernews finishes in <60s locally; 5 minutes
+          # absorbs CI cold-start image pulls and slow runners.
+          timeout 300 bash -c '
+            until [ "$(kubectl get scrapejob hello-hackernews -o jsonpath={.status.phase} 2>/dev/null)" = "Completed" ]; do
+              kubectl get scrapejob hello-hackernews 2>/dev/null || true
+              sleep 5
+            done
+          '
+          kubectl describe scrapejob hello-hackernews
+      - name: Operator logs (always)
+        if: always()
+        run: docker compose logs control-plane | tail -200 || true
+      - name: Engine logs (always)
+        if: always()
+        run: docker compose logs engine | tail -200 || true
+      - name: Adapter logs (always)
+        if: always()
+        run: |
+          docker compose logs playwright-adapter | tail -100 || true
+          docker compose logs seleniumbase-adapter | tail -100 || true
+          docker compose logs curl-impersonate-adapter | tail -100 || true
+      - name: Compose stack down (cleanup)
+        if: always()
+        run: docker compose --profile full down -v || true
+
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, operator, operator-image, engine-integration, engine-image]
+    needs: [changes, proto, rust, go, typescript, python, operator, operator-image, engine-integration, engine-image, images, full-stack]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -699,6 +819,8 @@ jobs:
           echo "operator-image:       ${{ needs.operator-image.result }}"
           echo "engine-integration:   ${{ needs.engine-integration.result }}"
           echo "engine-image:         ${{ needs.engine-image.result }}"
+          echo "images:               ${{ needs.images.result }}"
+          echo "full-stack:           ${{ needs.full-stack.result }}"
       - name: Fail if any required job failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1
