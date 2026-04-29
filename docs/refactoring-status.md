@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-29
-Current phase: **R6.5 — Quality & Hardening (in progress; R6.5.3 complete on merge of this PR, 2026-04-29)**
-Next PR: **R6.5.4 — Dockerfile deduplication via shared codegen base image stage**
+Current phase: **R6.5 — Quality & Hardening (CLOSES on merge of this PR, 2026-04-29; R6.5.4 closes the four-PR sub-phase)**
+Next PR: **R7.1 — ADR-0026 Helm chart (opens Phase R7)**
 
 ## Phases
 
@@ -43,79 +43,84 @@ close and R7.1 open; no new ADRs; recorded in ADR-0020 §4)*
 
 - [x] **R6.5.1 — Stale-references sweep + R6.1 leftovers (`build/docker/README.md`, `tools/build/check-versions-coherent.sh`)** *(merged 2026-04-29 — opened Phase R6.5)*
 - [x] **R6.5.2 — CI hardening: image-build matrix completion, bake unification in CI, full-stack gate** *(merged 2026-04-29, PR #69)*
-- [x] **R6.5.3 — Docker Hub registry wiring + multi-arch readiness** *(complete on merge of this PR, 2026-04-29)*
-- [ ] **R6.5.4 — Dockerfile deduplication via shared codegen base image stage** *(next)*
+- [x] **R6.5.3 — Docker Hub registry wiring + multi-arch readiness** *(merged 2026-04-29, PR #70)*
+- [x] **R6.5.4 — Dockerfile deduplication via shared codegen base image stage** *(complete on merge of this PR, 2026-04-29 — closes Phase R6.5)*
 
-- [ ] **R7.1 — ADR-0026 Helm chart** *(opens Phase R7 once R6.5 closes)*
+- [ ] **R7.1 — ADR-0026 Helm chart** *(next; opens Phase R7)*
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R6.5.3)
+## Current PR checklist (R6.5.4)
 
-The R6.5.3 PR's per-step checklist mirrors Section 7 of the
-phase prompt. R6.5.3 makes the publish flow operational:
-Docker Hub `fabiocaffarello/spectre-<name>` flat namespace,
-multi-arch (linux/amd64 + linux/arm64) for control-plane +
-playwright, three deferrals (engine, seleniumbase,
-curl-impersonate) with explicit unblock criteria.
+The R6.5.4 PR's per-step checklist mirrors Section 7 of the
+phase prompt. R6.5.4 deduplicates the buf install across four
+Dockerfiles via a single shared codegen base image stage
+consumed through bake's `contexts:` feature. ~30 lines net
+reduction; engine unchanged; image sizes unchanged. Phase
+R6.5 closes with this PR.
 
-- [x] Step 1 — Inventory: R6.5.2 merge confirmed
-  (`4f19951 Merge pull request #69`). docker-bake.hcl,
-  ADR-0018 §5, the five Dockerfiles, ci.yml `changes` job,
-  container-images.md, and the per-Dockerfile arch
-  case-statements reviewed. The six §4 decisions settled.
-- [x] Step 2 — Forward-readiness for the deferred three
-  (engine, seleniumbase, curl-impersonate): TARGETPLATFORM /
-  TARGETARCH ARGs declared at the top of each Dockerfile;
-  R7.x deferral comment blocks above each blocker referencing
-  ADR-0018 §5 R6.5.3 update; buf/protoc-arch case-statements
-  audit confirms aarch64 already covered (no extension
-  needed).
-- [x] Step 3 — Multi-arch enablement for control-plane +
-  playwright: explicit `# Multi-arch ready (R6.5.3): linux/
-  amd64 + linux/arm64` comment markers near the top of each
-  Dockerfile; both already had arm64-aware buf-arch case
-  statements + TARGETARCH plumbing from R6.1.
-- [x] Step 4 — `docker-bake.hcl` comment block updates: the
-  R7.1/ghcr.io narrative replaced with R6.5.3/Docker Hub
-  reality; the REGISTRY variable annotation rewritten; the
-  `image()` function logic unchanged (registry-agnostic).
-  `git grep -n 'ghcr\.io' docker-bake.hcl` is empty.
-- [x] Step 5 — `.github/workflows/publish.yml` shipped:
-  `workflow_dispatch` only; three inputs (`tag`, `targets`,
-  `multi_arch`); QEMU + buildx + just setup; tag resolution
-  from VERSION file; Docker Hub login via `DOCKERHUB_TOKEN`
-  secret; `docker buildx bake --push` with per-target
-  platform overrides for the two ready images; final
-  `imagetools inspect` step. `actionlint` clean.
-- [x] Step 6 — `publish-dry-run` job in `ci.yml`: `changes`
-  job grows a `publish_dry_run` filter; new job builds
-  multi-arch (control-plane + playwright) without `--push`
-  or `--load`; `ci-summary`'s `needs:` and report block
-  extended.
-- [x] Step 7 — ADR-0018 §5 amended in place: status note at
-  the heading; new "R6.5.3 update — Docker Hub registry +
-  multi-arch reality" subsection (~120 lines) covering the
-  pivot rationale, the 5-image multi-arch table, the per-
-  image unblock criteria, the per-target-platform-set-at-
-  publish-time decision, the `workflow_dispatch`-only
-  posture, the deliverables list, and the maintainer
-  DOCKERHUB_TOKEN prerequisite. `container-images.md`
-  updated: header forward-references; REGISTRY variable
-  description; new "Multi-arch status" subsection.
-- [x] Step 8 — `docs/architecture/releases.md` shipped
-  (~250 lines): operator-facing runbook (Overview · Image
-  registry · Multi-arch status · Publish flow · What's
-  deferred · Operator runbook with three numbered procedures
-  · CI dry-run · Forward references). Cross-referenced from
-  README, ADR-0018 §5 R6.5.3 update, and container-images.md.
-- [x] Step 9 — `refactor-audit.md` ticks R6.5.3;
-  `refactoring-status.md` advances to R6.5.4-next; CHANGELOG
-  Unreleased entry; README quick-start one-liner.
-- [ ] Step 10 — Final verification (`just check`,
-  conformance suite, multi-arch dry-run locally,
-  workflow lint).
-- [ ] Step 11 — Open the PR.
+- [x] Step 1 — Inventory: R6.5.3 merge confirmed
+  (`b42a0f3 Merge pull request #70`). The four buf install
+  RUN blocks audited (control-plane uses `aarch64` and
+  `${TARGETARCH:-amd64}`; the other three use `aarch_64` —
+  the wrong asset name — and `$(uname -m)`). Verified buf
+  release naming via direct fetch:
+  `buf-Linux-aarch64` is `302`, `buf-Linux-aarch_64` is `404`.
+  `docker-bake.hcl` target structure, `build/docker/README.md`,
+  and `tools/build/check-versions-coherent.sh` reviewed. The
+  five §4 decisions settled.
+- [x] Step 2 — `build/docker/buf-base.Dockerfile` shipped
+  (~25 lines on `debian:12-slim`; `ARG BUF_VERSION` +
+  `ARG TARGETARCH`; arch case echoes `aarch64` per buf's
+  actual asset name). Standalone build verified
+  (`docker buildx build` with `BUF_VERSION=1.55.1` produces
+  an image whose `buf --version` reports `1.55.1`).
+- [x] Step 3 — `docker-bake.hcl` `target "buf-base"` block
+  added (`output = ["type=cacheonly"]`; `BUF_VERSION` arg
+  passed through). Verified via
+  `docker buildx bake --print buf-base`.
+- [x] Step 4 — `contexts: { buf-base = "target:buf-base" }`
+  declared on the four buf-using consumer targets
+  (control-plane, curl-impersonate, playwright,
+  seleniumbase). Engine target intentionally untouched —
+  Rust uses `prost-build`. `docker buildx bake --print` shows
+  the four `contexts:` declarations.
+- [x] Step 5a — Go consumers (control-plane,
+  curl-impersonate): buf install RUN block deleted;
+  `COPY --from=buf-base /usr/local/bin/buf` added before
+  the `COPY proto/` line; `ARG BUF_VERSION` preserved with a
+  cache-key comment. Both built green via bake; both smokes
+  (op-image, curl-imp-image) pass.
+- [x] Step 5b — playwright: buf install RUN block deleted;
+  `COPY --from=buf-base` added; minimal
+  `apt-get install ca-certificates` retained because
+  `node:<version>-bookworm-slim` ships no trust store and
+  `buf generate` reaches the BSR over TLS for remote plugins
+  (caught during build verification). `pw-image-smoke`
+  passes.
+- [x] Step 5c — seleniumbase: interleaved buf+uv RUN split;
+  buf-specific commands deleted; uv install preserved
+  verbatim; `COPY --from=buf-base` added above the apt-get
+  RUN; `ARG BUF_VERSION` preserved with cache-key comment.
+  `sb-image-smoke` passes.
+- [x] Step 6 — `tools/build/check-versions-coherent.sh`
+  extended with a `dockerfile_arg_declared()` helper plus an
+  `ARG_DECLARED_CHECKS` list covering
+  `build/docker/buf-base.Dockerfile`. `just check-versions`
+  reports 0 mismatches; intentional drift reproduces a
+  non-zero exit.
+- [x] Step 7 — `build/docker/README.md` "Shared codegen base
+  (R6.5.4)" section added (multi-arch propagation, BUF_VERSION
+  bump procedure, why engine stays out). ADR-0018 §3 gains
+  an "R6.5.4 update — shared codegen base" subsection.
+- [x] Step 8 — `docs/refactor-audit.md` ticks R6.5.4 and
+  marks Phase R6.5 CLOSED; `docs/refactoring-status.md`
+  advances to R7.1-next with R6.5.4 ticked; CHANGELOG
+  Unreleased entry.
+- [ ] Step 9 — Final verification (`just check`, all five
+  images via bake, image sizes unchanged, conformance suite,
+  multi-arch dry-run locally).
+- [ ] Step 10 — Open the PR.
 
 ## Surfaced decisions
 
