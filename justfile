@@ -36,8 +36,13 @@ test: engine-test cp-test curl-imp-test pw-test sb-test conf-test
 # Build every component
 build: engine-build cp-build curl-imp-build pw-build
 
-# Lint + test (CI-equivalent local run)
-check: lint test
+# Verify versions.env pins agree with each Dockerfile's ARG defaults
+# and that bake's labels schema is intact. See build/docker/README.md.
+check-versions:
+    @bash tools/build/check-versions-coherent.sh
+
+# Lint + test + version-coherence (CI-equivalent local run)
+check: check-versions lint test
 
 # ---------------------------------------------------------------------------
 # Compose stack (R6.2 + R6.3 — see ADR-0025; ADR-0023 §9)

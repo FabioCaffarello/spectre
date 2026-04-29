@@ -86,6 +86,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      # Version-coherence gate: every PR runs through this job (the
+      # `proto` filter matches `.github/workflows/ci.yml`), so the
+      # cheapest place to fail fast on a versions.env <-> Dockerfile
+      # ARG drift is here. R6.5.2 may promote this into its own job.
+      - name: Check toolchain-pin coherence
+        run: bash tools/build/check-versions-coherent.sh
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
