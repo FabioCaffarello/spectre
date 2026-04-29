@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Unified Compose stack with application services; profile-based
+  topology; ADR-0025 introduced (R6.2).** `docker-compose.yml`
+  gains four application services — engine, playwright-adapter,
+  seleniumbase-adapter, curl-impersonate-adapter — alongside the
+  six stateful services from R4.x and R5.1, on a single Compose
+  network. Services consume locally-built images via
+  `image: spectre-<name>:dev` + `pull_policy: never` (no `build:`
+  directives — bake from R6.1 is the canonical build path,
+  ADR-0025 §8). Five profiles (`infra`, `core`, `adapters`,
+  `app`, `full`) cover the common subset use cases; the
+  documented default is `--profile full` (aliased as
+  `just compose-up`). The application port range moves from
+  9090–9093 to **8090–8093** (ADR-0021 §4 implementation note —
+  the plan was right since R2.1; the implementation was lazy)
+  to free `localhost:9092` for Kafka under the unified Compose
+  stack. ADR-0025 records the topology, profile design, port
+  migration, conformance subprocess-harness rationale, and
+  operator-outside-Compose deferral. **Healthcheck strategy is
+  asymmetric per runtime base** (ADR-0025 §3): engine has none
+  (distroless static ships no shell or probe binary); Playwright
+  uses bash `/dev/tcp` redirect; SeleniumBase uses Python
+  `socket`; curl-impersonate uses busybox `nc -z`. SeleniumBase
+  service sets `shm_size: 1gb` for Chrome's `/dev/shm` need.
+  **Operator stays a host process for R6.2** (ADR-0025 §6) —
+  `just op-run` continues to dial the Compose-running engine via
+  the host-port mapping `127.0.0.1:8090`. R6.3 (Devcontainer
+  with Docker-in-Docker) brings the operator into the unified
+  shape alongside a Compose-managed `kind` cluster. **Phase R6
+  remains open**; R6.3 is next.
 - **Per-service container images for the engine, control plane,
   and three reference adapters; `docker buildx bake` orchestration;
   `build/docker/versions.env` single-source-of-truth for toolchain
@@ -109,6 +138,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Application port range migrated from 9090–9093 to 8090–8093
+  (R6.2 — ADR-0021 §4 / ADR-0025 §7).** The engine's bind port
+  default flips 9090 → 8090; adapter Dockerfile `EXPOSE` /
+  `ENV SPECTRE_ADAPTER_GRPC_PORT` defaults flip 9091/9092/9093
+  → 8091/8092/8093; `core/control-plane/cmd/main.go`'s
+  `defaultEngineEndpoint` flips to `127.0.0.1:8090`; the
+  v1alpha2 `EngineServiceRef.Port` kubebuilder default flips to
+  8090 (regenerated CRD updated); `.env.example`, every sample
+  ScrapeJob manifest, the architecture docs, every example
+  README, and the conformance demo CLI help text follow. Kafka's
+  9092 broker port stays unmolested — the migration's reason
+  for being. The native-binary `pw-run` / `sb-run` /
+  `curl-imp-run` recipes are retired (no fallback —
+  master-strategy §2.2 forbids "temporary" legacy fallbacks);
+  `just engine-run` is renamed `just engine-run-native` and
+  preserved as a debugging escape hatch with a comment block
+  pointing at `compose-up`. `op-build-image` is renamed
+  `op-image` for naming consistency with the other
+  `<service>-image` recipes.
 - **`JobRunner.Run` signature evolves to seven parameters
   (R5.1).** `s3Config *enginev1alpha1.S3SinkConfig` and
   `webhookConfig *enginev1alpha1.WebhookSinkConfig` join the
