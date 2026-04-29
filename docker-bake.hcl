@@ -47,7 +47,7 @@ variable "REGISTRY" {
 }
 
 variable "RUST_VERSION" {
-  default = "1.85"
+  default = "1.88"
 }
 
 variable "GO_VERSION" {

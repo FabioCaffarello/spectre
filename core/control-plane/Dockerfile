@@ -21,19 +21,22 @@
 # `proto/` (gitignored — ADR-0007) before `go build`, so the
 # operator's go.mod `replace` for
 # `github.com/FabioCaffarello/spectre/proto/gen/go` resolves. Build
-# context is the repository root; the Makefile's docker-build
-# target sets the context to `../..` accordingly.
+# context is the repository root; the docker-bake target sets the
+# context accordingly.
 #
-# Usage:
-#   docker build -t spectre-control-plane:dev \
-#     -f core/control-plane/Dockerfile .
+# R6.1 routes every per-image build through `docker buildx bake`
+# (docker-bake.hcl). Bake supplies GO_VERSION + BUF_VERSION from
+# build/docker/versions.env and injects the OCI label schema
+# uniformly across the five images, so this Dockerfile carries no
+# inline ARG defaults and no LABEL directives — both are bake's
+# job.
+#
+# Usage: docker buildx bake control-plane
 
-# buf is required to regenerate the protocol bindings inside the
-# builder stage. Pinning matches the version used in devcontainer +
-# CI tooling. Bumping is a single-line change.
-ARG BUF_VERSION=1.55.1
+ARG GO_VERSION
+ARG BUF_VERSION
 
-FROM golang:1.25 AS builder
+FROM golang:${GO_VERSION} AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUF_VERSION

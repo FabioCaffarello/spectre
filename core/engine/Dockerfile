@@ -17,9 +17,16 @@
 # See ADR-0018 for the decisions, ADR-0013 §5 for the static-binary
 # distribution choice, and ADR-0007 for the protoc dependency.
 #
-# Usage: docker build -t spectre-engine:dev -f core/engine/Dockerfile .
+# R6.1 routes every per-image build through `docker buildx bake`
+# (docker-bake.hcl). Bake supplies RUST_VERSION + PROTOC_VERSION
+# from build/docker/versions.env and injects the OCI label schema
+# uniformly across the five images, so this Dockerfile carries no
+# inline ARG defaults and no LABEL directives — both are bake's
+# job.
+#
+# Usage: docker buildx bake engine
 
-ARG RUST_VERSION=1.85
+ARG RUST_VERSION
 ARG MUSL_TARGET=x86_64-unknown-linux-musl
 
 # ---------------------------------------------------------------------------
@@ -41,14 +48,30 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ---------------------------------------------------------------------------
 FROM rust:${RUST_VERSION}-bookworm AS builder
 ARG MUSL_TARGET
-ARG PROTOC_VERSION=27.2
+ARG PROTOC_VERSION
 WORKDIR /app
 # musl-tools provides the musl-gcc linker the cargo build invokes for
 # the static target. unzip is needed to unpack the protoc release.
+# cmake + g++ + a x86_64-linux-musl-g++ symlink + libcurl headers
+# cover R4.4's rdkafka-sys transitive dep: librdkafka is built via
+# CMake (so cmake is required) and CMake's cross-compile path invokes
+# `${TARGET}-g++` (so g++ is required and the symlink lets cmake
+# find a C++ compiler under the musl-cross name); librdkafka 2.12+
+# unconditionally includes <curl/curl.h> in `rdkafka_conf.c` even
+# with `-DWITH_CURL=0`, so we provide the header via
+# libcurl4-openssl-dev. The C++ code in librdkafka is small (the
+# bulk is C); compiling its C++ surface with the host g++ still
+# produces a musl-compatible static library when the C side uses
+# musl-gcc. ADR-0023 §8 (rdkafka library pin).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       musl-tools \
+      g++ \
+      cmake \
+      libcurl4-openssl-dev \
       unzip \
+ && ln -s /usr/bin/g++ /usr/local/bin/x86_64-linux-musl-g++ \
+ && cp -r /usr/include/x86_64-linux-gnu/curl /usr/include/x86_64-linux-musl/curl \
  && rm -rf /var/lib/apt/lists/*
 # protoc from the official protocolbuffers/protobuf release. The Debian
 # package's protoc does not ship the well-known .proto files in a

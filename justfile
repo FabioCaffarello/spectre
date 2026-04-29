@@ -634,18 +634,22 @@ engine-image:
     set -a; source build/docker/versions.env; set +a; \
         docker buildx bake --load engine
 
-# Smoke-test the engine image by confirming the engine binary
-# exists at the canonical path. Mirrors the CI engine-image job.
-# R2.3 retired the `version` subcommand alongside the rest of the
-# CLI surface; the binary is now a gRPC service entry point that
-# reads SPECTRE_POSTGRES_URL etc. at startup, so a "starts and
-# binds a port" smoke would need Compose dependencies. Binary-
-# existence is the right scope for a per-image smoke; deeper
-# start-and-probe lives in R6.2's Compose stack work.
+# Smoke-test the engine image. R2.3 retired the `version` subcommand
+# alongside the rest of the CLI surface; the binary is now a gRPC
+# service entry point that reads SPECTRE_POSTGRES_URL at startup.
+# A bare `docker run` exits 1 with the canonical
+# "SPECTRE_POSTGRES_URL must be set" message because no Postgres
+# is reachable in a one-shot smoke (Compose / Helm provide the
+# env var). Capture-then-grep avoids the justfile shell's pipefail
+# propagating the engine's exit-1. Distroless ships no shell or
+# `test` binary so an "exists" probe is not available; the
+# canonical-error path is the closest equivalent. Deeper end-to-
+# end start-and-probe lives in R6.2's Compose stack work.
 engine-image-run: engine-image
-    docker run --rm --platform=linux/amd64 \
-        --entrypoint=test \
-        spectre-engine:dev -x /usr/local/bin/spectre
+    set +e; \
+      out=$(docker run --rm --platform=linux/amd64 spectre-engine:dev 2>&1); \
+      echo "$out"; \
+      echo "$out" | grep -q 'SPECTRE_POSTGRES_URL must be set'
 
 # Devcontainer post-create entry point. Equivalent to running
 # `bash .devcontainer/post-create.sh`. Useful inside the container if
