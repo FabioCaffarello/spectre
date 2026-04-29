@@ -533,6 +533,81 @@ jobs:
       - name: Build
         run: make build
 
+  # Matrix image build + smoke (R6.5.2). Replaces the ad-hoc
+  # `engine-image` and `operator-image` jobs by routing every image
+  # build through the same `docker buildx bake` invocation that
+  # `just images` uses locally. Five matrix entries (one per bake
+  # target); per-entry `if: matrix.changed == 'true'` preserves
+  # selectivity. Legacy jobs run alongside until the next commit
+  # deletes them.
+  images:
+    name: Image (build + smoke) — ${{ matrix.target }}
+    needs: changes
+    # Job-level gate fires when at least one image's filter matched.
+    # Per-step gates (matrix.changed) skip unchanged targets within
+    # the dispatched matrix.
+    if: |
+      needs.changes.outputs.image_engine == 'true' ||
+      needs.changes.outputs.image_control_plane == 'true' ||
+      needs.changes.outputs.image_curl_impersonate == 'true' ||
+      needs.changes.outputs.image_playwright == 'true' ||
+      needs.changes.outputs.image_seleniumbase == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # `include:` form — each entry carries `target` (bake target),
+      # `changed` (per-target gate), `smoke_recipe` (just recipe
+      # name). The smoke recipe names aren't a uniform suffix
+      # transform of the target name (`op-image-smoke` vs
+      # `engine-image-run`), so a plain `target:` axis is not
+      # enough.
+      matrix:
+        include:
+          - target: engine
+            changed: ${{ needs.changes.outputs.image_engine }}
+            smoke_recipe: engine-image-run
+          - target: control-plane
+            changed: ${{ needs.changes.outputs.image_control_plane }}
+            smoke_recipe: op-image-smoke
+          - target: curl-impersonate
+            changed: ${{ needs.changes.outputs.image_curl_impersonate }}
+            smoke_recipe: curl-imp-image-smoke
+          - target: playwright
+            changed: ${{ needs.changes.outputs.image_playwright }}
+            smoke_recipe: pw-image-smoke
+          - target: seleniumbase
+            changed: ${{ needs.changes.outputs.image_seleniumbase }}
+            smoke_recipe: sb-image-smoke
+    steps:
+      - uses: actions/checkout@v6
+      - if: matrix.changed == 'true'
+        uses: docker/setup-buildx-action@v4
+      - if: matrix.changed == 'true'
+        uses: extractions/setup-just@v3
+      # The bake invocation matches `just images` byte-for-byte:
+      # source the toolchain pins from versions.env, then call
+      # `docker buildx bake --load <target>`. CI sets VCS_REF /
+      # BUILD_DATE / TAG=ci so the OCI labels are populated and
+      # the resulting image is tagged distinctly from local
+      # `:dev` artefacts.
+      - name: Build ${{ matrix.target }}
+        if: matrix.changed == 'true'
+        env:
+          VCS_REF: ${{ github.sha }}
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
+          TAG: ci
+        run: |
+          set -a
+          source build/docker/versions.env
+          set +a
+          docker buildx bake --load ${{ matrix.target }}
+      - name: Smoke ${{ matrix.target }}
+        if: matrix.changed == 'true'
+        run: just ${{ matrix.smoke_recipe }} TAG=ci
+      - name: Report image size
+        if: matrix.changed == 'true'
+        run: docker images "spectre-${{ matrix.target }}:ci" --format '{{.Repository}}:{{.Tag}}\t{{.Size}}'
+
   engine-image:
     name: Engine image (build + smoke test)
     needs: changes
