@@ -252,40 +252,40 @@ mod tests {
     #[test]
     fn normalise_endpoint_accepts_bare_host_port() {
         assert_eq!(
-            normalise_endpoint("127.0.0.1:9091"),
-            "http://127.0.0.1:9091"
+            normalise_endpoint("127.0.0.1:8091"),
+            "http://127.0.0.1:8091"
         );
     }
 
     #[test]
     fn normalise_endpoint_passes_http_through() {
         assert_eq!(
-            normalise_endpoint("http://playwright:9091"),
-            "http://playwright:9091"
+            normalise_endpoint("http://playwright:8091"),
+            "http://playwright:8091"
         );
     }
 
     #[test]
     fn normalise_endpoint_rewrites_grpc_scheme() {
         assert_eq!(
-            normalise_endpoint("grpc://playwright:9091"),
-            "http://playwright:9091"
+            normalise_endpoint("grpc://playwright:8091"),
+            "http://playwright:8091"
         );
     }
 
     #[test]
     fn normalise_endpoint_rewrites_grpcs_scheme() {
         assert_eq!(
-            normalise_endpoint("grpcs://playwright:9091"),
-            "https://playwright:9091"
+            normalise_endpoint("grpcs://playwright:8091"),
+            "https://playwright:8091"
         );
     }
 
     #[test]
     fn normalise_endpoint_trims_whitespace() {
         assert_eq!(
-            normalise_endpoint("  127.0.0.1:9091  "),
-            "http://127.0.0.1:9091"
+            normalise_endpoint("  127.0.0.1:8091  "),
+            "http://127.0.0.1:8091"
         );
     }
 

@@ -43,7 +43,7 @@ const defaultJobTimeout = 10 * time.Minute
 // defaultEnginePort is the canonical Service port for an engine
 // reference whose EngineServiceRef.Port is unset. Matches ADR-0021's
 // engine port and the operator's `--engine-endpoint` default.
-const defaultEnginePort = int32(9090)
+const defaultEnginePort = int32(8090)
 
 // runnerFactory constructs a JobRunner for a single Reconcile call.
 // Production wires this to a closure that returns an
@@ -296,7 +296,7 @@ func jobTimeout(job *spectrev1alpha2.ScrapeJob) time.Duration {
 //
 //   - Endpoint set: returned verbatim.
 //   - Service set: rendered as
-//     `<name>.<namespace-or-job-namespace>.svc.cluster.local:<port-or-9090>`.
+//     `<name>.<namespace-or-job-namespace>.svc.cluster.local:<port-or-8090>`.
 //   - EngineRef nil: fallback returned.
 func resolveEngineEndpoint(
 	ref *spectrev1alpha2.EngineRef,

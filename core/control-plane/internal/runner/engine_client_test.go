@@ -225,7 +225,7 @@ func TestEngineClientRunner_DialFailureSurfacesError(t *testing.T) {
 		return nil, fmt.Errorf("simulated dial failure")
 	}
 
-	r := &EngineClientRunner{EngineEndpoint: "127.0.0.1:9090", dialFunc: failingDial}
+	r := &EngineClientRunner{EngineEndpoint: "127.0.0.1:8090", dialFunc: failingDial}
 
 	rows, err := r.Run(context.Background(), uuid.New(), "spectre: v1alpha1\n", "stdout", "", nil, nil, &bytes.Buffer{})
 	if err == nil {
@@ -234,7 +234,7 @@ func TestEngineClientRunner_DialFailureSurfacesError(t *testing.T) {
 	if rows != 0 {
 		t.Fatalf("rows = %d, want 0 on dial failure", rows)
 	}
-	if !strings.Contains(err.Error(), "dial 127.0.0.1:9090") {
+	if !strings.Contains(err.Error(), "dial 127.0.0.1:8090") {
 		t.Fatalf("error = %q, want endpoint in error message", err.Error())
 	}
 	if !strings.Contains(err.Error(), "simulated dial failure") {

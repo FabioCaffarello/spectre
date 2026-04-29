@@ -39,7 +39,7 @@ import (
 	enginev1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/engine/v1alpha1"
 )
 
-const testDefaultEndpoint = "127.0.0.1:9090"
+const testDefaultEndpoint = "127.0.0.1:8090"
 
 // reconcilerFor builds a reconciler bound to the envtest client, the
 // supplied JobRunner, and the test default engine endpoint. The
@@ -331,7 +331,7 @@ func TestValidateOutputSink_NoneSet(t *testing.T) {
 // nil-fallback) and the malformed-EngineRef defence-in-depth.
 
 func TestResolveEngineEndpoint_ServiceForm(t *testing.T) {
-	port := int32(9090)
+	port := int32(8090)
 	got, err := resolveEngineEndpoint(
 		&spectrev1alpha2.EngineRef{Service: &spectrev1alpha2.EngineServiceRef{
 			Name: "spectre-engine", Namespace: "spectre-system", Port: &port,
@@ -342,7 +342,7 @@ func TestResolveEngineEndpoint_ServiceForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveEngineEndpoint(Service) error = %v", err)
 	}
-	const want = "spectre-engine.spectre-system.svc.cluster.local:9090"
+	const want = "spectre-engine.spectre-system.svc.cluster.local:8090"
 	if got != want {
 		t.Fatalf("resolveEngineEndpoint(Service) = %q, want %q", got, want)
 	}
@@ -357,7 +357,7 @@ func TestResolveEngineEndpoint_ServiceForm_DefaultsNamespaceAndPort(t *testing.T
 	if err != nil {
 		t.Fatalf("resolveEngineEndpoint(Service, defaults) error = %v", err)
 	}
-	const want = "engine.my-ns.svc.cluster.local:9090"
+	const want = "engine.my-ns.svc.cluster.local:8090"
 	if got != want {
 		t.Fatalf("resolveEngineEndpoint(Service, defaults) = %q, want %q", got, want)
 	}
@@ -365,15 +365,15 @@ func TestResolveEngineEndpoint_ServiceForm_DefaultsNamespaceAndPort(t *testing.T
 
 func TestResolveEngineEndpoint_EndpointForm(t *testing.T) {
 	got, err := resolveEngineEndpoint(
-		&spectrev1alpha2.EngineRef{Endpoint: "10.0.0.50:9090"},
+		&spectrev1alpha2.EngineRef{Endpoint: "10.0.0.50:8090"},
 		"default",
 		testDefaultEndpoint,
 	)
 	if err != nil {
 		t.Fatalf("resolveEngineEndpoint(Endpoint) error = %v", err)
 	}
-	if got != "10.0.0.50:9090" {
-		t.Fatalf("resolveEngineEndpoint(Endpoint) = %q, want \"10.0.0.50:9090\"", got)
+	if got != "10.0.0.50:8090" {
+		t.Fatalf("resolveEngineEndpoint(Endpoint) = %q, want \"10.0.0.50:8090\"", got)
 	}
 }
 
@@ -401,7 +401,7 @@ func TestResolveEngineEndpoint_NilWithoutDefault(t *testing.T) {
 // no Service-FQDN dependency is involved.
 func TestStatusResolvedEngineEndpointPopulated(t *testing.T) {
 	spec := validSpec()
-	spec.EngineRef = &spectrev1alpha2.EngineRef{Endpoint: "192.0.2.10:9090"}
+	spec.EngineRef = &spectrev1alpha2.EngineRef{Endpoint: "192.0.2.10:8090"}
 	job := createScrapeJob(t, spec)
 	r := reconcilerFor(stubRunnerForTests())
 
@@ -411,8 +411,8 @@ func TestStatusResolvedEngineEndpointPopulated(t *testing.T) {
 	if got.Status.Phase != spectrev1alpha2.ScrapeJobPhaseRunning {
 		t.Fatalf("Phase = %q, want Running", got.Status.Phase)
 	}
-	if got.Status.ResolvedEngineEndpoint != "192.0.2.10:9090" {
-		t.Fatalf("ResolvedEngineEndpoint = %q, want 192.0.2.10:9090",
+	if got.Status.ResolvedEngineEndpoint != "192.0.2.10:8090" {
+		t.Fatalf("ResolvedEngineEndpoint = %q, want 192.0.2.10:8090",
 			got.Status.ResolvedEngineEndpoint)
 	}
 }

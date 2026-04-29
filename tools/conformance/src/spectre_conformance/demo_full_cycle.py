@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--endpoint",
         required=True,
-        help="Adapter TCP endpoint, host:port (e.g. 127.0.0.1:9091).",
+        help="Adapter TCP endpoint, host:port (e.g. 127.0.0.1:8091).",
     )
     parser.add_argument("--url", required=True, help="URL to navigate to.")
     parser.add_argument(

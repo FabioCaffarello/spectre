@@ -51,7 +51,7 @@ The standard kubebuilder v4 layout. Notable files:
   Completed event's row count. ADR-0020 §5.
 - [`cmd/main.go`](cmd/main.go) — manager bootstrap; wires
   `EngineClientRunner` into the reconciler. Exposes
-  `--engine-endpoint` (default `127.0.0.1:9090`, override via
+  `--engine-endpoint` (default `127.0.0.1:8090`, override via
   `SPECTRE_ENGINE_ENDPOINT` env var); Compose / Helm deployments
   set the env var to the engine service's DNS name.
 - [`config/samples/`](config/samples/) — five v1alpha2 sample CRs:

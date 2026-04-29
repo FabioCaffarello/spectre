@@ -83,10 +83,10 @@ spec:
                           ScrapeJob's own namespace if empty.
                         type: string
                       port:
-                        default: 9090
+                        default: 8090
                         description: |-
-                          Port number of the Service. Defaults to 9090 (the engine's
-                          canonical port from ADR-0021).
+                          Port number of the Service. Defaults to 8090 (the engine's
+                          canonical port from ADR-0021 §4 / ADR-0025 §7).
                         format: int32
                         maximum: 65535
                         minimum: 1

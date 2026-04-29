@@ -79,11 +79,11 @@ type EngineServiceRef struct {
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
-	// Port number of the Service. Defaults to 9090 (the engine's
-	// canonical port from ADR-0021).
+	// Port number of the Service. Defaults to 8090 (the engine's
+	// canonical port from ADR-0021 §4 / ADR-0025 §7).
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	// +kubebuilder:default=9090
+	// +kubebuilder:default=8090
 	// +optional
 	Port *int32 `json:"port,omitempty"`
 }

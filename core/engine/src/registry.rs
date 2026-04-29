@@ -12,9 +12,9 @@
 //!
 //! | Driver name        | Environment variable                 | Default port |
 //! |--------------------|--------------------------------------|--------------|
-//! | `playwright`       | `SPECTRE_PLAYWRIGHT_ENDPOINT`        | 9091         |
-//! | `seleniumbase`     | `SPECTRE_SELENIUMBASE_ENDPOINT`      | 9092         |
-//! | `curl-impersonate` | `SPECTRE_CURL_IMPERSONATE_ENDPOINT`  | 9093         |
+//! | `playwright`       | `SPECTRE_PLAYWRIGHT_ENDPOINT`        | 8091         |
+//! | `seleniumbase`     | `SPECTRE_SELENIUMBASE_ENDPOINT`      | 8092         |
+//! | `curl-impersonate` | `SPECTRE_CURL_IMPERSONATE_ENDPOINT`  | 8093         |
 //!
 //! Defaults bind to `127.0.0.1` so a developer running the engine and
 //! a single adapter on the same workstation gets a working
@@ -44,11 +44,11 @@ pub const SELENIUMBASE_ENDPOINT_ENV: &str = "SPECTRE_SELENIUMBASE_ENDPOINT";
 pub const CURL_IMPERSONATE_ENDPOINT_ENV: &str = "SPECTRE_CURL_IMPERSONATE_ENDPOINT";
 
 /// Local-development default for the Playwright adapter endpoint.
-pub const PLAYWRIGHT_DEFAULT_ENDPOINT: &str = "127.0.0.1:9091";
+pub const PLAYWRIGHT_DEFAULT_ENDPOINT: &str = "127.0.0.1:8091";
 /// Local-development default for the `SeleniumBase` adapter endpoint.
-pub const SELENIUMBASE_DEFAULT_ENDPOINT: &str = "127.0.0.1:9092";
+pub const SELENIUMBASE_DEFAULT_ENDPOINT: &str = "127.0.0.1:8092";
 /// Local-development default for the curl-impersonate adapter endpoint.
-pub const CURL_IMPERSONATE_DEFAULT_ENDPOINT: &str = "127.0.0.1:9093";
+pub const CURL_IMPERSONATE_DEFAULT_ENDPOINT: &str = "127.0.0.1:8093";
 
 /// Driver-name → endpoint mapping populated from environment variables.
 ///
@@ -124,14 +124,14 @@ mod tests {
     #[test]
     fn from_map_resolves_registered_drivers() {
         let mut endpoints = HashMap::new();
-        endpoints.insert("playwright".to_owned(), "playwright:9091".to_owned());
-        endpoints.insert("seleniumbase".to_owned(), "seleniumbase:9092".to_owned());
+        endpoints.insert("playwright".to_owned(), "playwright:8091".to_owned());
+        endpoints.insert("seleniumbase".to_owned(), "seleniumbase:8092".to_owned());
         let registry = AdapterRegistry::from_map(endpoints);
 
-        assert_eq!(registry.resolve("playwright").unwrap(), "playwright:9091");
+        assert_eq!(registry.resolve("playwright").unwrap(), "playwright:8091");
         assert_eq!(
             registry.resolve("seleniumbase").unwrap(),
-            "seleniumbase:9092"
+            "seleniumbase:8092"
         );
     }
 

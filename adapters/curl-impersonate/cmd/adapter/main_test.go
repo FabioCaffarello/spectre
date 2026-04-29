@@ -10,13 +10,13 @@ import (
 )
 
 func TestResolvePortFromEnv(t *testing.T) {
-	t.Setenv(portEnvVar, "9093")
+	t.Setenv(portEnvVar, "8093")
 	got, err := resolvePort()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if got != 9093 {
-		t.Fatalf("got %d, want 9093", got)
+	if got != 8093 {
+		t.Fatalf("got %d, want 8093", got)
 	}
 }
 

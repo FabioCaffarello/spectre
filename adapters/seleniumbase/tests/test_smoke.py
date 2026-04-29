@@ -19,7 +19,7 @@ def test_identity_contains_version_and_protocol() -> None:
 
 
 def test_resolve_port_reads_env_var() -> None:
-    assert resolve_port({PORT_ENV_VAR: "9092"}) == 9092
+    assert resolve_port({PORT_ENV_VAR: "8092"}) == 8092
 
 
 def test_resolve_port_accepts_zero() -> None:

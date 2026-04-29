@@ -2,7 +2,7 @@
 
 //! `spectre` — the engine gRPC service binary.
 //!
-//! Binds a TCP listener (default `0.0.0.0:9090`, override via
+//! Binds a TCP listener (default `0.0.0.0:8090`, override via
 //! `SPECTRE_ENGINE_PORT`), registers
 //! `spectre.engine.v1alpha1.Engine` (the streaming `RunJob` RPC)
 //! and `grpc.health.v1.Health` (returning `SERVING` from process
@@ -10,10 +10,11 @@
 //!
 //! Adapter discovery is via environment variables read at startup;
 //! see [`spectre_engine::registry`]. Defaults bind the three
-//! reference adapters to `127.0.0.1:909{1,2,3}` so a developer
+//! reference adapters to `127.0.0.1:809{1,2,3}` so a developer
 //! running engine + adapter on the same workstation gets a working
-//! configuration with no setup. Compose (R6.2) and Helm (R7.1)
-//! override the variables to point at deployed service names.
+//! configuration with no setup. Compose (R6.2, ADR-0025) and Helm
+//! (R7.1) override the variables to point at deployed service
+//! names (`engine:8090`, `playwright-adapter:8091`, etc.).
 //!
 //! The CLI subcommands (`run`, `validate`, standalone `version`)
 //! that ADR-0013 introduced were retired in R2.3; the binary now
@@ -38,7 +39,7 @@ use tonic_health::ServingStatus;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-const DEFAULT_PORT: u16 = 9090;
+const DEFAULT_PORT: u16 = 8090;
 const PORT_ENV: &str = "SPECTRE_ENGINE_PORT";
 
 #[tokio::main(flavor = "multi_thread")]

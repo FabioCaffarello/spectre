@@ -146,14 +146,14 @@ WORKDIR /opt/spectre/adapters/seleniumbase
 # shipped in this image; the builder has no Chrome installed.
 RUN /opt/spectre/adapters/seleniumbase/.venv/bin/python -m seleniumbase install chromedriver
 
-# ADR-0021 §4 reserves 9092 for the SeleniumBase adapter; the env
+# ADR-0021 §4 reserves 8092 for the SeleniumBase adapter; the env
 # var is the canonical port input. SPECTRE_SELENIUMBASE_CONTAINER=1
 # activates the adapter's container-aware Chrome flag path
 # (--no-sandbox / --disable-dev-shm-usage) — server.py:325.
-ENV SPECTRE_ADAPTER_GRPC_PORT=9092 \
+ENV SPECTRE_ADAPTER_GRPC_PORT=8092 \
     SPECTRE_SELENIUMBASE_CONTAINER=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/spectre/adapters/seleniumbase/.venv/bin:${PATH}"
-EXPOSE 9092
+EXPOSE 8092
 
 ENTRYPOINT ["python", "-m", "spectre_seleniumbase.adapter"]

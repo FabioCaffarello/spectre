@@ -55,7 +55,7 @@ describe("identity", () => {
 
 describe("resolvePort", () => {
   it("reads SPECTRE_ADAPTER_GRPC_PORT", () => {
-    expect(resolvePort({ [PORT_ENV_VAR]: "9091" })).toBe(9091);
+    expect(resolvePort({ [PORT_ENV_VAR]: "8091" })).toBe(8091);
   });
 
   it("accepts port 0 for kernel-assigned binding", () => {
