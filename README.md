@@ -98,6 +98,21 @@ kubectl get scrapejob -w
 > [docs/architecture/development-environment.md](docs/architecture/development-environment.md)
 > for the recommended Devcontainer setup.
 
+R6.1 ships per-service container images (engine, control-plane, and
+the three reference adapters) orchestrated by `docker buildx bake`
+(see
+[docs/architecture/container-images.md](docs/architecture/container-images.md)):
+
+```bash
+just images           # build all five via docker buildx bake default
+just images-smoke     # smoke each (binary exists / canonical missing-env error)
+just images-list      # docker images "spectre-*" with sizes
+```
+
+R6.2 will wire these images into the Compose stack so application
+services join the stateful ones under `docker compose up`; until
+then, the local-dev path above (native binaries) remains canonical.
+
 R2.3 retired the standalone `spectre run` / `validate` CLI; the
 `spectre` binary is now the engine's gRPC service entry point
 (ADR-0020 §3 supersedes ADR-0013). Job execution flows from a
