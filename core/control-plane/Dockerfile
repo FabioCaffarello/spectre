@@ -48,22 +48,17 @@ ARG BUF_VERSION
 FROM golang:${GO_VERSION} AS builder
 ARG TARGETOS
 ARG TARGETARCH
+# Cache-key only — buf binary itself comes from buf-base; ARG
+# declared so per-target args invalidates the codegen stage when
+# version changes.
 ARG BUF_VERSION
 
 WORKDIR /workspace
 
-# Install buf (Go and Python bindings come from buf-managed remote
-# plugins). The arch case mirrors the curl-impersonate-builder stage's
-# pattern.
-RUN BUF_ARCH=$(case "${TARGETARCH:-amd64}" in \
-        amd64|x86_64) echo "x86_64" ;; \
-        arm64|aarch64) echo "aarch64" ;; \
-        *) echo "unsupported BUF arch: ${TARGETARCH}"; exit 1 ;; \
-    esac) \
- && curl -fsSL -o /usr/local/bin/buf \
-      "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-${BUF_ARCH}" \
- && chmod +x /usr/local/bin/buf \
- && buf --version
+# buf comes from the shared codegen base — built by bake's
+# `buf-base` target and injected as a build context. See
+# `build/docker/buf-base.Dockerfile` and `docker-bake.hcl`.
+COPY --from=buf-base /usr/local/bin/buf /usr/local/bin/buf
 
 # Regenerate the Go bindings for the driver protocol (default
 # template) and the internal engine protocol (engine template). Both

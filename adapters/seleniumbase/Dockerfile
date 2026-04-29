@@ -48,21 +48,26 @@ ARG TARGETARCH
 # Stage 1 — builder: uv-managed venv at the final runtime path
 # ---------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim-bookworm AS builder
+# Cache-key only — buf binary itself comes from buf-base; ARG
+# declared so per-target args invalidates the codegen stage when
+# version changes.
 ARG BUF_VERSION
 ARG UV_VERSION
 WORKDIR /workspace
 
+# buf comes from the shared codegen base — built by bake's
+# `buf-base` target and injected as a build context. See
+# `build/docker/buf-base.Dockerfile` and `docker-bake.hcl`.
+COPY --from=buf-base /usr/local/bin/buf /usr/local/bin/buf
+
+# curl + ca-certificates are needed for the uv install script and
+# for `buf generate` to reach the Buf Schema Registry over TLS;
+# unzip is needed later by SeleniumBase's ChromeDriver download
+# step in the runtime stage's seluser flow (kept here so the
+# codegen → runtime layering stays predictable).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         curl unzip ca-certificates \
- && BUF_ARCH=$(case "$(uname -m)" in \
-        x86_64) echo "x86_64" ;; \
-        aarch64) echo "aarch_64" ;; \
-        *) echo "unsupported BUF arch: $(uname -m)"; exit 1 ;; \
-    esac) \
- && curl -fsSL -o /usr/local/bin/buf \
-      "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-${BUF_ARCH}" \
- && chmod +x /usr/local/bin/buf \
  && curl -fsSL "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
  && mv /root/.local/bin/uv /usr/local/bin/uv \
  && uv --version \

@@ -92,6 +92,23 @@ build is well-supported. Rejected: `alpine:3` (larger and bundles
 busybox unnecessarily); `scratch` (same final size but loses
 distroless's debug-image variant for triage).
 
+#### R6.5.4 update — shared codegen base
+
+The four buf-consuming Dockerfiles
+(`core/control-plane`, `adapters/curl-impersonate`,
+`adapters/playwright`, `adapters/seleniumbase`) extract their
+buf install into a single `build/docker/buf-base.Dockerfile`
+stage consumed via bake's `contexts:` feature. Each consumer
+carries one
+`COPY --from=buf-base /usr/local/bin/buf /usr/local/bin/buf`
+line in place of the previous ~10-line install RUN. The
+engine remains independent — Rust uses `prost-build`, not
+`buf`. Image sizes are unchanged: buf lives only in the
+codegen stage, never reaches runtime. The bumping procedure
+and the deeper rationale live in `build/docker/README.md`'s
+"Shared codegen base" section. ADR-0020 §4's R6.5 row already
+covers this PR alongside R6.5.1–R6.5.3.
+
 ### 3a. R6.3 evolution: Docker-in-Docker for the devcontainer
 
 > **Status — added in R6.3 (2026-04-29).** Decision §1 chose a

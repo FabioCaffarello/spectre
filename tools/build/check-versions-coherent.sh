@@ -80,6 +80,17 @@ dockerfile_arg_default() {
     ' "$file"
 }
 
+# Detect whether a Dockerfile declares `ARG <NAME>` (with or without a
+# default). Used for the buf-base.Dockerfile entry below: bake supplies
+# the value via `args:`, so the ARG must be declared but is allowed to
+# omit a default. Returns "yes" / "" (empty).
+dockerfile_arg_declared() {
+    local file="$1" name="$2"
+    awk -v name="$name" '
+        $0 ~ "^ARG[[:space:]]+" name "([[:space:]]|=|$)" { print "yes"; exit }
+    ' "$file"
+}
+
 echo "checking versions.env <-> docker-bake.hcl variable defaults"
 
 # Pins that have a corresponding bake variable. CHROME_VERSION is
@@ -146,6 +157,29 @@ for entry in "${ARG_CHECKS[@]}"; do
         note_fail "$label" "no ARG default"
     elif [[ "$actual" != "$expected" ]]; then
         note_fail "$label" "versions.env=$expected, ARG=$actual"
+    else
+        note_pass "$label"
+    fi
+done
+
+# R6.5.4 — Dockerfiles where the ARG is declared without a default
+# because bake supplies the value via per-target `args:`. The check
+# verifies the ARG is declared (so bake's args propagate); a default
+# is intentionally absent.
+ARG_DECLARED_CHECKS=(
+    "build/docker/buf-base.Dockerfile|BUF_VERSION"
+)
+
+for entry in "${ARG_DECLARED_CHECKS[@]}"; do
+    file="${entry%%|*}"
+    name="${entry##*|}"
+    label="$(printf '%s (%s, declared)' "$name" "$file")"
+    if [[ ! -f "$file" ]]; then
+        note_fail "$label" "Dockerfile not found"
+        continue
+    fi
+    if [[ -z "$(dockerfile_arg_declared "$file" "$name")" ]]; then
+        note_fail "$label" "ARG $name not declared"
     else
         note_pass "$label"
     fi

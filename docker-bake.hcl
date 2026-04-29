@@ -139,6 +139,29 @@ function "labels" {
 // Targets
 // ---------------------------------------------------------------------------
 
+// Shared codegen tooling target — consumed by the four buf-using
+// images via `contexts:`. R6.5.4 extracts the buf install logic
+// out of each consumer Dockerfile into a single source. The
+// `output = ["type=cacheonly"]` clause keeps this image in
+// BuildKit's cache without loading it to the daemon or pushing
+// it; consumers reference it as a named build context.
+//
+// Platforms intentionally omitted: when called via `contexts:`,
+// bake builds buf-base at the consumer's requested platform(s)
+// transparently. When called standalone (debugging), bake uses
+// the host platform (single-arch).
+//
+// Refs: ADR-0018 §3 R6.5.4 update; build/docker/README.md
+// "Shared codegen base" section.
+target "buf-base" {
+  context    = "."
+  dockerfile = "build/docker/buf-base.Dockerfile"
+  args = {
+    BUF_VERSION = BUF_VERSION
+  }
+  output = ["type=cacheonly"]
+}
+
 target "engine" {
   context    = "."
   dockerfile = "core/engine/Dockerfile"
@@ -157,6 +180,9 @@ target "engine" {
 target "control-plane" {
   context    = "."
   dockerfile = "core/control-plane/Dockerfile"
+  contexts = {
+    buf-base = "target:buf-base"
+  }
   tags       = [image("control-plane")]
   labels     = labels(
     "spectre-control-plane",
@@ -172,6 +198,9 @@ target "control-plane" {
 target "curl-impersonate" {
   context    = "."
   dockerfile = "adapters/curl-impersonate/Dockerfile"
+  contexts = {
+    buf-base = "target:buf-base"
+  }
   tags       = [image("curl-impersonate")]
   labels     = labels(
     "spectre-curl-impersonate",
@@ -188,6 +217,9 @@ target "curl-impersonate" {
 target "playwright" {
   context    = "."
   dockerfile = "adapters/playwright/Dockerfile"
+  contexts = {
+    buf-base = "target:buf-base"
+  }
   tags       = [image("playwright")]
   labels     = labels(
     "spectre-playwright",
@@ -204,6 +236,9 @@ target "playwright" {
 target "seleniumbase" {
   context    = "."
   dockerfile = "adapters/seleniumbase/Dockerfile"
+  contexts = {
+    buf-base = "target:buf-base"
+  }
   tags       = [image("seleniumbase")]
   labels     = labels(
     "spectre-seleniumbase",

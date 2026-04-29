@@ -50,23 +50,22 @@ ARG PLAYWRIGHT_VERSION=1.49.0
 # Stage 1 — builder: Node + pnpm + buf, regenerate proto, tsc, prune
 # ---------------------------------------------------------------------------
 FROM node:${NODE_VERSION}-bookworm-slim AS builder
+# Cache-key only — buf binary itself comes from buf-base; ARG
+# declared so per-target args invalidates the codegen stage when
+# version changes.
 ARG BUF_VERSION
 WORKDIR /workspace
 
-# buf for the TS proto bindings. The TS plugin emits to
-# /workspace/adapters/playwright/src/proto/ — see proto/buf.gen.yaml.
+# buf comes from the shared codegen base — built by bake's
+# `buf-base` target and injected as a build context. See
+# `build/docker/buf-base.Dockerfile` and `docker-bake.hcl`.
+COPY --from=buf-base /usr/local/bin/buf /usr/local/bin/buf
+
+# ca-certificates is needed at codegen time: `buf generate` calls
+# the Buf Schema Registry for remote plugins over TLS, and the
+# node:<version>-bookworm-slim base ships without a trust store.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      curl \
-      ca-certificates \
- && BUF_ARCH=$(case "$(uname -m)" in \
-        x86_64) echo "x86_64" ;; \
-        aarch64) echo "aarch_64" ;; \
-        *) echo "unsupported BUF arch: $(uname -m)"; exit 1 ;; \
-    esac) \
- && curl -fsSL -o /usr/local/bin/buf \
-      "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-${BUF_ARCH}" \
- && chmod +x /usr/local/bin/buf \
+ && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 # corepack ships with node:20; `enable` provisions the pnpm shim.

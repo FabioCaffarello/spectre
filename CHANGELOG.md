@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dockerfile deduplication via shared codegen base
+  (R6.5.4 — closes Phase R6.5).** Four of the five Spectre
+  images previously carried a near-identical ~10-line `buf`
+  install RUN block (`apt-get install curl ca-certificates &&
+  curl ... buf-Linux-${BUF_ARCH} && chmod +x`). R6.5.4
+  extracts the install logic into a single shared stage at
+  `build/docker/buf-base.Dockerfile` (~25 lines on
+  `debian:12-slim`), built by a new bake `buf-base` target
+  with `output = ["type=cacheonly"]` and consumed by the four
+  buf-using image targets via:
+  ```hcl
+  contexts = {
+    buf-base = "target:buf-base"
+  }
+  ```
+  Each consumer Dockerfile (`core/control-plane`,
+  `adapters/curl-impersonate`, `adapters/playwright`,
+  `adapters/seleniumbase`) loses its ~10-line install block
+  and gains one
+  `COPY --from=buf-base /usr/local/bin/buf /usr/local/bin/buf`
+  line. The engine target intentionally stays out — Rust
+  bindings come from `prost-build` inside the Cargo build
+  (`core/engine/build.rs`), not via `buf generate`.
+  `ARG BUF_VERSION` is preserved in each consumer Dockerfile
+  with a cache-key comment so bake's per-target `args:`
+  invalidates the codegen stage when the version bumps. As a
+  side benefit, three of the four consumer Dockerfiles
+  previously echoed `aarch_64` (with underscore) for arm64 —
+  the buf release server only serves `aarch64` (no
+  underscore), so those three carried a latent 404 footgun;
+  consolidating into one source removes it. The playwright
+  Dockerfile retains a minimal
+  `apt-get install ca-certificates` because the
+  `node:<version>-bookworm-slim` base ships without a trust
+  store and `buf generate` reaches the Buf Schema Registry
+  over TLS for remote plugins. The seleniumbase Dockerfile
+  splits its previously interleaved buf+uv RUN, preserves the
+  `apt-get install curl unzip ca-certificates` (curl +
+  ca-certificates feed the uv install script and BSR TLS;
+  unzip carries forward per the original layering), and keeps
+  the uv install verbatim. The coherence script
+  (`tools/build/check-versions-coherent.sh`) gains a
+  `dockerfile_arg_declared()` helper plus an
+  `ARG_DECLARED_CHECKS` list covering
+  `build/docker/buf-base.Dockerfile`'s `ARG BUF_VERSION`
+  (declared without a default — bake's `args:` supplies the
+  value); the existing `ARG_CHECKS` flow is unchanged.
+  `build/docker/README.md` gains a "Shared codegen base
+  (R6.5.4)" section documenting the multi-arch propagation
+  and the `BUF_VERSION` bump procedure. ADR-0018 §3 gains an
+  "R6.5.4 update — shared codegen base" subsection;
+  ADR-0020 §4's R6.5 row already covered all four sub-phase
+  PRs (no new audit-trail row needed). Image sizes are
+  unchanged — buf lives only in the codegen stage and never
+  reaches runtime. Capability invariant 13/12/6 holds
+  byte-for-byte (zero source changes; packaging-only PR).
+  **No new ADR introduced** — Phase R6.5 hygiene posture
+  preserved. **Phase R6.5 CLOSES with this PR.**
+
 ### Added
 
 - **Docker Hub registry wiring + multi-arch readiness
