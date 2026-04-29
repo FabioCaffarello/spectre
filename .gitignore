@@ -47,6 +47,17 @@ vendor/
 node_modules/
 dist/
 build/
+# `build/docker/` (R6.1) is source-controlled — toolchain version pins
+# consumed by docker-bake.hcl, the justfile umbrella recipes, the R6.3
+# Devcontainer post-create script, and CI. The `build/` rule above
+# targets Node/TS frontend build outputs at any depth; the negation
+# below un-excludes the *top-level* `/build/` directory and re-excludes
+# everything inside it except `/build/docker/`. Anchored paths (leading
+# slash) keep the carve-out from leaking into nested `build/` dirs.
+!/build/
+/build/*
+!/build/docker/
+!/build/docker/**
 .pnpm-store/
 .turbo/
 .tsbuildinfo
