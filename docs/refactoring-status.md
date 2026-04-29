@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-29
-Current phase: **R6.5 — Quality & Hardening (in progress; R6.5.2 complete on merge of this PR, 2026-04-29)**
-Next PR: **R6.5.3 — Docker Hub registry wiring + multi-arch readiness**
+Current phase: **R6.5 — Quality & Hardening (in progress; R6.5.3 complete on merge of this PR, 2026-04-29)**
+Next PR: **R6.5.4 — Dockerfile deduplication via shared codegen base image stage**
 
 ## Phases
 
@@ -42,72 +42,80 @@ audit-trail row.
 close and R7.1 open; no new ADRs; recorded in ADR-0020 §4)*
 
 - [x] **R6.5.1 — Stale-references sweep + R6.1 leftovers (`build/docker/README.md`, `tools/build/check-versions-coherent.sh`)** *(merged 2026-04-29 — opened Phase R6.5)*
-- [x] **R6.5.2 — CI hardening: image-build matrix completion, bake unification in CI, full-stack gate** *(complete on merge of this PR, 2026-04-29)*
-- [ ] **R6.5.3 — Docker Hub registry wiring + multi-arch readiness** *(next)*
-- [ ] R6.5.4 — Dockerfile deduplication via shared codegen base image stage
+- [x] **R6.5.2 — CI hardening: image-build matrix completion, bake unification in CI, full-stack gate** *(merged 2026-04-29, PR #69)*
+- [x] **R6.5.3 — Docker Hub registry wiring + multi-arch readiness** *(complete on merge of this PR, 2026-04-29)*
+- [ ] **R6.5.4 — Dockerfile deduplication via shared codegen base image stage** *(next)*
 
 - [ ] **R7.1 — ADR-0026 Helm chart** *(opens Phase R7 once R6.5 closes)*
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R6.5.2)
+## Current PR checklist (R6.5.3)
 
-The R6.5.2 PR's per-step checklist mirrors Section 7 of the
-phase prompt. R6.5.2 routes every CI image build through the
-canonical `docker buildx bake` orchestrator, replaces the two
-ad-hoc `engine-image` / `operator-image` jobs with a single
-matrix `images` job, and adds a new `full-stack` end-to-end
-gate that exercises the unified Compose flow against a sample
-ScrapeJob.
+The R6.5.3 PR's per-step checklist mirrors Section 7 of the
+phase prompt. R6.5.3 makes the publish flow operational:
+Docker Hub `fabiocaffarello/spectre-<name>` flat namespace,
+multi-arch (linux/amd64 + linux/arm64) for control-plane +
+playwright, three deferrals (engine, seleniumbase,
+curl-impersonate) with explicit unblock criteria.
 
-- [x] Step 1 — Inventory: R6.5.1 merge confirmed; the existing
-  CI workflow, `docker-bake.hcl`, `docker-compose.yml`,
-  `build/kind/cluster.yaml`, and the five smoke recipe names
-  reviewed. Section 4 decisions settled.
-- [x] Step 2 — Smoke recipe parameterization: each of the five
-  smoke / run recipes (`engine-image-run`, `op-image-smoke`,
-  `curl-imp-image-smoke`, `pw-image-smoke`, `sb-image-smoke`)
-  gains a positional `TAG='dev'` argument; recipe bodies use
-  `spectre-<name>:{{TAG}}` instead of hardcoded `:dev`. Local
-  default unchanged.
-- [x] Step 3 — `changes` job filters extended: legacy
-  `engine_image` output removed; six new outputs added
-  (`image_engine`, `image_control_plane`,
-  `image_curl_impersonate`, `image_playwright`,
-  `image_seleniumbase`, `full_stack`). Each `image_<name>`
-  filter triggers on its source, the proto schema, the
-  per-Dockerfile `.dockerignore`, `docker-bake.hcl`,
-  `build/docker/**`, or the workflow.
-- [x] Step 4 — Matrix `images` job added: five matrix entries
-  (one per bake target), each carrying `target` + `changed` +
-  `smoke_recipe` via `include:` form; `if: matrix.changed ==
-  'true'` skips unchanged targets within a dispatched matrix;
-  build step calls `set -a; source build/docker/versions.env;
-  set +a; docker buildx bake --load <target>` (canonical
-  invocation byte-for-byte aligned with `just images`); CI sets
-  `VCS_REF`, `BUILD_DATE`, `TAG=ci`. Legacy jobs preserved in
-  this commit.
-- [x] Step 5 — `full-stack` job added: bake builds at `TAG=dev`,
-  Compose `--profile full` up, kind via `helm/kind-action@v1`
-  (`cluster_name: spectre-ci`), kubeconfig regen with
-  `--internal`, `make install` for v1alpha2 CRD, hello-hackernews
-  sample apply, 5-minute polling loop on `status.phase ==
-  Completed`, always-run operator + engine + adapter log tails,
-  unconditional `compose down -v` cleanup.
-- [x] Step 6 — Legacy `engine-image` and `operator-image` jobs
-  removed; `ci-summary` `needs:` and report block updated to
-  drop the legacy names and add `images` + `full-stack`.
-- [x] Step 7 — `docs/architecture/container-images.md` gains a
-  "CI shape" subsection (matrix table, full-stack gate steps,
-  filter map, when-each-job-runs table). `build/docker/README.md`
-  pin inventory gains a footer noting CI consumes the same pins
-  via the same bake invocation.
-- [x] Step 8 — `docs/refactor-audit.md` ticks R6.5.2;
-  `docs/refactoring-status.md` advances to R6.5.3; CHANGELOG
-  Unreleased entry recording the CI restructuring.
-- [ ] Step 9 — Final verification (`just check`, smoke
-  parameterization tests, conformance suite).
-- [ ] Step 10 — Open the PR.
+- [x] Step 1 — Inventory: R6.5.2 merge confirmed
+  (`4f19951 Merge pull request #69`). docker-bake.hcl,
+  ADR-0018 §5, the five Dockerfiles, ci.yml `changes` job,
+  container-images.md, and the per-Dockerfile arch
+  case-statements reviewed. The six §4 decisions settled.
+- [x] Step 2 — Forward-readiness for the deferred three
+  (engine, seleniumbase, curl-impersonate): TARGETPLATFORM /
+  TARGETARCH ARGs declared at the top of each Dockerfile;
+  R7.x deferral comment blocks above each blocker referencing
+  ADR-0018 §5 R6.5.3 update; buf/protoc-arch case-statements
+  audit confirms aarch64 already covered (no extension
+  needed).
+- [x] Step 3 — Multi-arch enablement for control-plane +
+  playwright: explicit `# Multi-arch ready (R6.5.3): linux/
+  amd64 + linux/arm64` comment markers near the top of each
+  Dockerfile; both already had arm64-aware buf-arch case
+  statements + TARGETARCH plumbing from R6.1.
+- [x] Step 4 — `docker-bake.hcl` comment block updates: the
+  R7.1/ghcr.io narrative replaced with R6.5.3/Docker Hub
+  reality; the REGISTRY variable annotation rewritten; the
+  `image()` function logic unchanged (registry-agnostic).
+  `git grep -n 'ghcr\.io' docker-bake.hcl` is empty.
+- [x] Step 5 — `.github/workflows/publish.yml` shipped:
+  `workflow_dispatch` only; three inputs (`tag`, `targets`,
+  `multi_arch`); QEMU + buildx + just setup; tag resolution
+  from VERSION file; Docker Hub login via `DOCKERHUB_TOKEN`
+  secret; `docker buildx bake --push` with per-target
+  platform overrides for the two ready images; final
+  `imagetools inspect` step. `actionlint` clean.
+- [x] Step 6 — `publish-dry-run` job in `ci.yml`: `changes`
+  job grows a `publish_dry_run` filter; new job builds
+  multi-arch (control-plane + playwright) without `--push`
+  or `--load`; `ci-summary`'s `needs:` and report block
+  extended.
+- [x] Step 7 — ADR-0018 §5 amended in place: status note at
+  the heading; new "R6.5.3 update — Docker Hub registry +
+  multi-arch reality" subsection (~120 lines) covering the
+  pivot rationale, the 5-image multi-arch table, the per-
+  image unblock criteria, the per-target-platform-set-at-
+  publish-time decision, the `workflow_dispatch`-only
+  posture, the deliverables list, and the maintainer
+  DOCKERHUB_TOKEN prerequisite. `container-images.md`
+  updated: header forward-references; REGISTRY variable
+  description; new "Multi-arch status" subsection.
+- [x] Step 8 — `docs/architecture/releases.md` shipped
+  (~250 lines): operator-facing runbook (Overview · Image
+  registry · Multi-arch status · Publish flow · What's
+  deferred · Operator runbook with three numbered procedures
+  · CI dry-run · Forward references). Cross-referenced from
+  README, ADR-0018 §5 R6.5.3 update, and container-images.md.
+- [x] Step 9 — `refactor-audit.md` ticks R6.5.3;
+  `refactoring-status.md` advances to R6.5.4-next; CHANGELOG
+  Unreleased entry; README quick-start one-liner.
+- [ ] Step 10 — Final verification (`just check`,
+  conformance suite, multi-arch dry-run locally,
+  workflow lint).
+- [ ] Step 11 — Open the PR.
 
 ## Surfaced decisions
 
