@@ -180,6 +180,9 @@ target "engine" {
 target "control-plane" {
   context    = "."
   dockerfile = "core/control-plane/Dockerfile"
+  contexts = {
+    buf-base = "target:buf-base"
+  }
   tags       = [image("control-plane")]
   labels     = labels(
     "spectre-control-plane",
@@ -195,6 +198,9 @@ target "control-plane" {
 target "curl-impersonate" {
   context    = "."
   dockerfile = "adapters/curl-impersonate/Dockerfile"
+  contexts = {
+    buf-base = "target:buf-base"
+  }
   tags       = [image("curl-impersonate")]
   labels     = labels(
     "spectre-curl-impersonate",
@@ -211,6 +217,9 @@ target "curl-impersonate" {
 target "playwright" {
   context    = "."
   dockerfile = "adapters/playwright/Dockerfile"
+  contexts = {
+    buf-base = "target:buf-base"
+  }
   tags       = [image("playwright")]
   labels     = labels(
     "spectre-playwright",
@@ -227,6 +236,9 @@ target "playwright" {
 target "seleniumbase" {
   context    = "."
   dockerfile = "adapters/seleniumbase/Dockerfile"
+  contexts = {
+    buf-base = "target:buf-base"
+  }
   tags       = [image("seleniumbase")]
   labels     = labels(
     "spectre-seleniumbase",
