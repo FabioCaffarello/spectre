@@ -144,10 +144,9 @@ adapters/playwright/
   for the TCP transport contract that superseded the original UDS
   binding.
 - Implementations of every unary RPC in
-  `proto/spectre/driver/v1alpha1/driver.proto`. PR3 implemented
-  `Initialize`; PR4 added `Navigate`; PR5 added `Close`, `Query`,
-  and `Extract`; PR6 added `Screenshot`. The v1alpha1 unary
-  surface is complete.
+  `proto/spectre/driver/v1alpha1/driver.proto`: `Initialize`,
+  `Navigate`, `Close`, `Query`, `Extract`, and `Screenshot`. The
+  v1alpha1 unary surface is complete.
 - Capability declarations in `driver.yaml`, added incrementally as
   each capability passes the conformance suite. The declared list
   must match `src/capabilities.ts` exactly — the conformance suite

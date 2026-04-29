@@ -44,8 +44,7 @@
 //     if one exists, or null if the session is registered but has
 //     not yet navigated.
 //   - `bumpGeneration` / `currentGeneration` / `allocateRefs` /
-//     `lookupRef` — element-registry delegation, unchanged from
-//     PR5/ADR-0010.
+//     `lookupRef` — element-registry delegation per ADR-0010.
 //   - `closeSession(sessionId)` — deletes the Redis key
 //     (best-effort), evicts the local registration, forgets all
 //     ElementRefs, and closes the per-session `BrowserContext`.
