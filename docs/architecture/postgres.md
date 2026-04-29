@@ -119,10 +119,9 @@ contracts:
 
 ```bash
 cp .env.example .env
-just compose-up            # postgres:16-alpine, healthchecked
-just engine-run            # connects to localhost:5432
-just pw-run 9091           # Playwright adapter
-just op-run                # operator (also dials Postgres)
+just images                # build the five service images
+just compose-up            # full Compose stack (engine + adapters + stateful deps)
+just op-run                # operator on the host, dials Compose engine on 127.0.0.1:8090
 ```
 
 `just compose-reset` drops the volume and re-applies migrations

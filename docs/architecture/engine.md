@@ -67,18 +67,18 @@ DSL driver name to a TCP endpoint:
 
 | Driver name        | Environment variable                 | Default          |
 |--------------------|--------------------------------------|------------------|
-| `playwright`       | `SPECTRE_PLAYWRIGHT_ENDPOINT`        | `127.0.0.1:9091` |
-| `seleniumbase`     | `SPECTRE_SELENIUMBASE_ENDPOINT`      | `127.0.0.1:9092` |
-| `curl-impersonate` | `SPECTRE_CURL_IMPERSONATE_ENDPOINT`  | `127.0.0.1:9093` |
+| `playwright`       | `SPECTRE_PLAYWRIGHT_ENDPOINT`        | `127.0.0.1:8091` |
+| `seleniumbase`     | `SPECTRE_SELENIUMBASE_ENDPOINT`      | `127.0.0.1:8092` |
+| `curl-impersonate` | `SPECTRE_CURL_IMPERSONATE_ENDPOINT`  | `127.0.0.1:8093` |
 
-Defaults bind to `127.0.0.1` so a developer running engine and
-a single adapter on the same workstation gets a working
-configuration with no setup. The Compose stack (R6.2) and Helm
-chart (R7.1) override the variables to point at deployed
-service hostnames (`playwright-adapter:9091` in Compose,
-service-DNS in Kubernetes). Resolution is lazy: the engine does
-not pre-dial at startup, so engine and adapters can come up in
-any order under Compose / Kubernetes.
+Defaults bind to `127.0.0.1` so the engine is reachable when run
+as a native binary against a Compose-running adapter set (the
+Compose host-port mapping is 1:1). The Compose stack (R6.2,
+ADR-0025) and Helm chart (R7.1) override the variables with
+service-DNS values (`grpc://playwright-adapter:8091` in Compose,
+`<svc>.<ns>.svc.cluster.local:8091` in Kubernetes). Resolution
+is lazy: the engine does not pre-dial at startup, so engine and
+adapters can come up in any order under Compose / Kubernetes.
 
 ## Health check
 
