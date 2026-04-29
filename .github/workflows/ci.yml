@@ -24,7 +24,12 @@ jobs:
       typescript: ${{ steps.filter.outputs.typescript }}
       python: ${{ steps.filter.outputs.python }}
       operator: ${{ steps.filter.outputs.operator }}
-      engine_image: ${{ steps.filter.outputs.engine_image }}
+      image_engine: ${{ steps.filter.outputs.image_engine }}
+      image_control_plane: ${{ steps.filter.outputs.image_control_plane }}
+      image_curl_impersonate: ${{ steps.filter.outputs.image_curl_impersonate }}
+      image_playwright: ${{ steps.filter.outputs.image_playwright }}
+      image_seleniumbase: ${{ steps.filter.outputs.image_seleniumbase }}
+      full_stack: ${{ steps.filter.outputs.full_stack }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -65,14 +70,62 @@ jobs:
               # the Python conformance job too.
               - 'adapters/curl-impersonate/**'
               - '.github/workflows/ci.yml'
-            engine_image:
-              # Rebuild the engine Docker image whenever the engine,
-              # the protocol schema, the Dockerfile, the build-context
-              # exclusions, or the workflow changes. See ADR-0018 §5
-              # on why this job is build+run only, not push.
+            # Per-image rebuild filters (R6.5.2). Each target rebuilds
+            # when its source, the proto schema, the bake config, the
+            # toolchain pins, the per-Dockerfile ignore, or the
+            # workflow changes. The `images` matrix job below consumes
+            # these via its `if:` gate; matrix-entry `if:` reads the
+            # corresponding output to skip unchanged targets while
+            # still listing them in the run UI.
+            image_engine:
               - 'core/engine/**'
+              - 'core/engine/.dockerignore'
               - 'proto/**'
-              - '.dockerignore'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/ci.yml'
+            image_control_plane:
+              - 'core/control-plane/**'
+              - 'core/control-plane/.dockerignore'
+              - 'proto/**'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/ci.yml'
+            image_curl_impersonate:
+              - 'adapters/curl-impersonate/**'
+              - 'adapters/curl-impersonate/.dockerignore'
+              - 'proto/**'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/ci.yml'
+            image_playwright:
+              - 'adapters/playwright/**'
+              - 'adapters/playwright/.dockerignore'
+              - 'proto/**'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/ci.yml'
+            image_seleniumbase:
+              - 'adapters/seleniumbase/**'
+              - 'adapters/seleniumbase/.dockerignore'
+              - 'proto/**'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - '.github/workflows/ci.yml'
+            # Full-stack gate (R6.5.2). Triggers on anything that could
+            # break the unified Compose flow — service source, proto,
+            # Compose YAML, bake, build pins, kind config, sample CRs
+            # / CRDs, or the workflow itself.
+            full_stack:
+              - 'core/**'
+              - 'adapters/**'
+              - 'proto/**'
+              - 'docker-compose.yml'
+              - 'docker-bake.hcl'
+              - 'build/docker/**'
+              - 'build/kind/**'
+              - 'core/control-plane/config/samples/**'
+              - 'core/control-plane/config/crd/**'
               - '.github/workflows/ci.yml'
 
   proto:
@@ -483,7 +536,7 @@ jobs:
   engine-image:
     name: Engine image (build + smoke test)
     needs: changes
-    if: needs.changes.outputs.engine_image == 'true'
+    if: needs.changes.outputs.image_engine == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
