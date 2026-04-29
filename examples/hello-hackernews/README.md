@@ -15,27 +15,27 @@ example.
 
 ## Run it
 
-The pieces, three terminals (or three `tmux` panes — the engine
-and adapter are both long-running services):
+The pieces — bring up the unified Compose stack (R6.2,
+ADR-0025) and submit the job from the host:
 
 ```bash
-# Terminal 1 — engine gRPC service on 127.0.0.1:9090
-just engine-run
+# Build the five service images, then start the full
+# development graph (engine on 8090, Playwright adapter on 8091,
+# stateful deps on their canonical ports).
+just images
+just compose-up
 
-# Terminal 2 — Playwright adapter gRPC service on 127.0.0.1:9091
-just pw-run 9091
-
-# Terminal 3 — submit the job
+# Submit the job.
 grpcurl -plaintext \
     -import-path proto -proto spectre/engine/v1alpha1/engine.proto \
     -d "$(jq -n --arg dsl "$(cat examples/hello-hackernews/job.yaml)" '{job_dsl: $dsl}')" \
-    127.0.0.1:9090 \
+    127.0.0.1:8090 \
     spectre.engine.v1alpha1.Engine/RunJob
 ```
 
-The first run installs the Chromium binary the Playwright adapter
-needs (~150 MB; cached afterwards). Run `just pw-install-browsers`
-ahead of time to avoid the wait on the first run.
+The Compose stack ships the Chromium runtime baked into the
+Playwright adapter image; no separate
+`just pw-install-browsers` step is needed for the Compose flow.
 
 The engine streams `RunJobResponse` events back: one
 `row.json_line` per story, then a terminal `completed.rows_extracted`
@@ -44,9 +44,7 @@ compiled `Plan` is logged to stderr before execution.
 
 Tools required for the manual flow: `grpcurl`, `jq`. Both are
 available via Homebrew (`brew install grpcurl jq`) and standard
-Linux package managers. The ugly heredoc + `jq` is honest about
-the transitional state — R6.2 will replace it with a single
-`just` recipe.
+Linux package managers.
 
 ## What it does
 
@@ -54,8 +52,10 @@ the transitional state — R6.2 will replace it with a single
    compiles it to a `Plan`:
    `Initialize → Navigate → Query → ExtractEach → Close`.
 2. The engine resolves `driver: playwright` to
-   `SPECTRE_PLAYWRIGHT_ENDPOINT` (default `127.0.0.1:9091`) via
-   `AdapterRegistry`, dials the TCP listener over gRPC
+   `SPECTRE_PLAYWRIGHT_ENDPOINT` (defaults to
+   `grpc://playwright-adapter:8091` inside Compose, or
+   `127.0.0.1:8091` from the host) via `AdapterRegistry`, dials
+   the TCP listener over gRPC
    (ADR-0022), and waits for the `grpc.health.v1.Health` check
    to return `SERVING` (ADR-0021 §6).
 3. The engine sends the RPC sequence. `Query(.titleline > a)`

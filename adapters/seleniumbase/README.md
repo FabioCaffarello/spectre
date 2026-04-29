@@ -61,17 +61,22 @@ just sb-conf-test                            # SeleniumBase only
 just conf-test                               # all three adapters
 ```
 
-For ad-hoc manual runs, `just sb-run` exposes the adapter on the
-canonical port (ADR-0021 §4 reserves `9092` for SeleniumBase).
+For ad-hoc manual runs, the canonical path post-R6.2 is the
+Compose stack: `just images && just compose-up` brings the
+adapter up on `127.0.0.1:8092` (ADR-0021 §4 / ADR-0025 §7
+reserve `8092` for SeleniumBase). The native-binary `sb-run`
+recipe was retired in R6.2 (ADR-0025); for live-coding flows
+that need a native binary, run `just sb-bootstrap` and launch
+via `.venv/bin/python -m spectre_seleniumbase.adapter` after
+exporting `SPECTRE_ADAPTER_GRPC_PORT` and `SPECTRE_REDIS_URL`.
 
 ```bash
-# Terminal A — start the adapter on port 9092.
-just sb-run               # binds 0.0.0.0:9092
-# or pick a different port:
-just sb-run 19092
+# Bring up the Compose stack (engine + adapters + stateful deps).
+just images
+just compose-up
 
-# Terminal B — probe the gRPC health check.
-grpc_health_probe -addr=127.0.0.1:9092       # → status: SERVING
+# Probe the gRPC health check from the host.
+grpc_health_probe -addr=127.0.0.1:8092       # → status: SERVING
 ```
 
 The adapter logs a single `listening on 0.0.0.0:<port>` line on

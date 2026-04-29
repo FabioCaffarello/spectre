@@ -40,30 +40,95 @@ build: engine-build cp-build curl-imp-build pw-build
 check: lint test
 
 # ---------------------------------------------------------------------------
-# Compose stack (R4.2 — see ADR-0023 §9)
+# Compose stack (R6.2 — see ADR-0025; ADR-0023 §9)
 # ---------------------------------------------------------------------------
-# v1alpha1's local-dev path runs application services as native
-# binaries (`just engine-run`, `just pw-run`, `just op-run`) and the
-# stateful services in Compose. R4.2 ships Postgres only; R4.3 adds
-# Redis, R4.4 adds Kafka (Redpanda), R6.2 moves the application
-# services into Compose too.
+# R6.2 brings application services (engine + three adapters) into
+# `docker-compose.yml` alongside the stateful services from R4.x and
+# R5.1. `just compose-up` brings up the full development graph
+# (engine on 8090, adapters on 8091/8092/8093, Postgres / Redis /
+# Kafka / MinIO + Console / minio-bootstrap). The operator stays a
+# host process (R6.2 deferral, ADR-0025 §6); `just op-run` continues
+# to be the dev flow until R6.3 brings it into the unified shape.
+#
+# Profiles (ADR-0025 §4): infra (stateful only — pre-R6.2 default),
+# core (engine + stateful deps), adapters (three adapters + redis),
+# app (headless full stack), full (default — everything).
 
-# Bring up the Compose stack in the background.
+# Bring up the full development graph (10 services across the
+# `full` profile). Requires images built first via `just images`
+# — Compose uses `pull_policy: never` per ADR-0025 §8.
 compose-up:
-    docker compose up -d
+    docker compose --profile full up -d
 
-# Stop the stack; preserve volumes.
+# Bring up `app` profile — headless full stack (no kafka-console).
+# Aimed at CI runs where the observability UI adds no value.
+compose-up-app:
+    docker compose --profile app up -d
+
+# Bring up `core` profile — postgres + kafka + minio (+ bootstrap)
+# + engine. Engine integration tests (engine-db-test /
+# engine-kafka-test / engine-s3-test) target this profile.
+compose-up-core:
+    docker compose --profile core up -d
+
+# Bring up `adapters` profile — redis + the three adapters. Useful
+# for adapter-only experimentation via grpcurl against the host
+# port mappings (8091 / 8092 / 8093).
+compose-up-adapters:
+    docker compose --profile adapters up -d
+
+# Bring up `infra` profile — six stateful services only (the
+# pre-R6.2 default shape). Used by the conformance suite (which
+# spawns adapter subprocesses, ADR-0025 §5) and by contributors
+# running native-binary application services via
+# `just engine-run-native`.
+compose-up-infra:
+    docker compose --profile infra up -d
+
+# Stop every running service; preserve volumes.
 compose-down:
     docker compose down
 
-# Tail the stack logs.
-compose-logs:
-    docker compose logs -f
+# Tail the stack logs. Pass a service name to scope.
+#   just compose-logs                 # all services
+#   just compose-logs engine          # engine only
+compose-logs SERVICE='':
+    @if [ -z "{{SERVICE}}" ]; then \
+        docker compose logs -f; \
+    else \
+        docker compose logs -f "{{SERVICE}}"; \
+    fi
 
-# Full reset: stop, drop volumes, restart. Useful when the schema
-# advances and you want a clean migration apply.
+# Restart a running service in place — useful for picking up
+# image changes after `just compose-rebuild SERVICE`.
+compose-restart SERVICE:
+    docker compose restart {{SERVICE}}
+
+# Rebuild SERVICE's image via bake then recreate just that
+# service in the running stack. Usage:
+#   just compose-rebuild engine
+#   just compose-rebuild playwright       # bake target name
+# The bake target name and the Compose service name diverge for
+# adapters: bake builds `playwright`, `seleniumbase`,
+# `curl-impersonate`; Compose runs `playwright-adapter`,
+# `seleniumbase-adapter`, `curl-impersonate-adapter`. Pass the
+# bake target name; the recipe maps it to the matching Compose
+# service.
+compose-rebuild SERVICE:
+    set -a; source build/docker/versions.env; set +a; \
+        docker buildx bake --load {{SERVICE}}
+    @case "{{SERVICE}}" in \
+        playwright|seleniumbase|curl-impersonate) \
+            docker compose up -d --no-deps "{{SERVICE}}-adapter" ;; \
+        *) \
+            docker compose up -d --no-deps "{{SERVICE}}" ;; \
+    esac
+
+# Full reset: stop, drop volumes, restart under `--profile full`.
+# Useful when the schema advances or you want a clean Postgres /
+# Redis / Kafka / MinIO state.
 compose-reset:
-    docker compose down -v && docker compose up -d
+    docker compose down -v && docker compose --profile full up -d
 
 # Open the Redpanda Console UI for the local Kafka broker. Linux
 # uses `xdg-open`; macOS uses `open`. Falls back to printing the
@@ -221,20 +286,27 @@ engine-webhook-test:
 spectre-build:
     cd core/engine && cargo build --release --bin spectre
 
-# Run the engine as a gRPC service. Listens on `0.0.0.0:9090` by
-# default; override via `SPECTRE_ENGINE_PORT`. Adapter endpoints
-# resolve from `SPECTRE_PLAYWRIGHT_ENDPOINT`,
-# `SPECTRE_SELENIUMBASE_ENDPOINT`, and
-# `SPECTRE_CURL_IMPERSONATE_ENDPOINT` with `127.0.0.1:909{1,2,3}`
-# defaults for local-development convenience. SIGTERM/Ctrl-C drains
-# in-flight RPCs and exits 0.
-engine-run *ARGS='': spectre-build
+# Run the native engine binary as a gRPC service. Debugging escape
+# hatch — the canonical local-dev path post-R6.2 is the Compose
+# stack (`just compose-up`), which runs the engine container on
+# `127.0.0.1:8090` with stateful deps already wired. This recipe
+# survives because live-coding the engine without rebuilding the
+# image is genuinely faster for tight inner loops; for everyday
+# end-to-end runs, prefer `compose-up`.
+#
+# Listens on `0.0.0.0:8090` by default; override via
+# `SPECTRE_ENGINE_PORT`. Adapter endpoints resolve from
+# `SPECTRE_PLAYWRIGHT_ENDPOINT` / `SPECTRE_SELENIUMBASE_ENDPOINT` /
+# `SPECTRE_CURL_IMPERSONATE_ENDPOINT` with `127.0.0.1:809{1,2,3}`
+# defaults — the Compose stack's host-port mappings. SIGTERM/Ctrl-C
+# drains in-flight RPCs and exits 0.
+engine-run-native *ARGS='': spectre-build
     core/engine/target/release/spectre {{ARGS}}
 
 # gRPC health-probe the running engine on its default port. Requires
 # `grpc_health_probe` on PATH (https://github.com/grpc-ecosystem/grpc-health-probe).
 # Override the port with `PORT=...` if the engine is bound elsewhere.
-engine-grpc-test PORT='9090':
+engine-grpc-test PORT='8090':
     grpc_health_probe -addr=127.0.0.1:{{PORT}}
 
 # ---------------------------------------------------------------------------
@@ -288,17 +360,22 @@ op-test: cp-test
 op-build: cp-build
 
 # Run the operator from your host against the current kubectl
-# context. R3.1's EngineClientRunner dials the engine over gRPC, so
-# the local-dev flow needs the engine listening on a TCP port; the
-# recipe does not spawn it. Bring up the engine and the adapters in
-# separate terminals (`just engine-run`, `just pw-run 9091`, …)
-# before invoking this recipe. The endpoint defaults to
-# 127.0.0.1:9090 to match `just engine-run`'s default listener;
-# override via `SPECTRE_ENGINE_ENDPOINT=...` in the environment.
+# context. R3.1's EngineClientRunner dials the engine over gRPC,
+# so the dev flow needs the engine listening; the recipe does not
+# spawn it.
+#
+# Post-R6.2 (ADR-0025 §6 deferral): the operator stays a host
+# process and dials the Compose-running engine via the host-port
+# mapping `127.0.0.1:8090`. Bring up the Compose stack first with
+# `just images && just compose-up`. R6.3 brings the operator into
+# the unified shape via DinD + kind-in-Compose.
+#
+# Override the engine endpoint via `SPECTRE_ENGINE_ENDPOINT=...`
+# in the environment.
 op-run:
     cd core/control-plane && \
         GOTOOLCHAIN=go1.25.3 go run ./cmd/main.go \
-            --engine-endpoint="${SPECTRE_ENGINE_ENDPOINT:-127.0.0.1:9090}"
+            --engine-endpoint="${SPECTRE_ENGINE_ENDPOINT:-127.0.0.1:8090}"
 
 op-install-crds:
     cd core/control-plane && make install
@@ -308,23 +385,26 @@ op-uninstall-crds:
 
 # Build the operator image. R3.1 retired the bundled-image
 # execution model: the image carries only the kubebuilder manager
-# binary on top of a distroless static base. R6.1 routes this
+# binary on top of a distroless static base. R6.1 routed this
 # through `docker buildx bake control-plane` so toolchain pins,
 # OCI labels, and platform args stay uniform across the five
-# images. Build context is the repository root because the
-# operator's go.mod has a local `replace` for the proto Go
+# images. R6.2 renamed the recipe `op-image` to match the
+# `<service>-image` pattern (engine-image / pw-image / sb-image /
+# curl-imp-image). Build context is the repository root because
+# the operator's go.mod has a local `replace` for the proto Go
 # bindings.
-op-build-image:
+op-image:
     set -a; source build/docker/versions.env; set +a; \
         docker buildx bake --load control-plane
 
 # Smoke-test the operator image. The image is now a distroless Go
-# binary — no /usr/local/bin/spectre, no /opt/spectre/adapters/*. The
-# only meaningful smoke at this layer is "the manager binary exists
-# at /manager and runs". Deeper end-to-end smoke requires the engine
-# and adapter services to be running alongside; that comes back with
-# the Compose stack (R6.2) and the production smoke (R7.2).
-op-image-smoke: op-build-image
+# binary — no /usr/local/bin/spectre, no /opt/spectre/adapters/*.
+# The only meaningful smoke at this layer is "the manager binary
+# exists at /manager and runs". Deeper end-to-end smoke requires
+# the engine and adapter services to be running alongside; that
+# is what `just compose-up` (R6.2) provides for app-level
+# smoke and what production smoke (R7.2) covers in-cluster.
+op-image-smoke: op-image
     docker run --rm --platform=linux/amd64 \
         --entrypoint=/manager \
         spectre-control-plane:dev --help
@@ -353,20 +433,6 @@ curl-imp-test:
 
 curl-imp-build:
     cd adapters/curl-impersonate && go build -o bin/adapter ./cmd/adapter
-
-# Run the curl-impersonate adapter as a TCP gRPC service. ADR-0021
-# §4 reserves 9093 as the canonical default port. Readiness is
-# signalled by the gRPC standard health check returning SERVING;
-# SIGTERM/Ctrl-C drains, removes session cookie-jars, and exits 0.
-# Override the curl-impersonate variant by setting
-# SPECTRE_CURL_VARIANT (default `curl_chrome116`). See ADR-0016 §3.
-#
-# This recipe survives R2.2 as a developer convenience but is
-# scheduled for retirement in R6.2 when the Compose stack becomes
-# the canonical local-dev path.
-curl-imp-run PORT='9093': curl-imp-build
-    cd adapters/curl-impersonate && \
-    SPECTRE_ADAPTER_GRPC_PORT={{PORT}} ./bin/adapter
 
 # Run only the curl-impersonate conformance tests. PR11 wired
 # Initialize + Navigate; PR12 will add Close + Query + Extract.
@@ -427,18 +493,6 @@ pw-test:
 pw-build:
     cd adapters/playwright && pnpm build
 
-# Run the Playwright adapter as a TCP gRPC service. Set
-# SPECTRE_ADAPTER_GRPC_PORT to the desired port (ADR-0021 §4 reserves
-# 9091 as the canonical default). The server registers the gRPC
-# standard health check; readiness is signalled by Health.Check
-# returning SERVING. SIGTERM/Ctrl-C drains and exits 0.
-#
-# This recipe survives R2.2 as a developer convenience but is
-# scheduled for retirement in R6.2 when the Compose stack becomes the
-# canonical local-dev path.
-pw-run PORT='9091': pw-build
-    cd adapters/playwright && SPECTRE_ADAPTER_GRPC_PORT={{PORT}} node dist/index.js
-
 # Install the Chromium browser Playwright drives. Idempotent: skips
 # when the binary at the expected version is already present. On
 # Linux the system-deps flag pulls the apt packages Chromium needs;
@@ -459,7 +513,7 @@ pw-image:
         docker buildx bake --load playwright
 
 # Smoke-test the Playwright adapter image. Per R6.1 §4.10: the
-# image bakes SPECTRE_ADAPTER_GRPC_PORT=9091 as a default ENV so
+# image bakes SPECTRE_ADAPTER_GRPC_PORT=8091 as a default ENV so
 # the adapter passes port resolution and proceeds to the Redis
 # ping; that ping fails with the canonical "redis ping failed"
 # message because no Redis is reachable in a bare `docker run`.
@@ -488,19 +542,6 @@ sb-lint:
 
 sb-test:
     cd adapters/seleniumbase && uv run pytest
-
-# Run the SeleniumBase adapter as a TCP gRPC service. ADR-0021 §4
-# reserves 9092 as the canonical default port. Readiness is
-# signalled by the gRPC standard health check returning SERVING;
-# SIGTERM/Ctrl-C stops the server, tears down any launched Chrome
-# sessions, and exits 0.
-#
-# This recipe survives R2.2 as a developer convenience but is
-# scheduled for retirement in R6.2 when the Compose stack becomes
-# the canonical local-dev path.
-sb-run PORT='9092': sb-bootstrap
-    cd adapters/seleniumbase && \
-    SPECTRE_ADAPTER_GRPC_PORT={{PORT}} .venv/bin/python -m spectre_seleniumbase.adapter
 
 # Install ChromeDriver for SeleniumBase. Idempotent: SeleniumBase's
 # `install chromedriver` recipe matches the local Chrome version
@@ -534,7 +575,7 @@ sb-image:
         docker buildx bake --load seleniumbase
 
 # Smoke-test the SeleniumBase adapter image. Per R6.1 §4.10: the
-# image bakes SPECTRE_ADAPTER_GRPC_PORT=9092 as a default ENV so
+# image bakes SPECTRE_ADAPTER_GRPC_PORT=8092 as a default ENV so
 # the adapter passes port resolution and proceeds to the Redis
 # ping; that ping fails with the canonical "redis ping" /
 # "Connection refused" message because no Redis is reachable in
@@ -584,10 +625,12 @@ conf-test: pw-build pw-install-browsers sb-bootstrap sb-install-chromedriver cur
 # (docker-bake.hcl). The umbrella `images` / `images-smoke` /
 # `images-clean` / `images-list` recipes act on the full set of
 # five images (engine + control-plane + three adapters). Per-image
-# recipes (`engine-image`, `op-build-image`, `pw-image`,
-# `sb-image`, `curl-imp-image`) are thin bake-target wrappers
-# preserved for muscle-memory + CI compatibility. Every recipe
-# sources build/docker/versions.env first so toolchain pins flow
+# recipes (`engine-image`, `op-image`, `pw-image`, `sb-image`,
+# `curl-imp-image`) are thin bake-target wrappers preserved for
+# muscle-memory + CI compatibility. R6.2 renamed the operator
+# image recipe `op-build-image` → `op-image` for naming
+# consistency; the old name is gone. Every recipe sources
+# build/docker/versions.env first so toolchain pins flow
 # uniformly.
 
 # Build all five images via `docker buildx bake default`. First
