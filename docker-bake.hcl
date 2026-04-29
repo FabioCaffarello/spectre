@@ -21,15 +21,24 @@
 //
 // The `just images` umbrella recipe wraps that flow.
 //
-// Single-arch (`linux/amd64`) per ADR-0018 §5 reaffirmed for R6.1;
-// multi-arch matrix + ghcr.io publishing land in R7.1.
+// Per-target `platforms = ["linux/amd64"]` is the default. R6.5.3
+// adds Docker Hub publishing via `.github/workflows/publish.yml`
+// (`workflow_dispatch` only); the publish workflow opts the two
+// multi-arch-ready images into `linux/amd64,linux/arm64` per-target
+// via bake's `--set <target>.platform=...` overrides — bake stays
+// minimal-by-default, deployment chooses the platform set
+// (ADR-0018 §5 R6.5.3 update §4.3). The other three images
+// (engine, seleniumbase, curl-impersonate) carry forward-readiness
+// comments in their Dockerfiles plus per-image deferral analysis
+// in ADR-0018 §5 R6.5.3 update.
 //
 // CI sets `VCS_REF` and `BUILD_DATE`; local builds leave them empty
 // (resulting in empty `org.opencontainers.image.{revision,created}`
 // label values, which is acceptable for local artefacts).
 //
 // Refs: R6.1 phase prompt §4.2 (bake as orchestrator), §4.3 (runtime
-// base matrix), §4.4 (OCI labels via bake), §4.9 (single-arch).
+// base matrix), §4.4 (OCI labels via bake); ADR-0018 §5 R6.5.3
+// update (Docker Hub registry + multi-arch reality).
 
 // ---------------------------------------------------------------------------
 // Variables
@@ -40,8 +49,14 @@ variable "TAG" {
 }
 
 // REGISTRY = "" (default) produces local-only image names like
-// `spectre-engine:dev`. R7.1 sets REGISTRY=ghcr.io/fabiocaffarello to
-// produce `ghcr.io/fabiocaffarello/spectre-engine:<sha>` for push.
+// `spectre-engine:dev`. R6.5.3 set the publish target to Docker
+// Hub flat namespace: `REGISTRY=fabiocaffarello` produces
+// `fabiocaffarello/spectre-engine:<tag>` (Docker resolves the bare
+// owner reference to `docker.io/fabiocaffarello/...`
+// automatically). The `image()` function below is registry-
+// agnostic — it works identically for any non-empty REGISTRY,
+// including future moves to `ghcr.io/<owner>` or a private
+// registry. See ADR-0018 §5 R6.5.3 update for the pivot rationale.
 variable "REGISTRY" {
   default = ""
 }
