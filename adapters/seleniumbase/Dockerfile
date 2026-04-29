@@ -36,6 +36,14 @@ ARG PYTHON_VERSION=3.12
 ARG BUF_VERSION=1.55.1
 ARG UV_VERSION=0.5.11
 
+# Forward-readiness for multi-arch (R6.5.3). TARGETARCH is
+# auto-populated by BuildKit per stage when declared inside the
+# stage; the buf-arch case-statement below already handles
+# aarch64 via $(uname -m). The runtime stage ships amd64-only —
+# see the R7.x deferral comment above the google-chrome apt-source
+# pin further down.
+ARG TARGETARCH
+
 # ---------------------------------------------------------------------------
 # Stage 1 — builder: uv-managed venv at the final runtime path
 # ---------------------------------------------------------------------------
@@ -116,6 +124,16 @@ RUN apt-get update \
  && install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
         | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg \
+ # R7.x: multi-arch unblock — Google Chrome stable for Linux is
+ # published only for amd64 as of R6.5.3 (Chromium has arm64 builds;
+ # Chrome stable does not). The `[arch=amd64]` apt-source pin and
+ # the `seleniumbase install chromedriver` runtime step both depend
+ # on the amd64-only google-chrome-stable package. See
+ # ADR-0018 §5 R6.5.3 update for unblock options: (a) wait for
+ # Google to publish a Linux/arm64 stable channel, or (b) switch
+ # the adapter from Chrome to Chromium (which IS multi-arch — but
+ # changes the project's tested driver surface, an ADR-level
+ # decision deferred to v1alpha2).
  && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
         > /etc/apt/sources.list.d/google-chrome.list \
  && apt-get update \

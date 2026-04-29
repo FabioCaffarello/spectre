@@ -9,6 +9,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Docker Hub registry wiring + multi-arch readiness
+  (R6.5.3).** The publish flow goes operational: a new
+  `.github/workflows/publish.yml` workflow (`workflow_dispatch`
+  only — the repo has no tags yet; auto-trigger before tags
+  exist is theoretical, deferred to R7.x) builds and pushes
+  the five Spectre images to Docker Hub under the
+  `fabiocaffarello` flat namespace
+  (`fabiocaffarello/spectre-<name>:<tag>`), gated on a
+  Docker Hub Personal Access Token in the `DOCKERHUB_TOKEN`
+  repo secret (operator action prerequisite, added separately
+  by the maintainer before the first manual dispatch). Three
+  workflow inputs: `tag` defaults to the VERSION file content
+  (`0.1.0-alpha.0` as of R6.5.3 merge) with explicit override
+  available; `targets` defaults to bake's `default` group (all
+  five); `multi_arch` defaults to true. The bake invocation
+  matches `just images` byte-for-byte except for `--push` and
+  per-target platform overrides for the two multi-arch-ready
+  images. Multi-arch posture (the honest story): of the five
+  images, only **control-plane** (pure Go cross-compile) and
+  **playwright** (Microsoft runtime base ships multi-arch
+  manifest list) can practically ship `linux/amd64,linux/arm64`
+  today; **engine** (hardcoded `MUSL_TARGET=
+  x86_64-unknown-linux-musl` + amd64-specific cross-compile
+  setup), **seleniumbase** (Google Chrome stable for Linux is
+  amd64-only as of R6.5.3 — Chromium has arm64 builds, Chrome
+  doesn't), and **curl-impersonate** (runtime base
+  `lwthiker/curl-impersonate:0.6-chrome` is amd64-only on
+  Docker Hub) are deferred with explicit per-image unblock
+  criteria. Forward-readiness changes in the three deferred
+  Dockerfiles: `ARG TARGETPLATFORM` / `ARG TARGETARCH`
+  declarations, plus `R7.x: multi-arch unblock` comment blocks
+  above each blocker referencing ADR-0018 §5 R6.5.3 update.
+  control-plane and playwright Dockerfiles get a
+  `# Multi-arch ready (R6.5.3): linux/amd64 + linux/arm64`
+  comment marker near the top. Per-target platform set is
+  declared at publish time (`--set <target>.platform=...`),
+  not in `docker-bake.hcl` — bake stays minimal-by-default and
+  CI's verify-only matrix doesn't need overrides (§4.3 of
+  ADR-0018 §5 R6.5.3 update). A new **`publish-dry-run` CI
+  job** validates the multi-arch publish path on every relevant
+  change without pushing — control-plane + playwright build
+  linux/amd64,linux/arm64 manifest lists, the other three build
+  linux/amd64 only. The `changes` job grows a `publish_dry_run`
+  filter; `ci-summary`'s `needs:` and report block extend with
+  `publish-dry-run`. **ADR-0018 §5 amended in place** with a
+  status note at the heading and a new "R6.5.3 update — Docker
+  Hub registry + multi-arch reality" subsection (~120 lines)
+  covering the two pivots (Docker Hub over ghcr.io; multi-arch
+  where achievable today), the 5-image multi-arch table, the
+  per-image unblock criteria, the per-target-platform-set-at-
+  publish-time decision, the `workflow_dispatch`-only posture,
+  the deliverables list, and the maintainer DOCKERHUB_TOKEN
+  prerequisite. New `docs/architecture/releases.md` (~250
+  lines) is the operator-facing runbook. `container-images.md`
+  updated with a Multi-arch status subsection mirroring the
+  table; `docker-bake.hcl` comment block rewritten for Docker
+  Hub. `git grep -n 'ghcr\.io' docker-bake.hcl` is empty
+  (acceptance criterion 4); the ghcr.io references in
+  `.devcontainer` (upstream `docker-in-docker` feature image)
+  and ADR-0025 §6 R6.3 update audit text stay — those are
+  upstream feature consumption, not our publish target. README
+  quick-start gets a one-line publish reference. Capability
+  invariant 13/12/6 holds byte-for-byte (zero source changes;
+  packaging-only PR). **No new ADR introduced** — Phase R6.5
+  hygiene posture preserved; ADR-0018 §5 amendment is in-place.
+  The publish workflow is **shipped but not run** from this PR;
+  the maintainer triggers the first actual publish manually
+  after merging, with `DOCKERHUB_TOKEN` configured. Phase R6.5
+  is **3 of 4 PRs done** post-merge; R6.5.4 (Dockerfile
+  deduplication via shared codegen base image stage) is next.
 - **CI hardening — image-build matrix + bake unification +
   full-stack gate (R6.5.2).** R6.5.2 routes every CI image build
   through the canonical `docker buildx bake` orchestrator that

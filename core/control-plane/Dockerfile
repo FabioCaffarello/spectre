@@ -32,6 +32,15 @@
 # job.
 #
 # Usage: docker buildx bake control-plane
+#
+# Multi-arch ready (R6.5.3): linux/amd64 + linux/arm64. The builder
+# stage already declares TARGETOS / TARGETARCH (R6.1) and the
+# CGO_ENABLED=0 Go cross-compile produces an arm64 binary from an
+# amd64 builder transparently. The buf-arch case-statement below
+# covers both architectures. Multi-arch is opted into at publish
+# time via per-target bake `--set` platform overrides — see
+# `.github/workflows/publish.yml`. CI's verify-only matrix stays
+# single-arch (`--load` cannot represent a manifest list).
 
 ARG GO_VERSION
 ARG BUF_VERSION

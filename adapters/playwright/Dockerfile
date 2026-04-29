@@ -30,6 +30,17 @@
 # Playwright runtime, kept current by the Playwright team).
 #
 # Usage: docker buildx bake playwright
+#
+# Multi-arch ready (R6.5.3): linux/amd64 + linux/arm64. The
+# Microsoft Playwright runtime image
+# (mcr.microsoft.com/playwright:v<version>-noble) ships a
+# multi-arch manifest list with both architectures, and the
+# node:<version>-bookworm-slim builder image is also multi-arch.
+# The buf-arch case-statement below uses $(uname -m) and already
+# covers x86_64 + aarch64. Multi-arch is opted into at publish
+# time via per-target bake `--set` platform overrides — see
+# `.github/workflows/publish.yml`. CI's verify-only matrix stays
+# single-arch (`--load` cannot represent a manifest list).
 
 ARG NODE_VERSION=20
 ARG BUF_VERSION=1.55.1

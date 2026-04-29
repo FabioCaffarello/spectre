@@ -1,0 +1,136 @@
+name: Publish images to Docker Hub
+
+# R6.5.3 ships this workflow as `workflow_dispatch` only. Tag-
+# triggered (`v*.*.*`) and main-branch (`:edge`) auto-publish are
+# deferred — see ADR-0018 §5 R6.5.3 update for the rollout plan.
+# The repo has no tags as of R6.5.3 merge; manual dispatch is the
+# right starting posture (no surprises, maintainer verifies the
+# manifest list output before automating).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to publish (defaults to VERSION file content)"
+        required: false
+        type: string
+      targets:
+        description: "Bake targets to publish (default: all five via the `default` group)"
+        required: false
+        type: string
+        default: "default"
+      multi_arch:
+        description: "Build multi-arch where supported (control-plane + playwright today)"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build + push to Docker Hub
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      # QEMU registers binfmt_misc handlers so BuildKit can RUN
+      # arm64 commands on an amd64 runner during multi-arch
+      # builds. control-plane's Go cross-compile produces an arm64
+      # binary from an amd64 builder without RUN-time emulation;
+      # playwright's `pnpm install` and `pnpm run build` execute
+      # under emulation when targeting arm64 (~3-5x slower than
+      # native). v1alpha2 may adopt native arm64 runners
+      # (ubuntu-24.04-arm) if publish runtime becomes painful.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: extractions/setup-just@v3
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          # Use the explicit dispatch input if provided, else the
+          # VERSION file. The maintainer's typical flow is to bump
+          # VERSION + merge + dispatch with no tag input — the
+          # workflow reads VERSION on the freshly-merged main and
+          # publishes that tag. The override path covers exotic
+          # flows (e.g. publishing an `rc1` of an in-flight
+          # version).
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          # Account name; defaults to `fabiocaffarello`. The repo
+          # variable override is for forward-compat if the project
+          # later moves to a different account or organisation.
+          username: ${{ vars.DOCKERHUB_USERNAME || 'fabiocaffarello' }}
+          # Personal Access Token, scoped Read/Write/Delete on the
+          # `fabiocaffarello/spectre-*` repos. Maintainer-side
+          # prerequisite documented in ADR-0018 §5 R6.5.3 update
+          # and `docs/architecture/releases.md`.
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Bake (build + push)
+        env:
+          # Bare `fabiocaffarello` (no `docker.io/` prefix) is
+          # canonical for Docker Hub references — Docker resolves
+          # it to `docker.io/fabiocaffarello/...` automatically.
+          # The image() function in docker-bake.hcl produces
+          # `fabiocaffarello/spectre-<name>:<tag>` from this.
+          REGISTRY: fabiocaffarello
+          TAG: ${{ steps.tag.outputs.tag }}
+          VCS_REF: ${{ github.sha }}
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
+        run: |
+          set -a
+          source build/docker/versions.env
+          set +a
+
+          # Per-target platform overrides. control-plane and
+          # playwright build multi-arch (linux/amd64 + linux/arm64)
+          # when `multi_arch` is true; the other three remain
+          # amd64-only per the deferral list in ADR-0018 §5 R6.5.3
+          # update. As deferred images unblock, add their override
+          # here without touching docker-bake.hcl. Use a bash array
+          # so empty / multi-flag expansion is correct under set -u.
+          # Two `--set` per target (one per platform) renders the
+          # platforms field as a proper list under `bake --print`;
+          # the comma-joined single-value form
+          # (`--set foo.platform=a,b`) is documented but renders
+          # ambiguously, so we keep the explicit form here.
+          platform_overrides=()
+          if [ "${{ inputs.multi_arch }}" = "true" ]; then
+            platform_overrides+=(
+              "--set" "control-plane.platform=linux/amd64"
+              "--set" "control-plane.platform=linux/arm64"
+              "--set" "playwright.platform=linux/amd64"
+              "--set" "playwright.platform=linux/arm64"
+            )
+          fi
+
+          docker buildx bake \
+            --push \
+            "${platform_overrides[@]}" \
+            ${{ inputs.targets }}
+
+      - name: Verify pushed manifests
+        run: |
+          # Inspect each pushed image's manifest list. control-plane
+          # and playwright should report two architectures
+          # (linux/amd64 + linux/arm64); the other three should
+          # report one (linux/amd64). Operator confirmation that
+          # the publish completed and the multi-arch story is
+          # honest. A manifest-list mismatch fails the workflow
+          # — see `docs/architecture/releases.md` for the partial-
+          # success caveat.
+          set -e
+          for img in engine control-plane curl-impersonate playwright seleniumbase; do
+            echo "=== fabiocaffarello/spectre-${img}:${{ steps.tag.outputs.tag }} ==="
+            docker buildx imagetools inspect "fabiocaffarello/spectre-${img}:${{ steps.tag.outputs.tag }}"
+          done

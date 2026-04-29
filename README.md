@@ -123,6 +123,13 @@ just images-smoke     # smoke each (binary exists / canonical missing-env error)
 just images-list      # docker images "spectre-*" with sizes
 ```
 
+Pre-built images for releases ship at
+`fabiocaffarello/spectre-<name>` on Docker Hub; the publish
+flow is manual (`workflow_dispatch`) and ships multi-arch where
+supported — see
+[docs/architecture/releases.md](docs/architecture/releases.md)
+for the operator runbook.
+
 R2.3 retired the standalone `spectre run` / `validate` CLI; the
 `spectre` binary is now the engine's gRPC service entry point
 (ADR-0020 §3 supersedes ADR-0013). Job execution flows from a

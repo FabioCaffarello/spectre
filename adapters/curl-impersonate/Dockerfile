@@ -98,6 +98,16 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 # ---------------------------------------------------------------------------
 # Stage 3 — runtime: upstream curl-impersonate image (Alpine)
 # ---------------------------------------------------------------------------
+# R7.x: multi-arch unblock — the runtime base
+# `lwthiker/curl-impersonate:0.6-chrome` is published amd64-only on
+# Docker Hub as of R6.5.3. See ADR-0018 §5 R6.5.3 update for unblock
+# options: (a) wait for upstream to publish a multi-arch manifest
+# list, (b) fork the upstream image build and publish our own
+# multi-arch tag, (c) cross-compile curl-impersonate from source per
+# https://github.com/lwthiker/curl-impersonate/blob/main/INSTALL.md's
+# ARM64 instructions and skip the upstream base entirely. Option (a)
+# is the lowest-effort path; (b) and (c) trade engineering cost for
+# release-cadence independence from upstream.
 FROM ${CURL_IMPERSONATE_IMAGE} AS runtime
 
 # ca-certificates is required for TLS chain verification on outbound

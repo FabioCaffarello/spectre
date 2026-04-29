@@ -3,8 +3,11 @@
 > Reference for the five Spectre container images, the orchestration
 > that builds them, and the development workflow around them. R6.1
 > introduced the per-service Dockerfile set; R6.2 wires them into
-> the Compose stack; R6.3 revisits the Devcontainer; R7.1 adds
-> release-engineering (multi-arch, registry publishing, signing).
+> the Compose stack; R6.3 revisits the Devcontainer; R6.5.3 ships
+> Docker Hub publishing (`fabiocaffarello/spectre-<name>`) with
+> multi-arch for control-plane + playwright, three deferrals
+> documented; R7.x adds image signing, SBOMs, and tag-triggered
+> publish auto-trigger.
 
 This page is the operator's reference for "how is this project
 containerised". It is a *reference*, not an architectural decision
@@ -201,8 +204,12 @@ docker buildx bake --load engine
 Variables:
 
 - `TAG` (default `dev`) — image tag suffix.
-- `REGISTRY` (default empty = local-only) — registry prefix; R7.1
-  sets this to `ghcr.io/<owner>` for push.
+- `REGISTRY` (default empty = local-only) — registry prefix.
+  R6.5.3's publish workflow sets this to `fabiocaffarello`
+  (Docker Hub flat namespace) for push, producing
+  `fabiocaffarello/spectre-<name>:<tag>`. The variable is
+  registry-agnostic — any non-empty value prefixes the image
+  reference.
 - `RUST_VERSION` / `GO_VERSION` / `NODE_VERSION` / `PYTHON_VERSION` /
   `PROTOC_VERSION` / `BUF_VERSION` / `UV_VERSION` /
   `PLAYWRIGHT_VERSION` / `CURL_IMPERSONATE_IMAGE` — toolchain pins.
@@ -362,18 +369,50 @@ proto-schema change) rebuilds all five images and runs the gate.
   container; the post-create script will source
   `build/docker/versions.env` to install matching toolchains
   natively in the Devcontainer.
-- **R7.1** will add registry publishing (`ghcr.io`), a multi-arch
-  matrix (linux/amd64 + linux/arm64), image signing (`cosign`), and
-  SBOMs (`syft`). The `TAG` and `REGISTRY` bake variables are the
-  hooks; nothing in R6.1 forecloses this.
+- **R6.5.3** added Docker Hub publishing
+  (`fabiocaffarello/spectre-<name>`) via
+  [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml)
+  (`workflow_dispatch` only). Multi-arch ships for control-plane
+  + playwright; engine, seleniumbase, and curl-impersonate are
+  amd64-only with documented unblock criteria — see ADR-0018 §5
+  R6.5.3 update and the Multi-arch status subsection above.
+  Operator-facing reference:
+  [`docs/architecture/releases.md`](releases.md).
+- **R7.x** will add image signing (`cosign`), SBOMs (`syft`),
+  tag-triggered publish auto-trigger (`v*.*.*`), and the `:edge`
+  rolling tag from main-branch pushes.
+
+## Multi-arch status
+
+R6.5.3 ships multi-arch where it is achievable today; the three
+deferrals carry explicit unblock criteria so v1alpha2
+contributors face a small surface per image, not wholesale
+rework.
+
+| Image | Multi-arch ready? | Blocker / unblock |
+|-------|-------------------|-------------------|
+| `spectre-control-plane` | ✅ today | None — pure Go cross-compile (`CGO_ENABLED=0` + `GOARCH=${TARGETARCH}`). |
+| `spectre-playwright` | ✅ today | None — Microsoft Playwright runtime image is multi-arch; Node `pnpm install` runs under QEMU emulation on amd64 runners. |
+| `spectre-engine` | ❌ deferred | `MUSL_TARGET` hardcoded to `x86_64-unknown-linux-musl`; cross-compile setup is amd64-specific. Unblock: select `MUSL_TARGET` per `${TARGETARCH}`, install `gcc-aarch64-linux-gnu` + `g++-aarch64-linux-gnu` cross-toolchain, mirror the libcurl include-path copy step per arch. |
+| `spectre-seleniumbase` | ❌ deferred | Google Chrome stable for Linux is amd64-only as of R6.5.3. Unblock paths: (a) wait for Google to publish a Linux/arm64 stable channel; (b) switch from Chrome to Chromium (multi-arch but changes the project's tested driver surface — ADR-level decision, v1alpha2). |
+| `spectre-curl-impersonate` | ❌ deferred | Runtime base `lwthiker/curl-impersonate:0.6-chrome` is published amd64-only on Docker Hub. Unblock paths: (a) upstream multi-arch publish; (b) fork upstream's image build; (c) cross-compile from source per [`INSTALL.md`](https://github.com/lwthiker/curl-impersonate/blob/main/INSTALL.md). |
+
+The forward-readiness changes in R6.5.3 (`ARG TARGETPLATFORM` /
+`ARG TARGETARCH` declarations in the deferred Dockerfiles, plus
+`R7.x: multi-arch unblock` comment blocks above each blocker)
+narrow future work to the specific blocker per image. ADR-0018
+§5 R6.5.3 update is the authoritative record.
 
 ## Things consciously *not* taken in R6.1
 
 - **Multi-arch** (linux/arm64). QEMU-emulated arm64 in CI
   roughly doubles build time and adds flakiness; native arm64
-  runners need explicit job matrix. R7.1.
-- **Registry publishing.** R7.1 (release engineering).
-- **Image signing + SBOMs.** R7.1.
+  runners need explicit job matrix. ~~R7.1.~~ R6.5.3 ships
+  multi-arch for control-plane + playwright; the other three
+  are deferred — see "Multi-arch status" above.
+- **Registry publishing.** ~~R7.1.~~ R6.5.3 (Docker Hub) — see
+  [`releases.md`](releases.md).
+- **Image signing + SBOMs.** R7.x.
 - **`HEALTHCHECK` instructions in Dockerfiles.** Healthchecks live
   in Compose / Helm because the bound port is deployment config,
   not image config; `gcr.io/distroless/static` doesn't even have
@@ -385,7 +424,9 @@ proto-schema change) rebuilds all five images and runs the gate.
   `engine-image` / `op-image-smoke` jobs alone. R6.5.2 swept them
   into a single matrix `images` job that calls bake — see the
   "CI shape" section above. Layer caching across runs is still a
-  follow-up if CI runtime becomes painful.
+  follow-up if CI runtime becomes painful. R6.5.3 added a
+  `publish-dry-run` job that validates the multi-arch publish
+  path on every relevant change without pushing to Docker Hub.
 - **Image-size optimisation beyond "good enough".** Each image
   could be smaller with aggressive optimisation (Chrome →
   Chromium for SeleniumBase, custom Chromium build for
