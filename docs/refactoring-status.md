@@ -64,7 +64,7 @@ discriminated union is fully behaviourally implemented.
 - [x] Step 15 — `docs/architecture/output-sinks.md` (~250 lines per-sink reference: when to use, wire shape, buffering / delivery / admission, local-dev path, production deployment); `docs/architecture/control-plane.md` table updated (S3 / Webhook from schema-only to shipped)
 - [x] Step 16 — This entry; CHANGELOG `Unreleased` block; refactor-audit R5.1 row + Phase R5 CLOSED note; README quick-start mention of MinIO
 - [x] Step 17 — Final verification: engine clippy + cargo fmt --check + 82 unit tests + 6 webhook integration tests + 3 S3 integration tests (against live MinIO) all green; control-plane lint + `make test` green at 84.7% controller coverage; conformance ruff + mypy + 50 passed / 14 skipped on three consecutive runs (skips are curl-impersonate when `curl_chrome116` is not on PATH locally — CI runs all three). 13 / 12 / 6 capability invariant holds byte-for-byte. Compose stack manual: `docker compose ps` shows postgres / redis / kafka / kafka-console / minio all healthy + minio-bootstrap exited zero with "bucket spectre-rows ready"; `just minio-ls` shows three uploaded objects from the engine integration suite (`it/<uuid>/rows.jsonl`, `it/<uuid>/empty.jsonl`, `paths/<uuid>/out.jsonl`). MinIO console at http://localhost:9001 returns HTTP 200; Redpanda Console at http://localhost:8080 returns HTTP 200.
-- [ ] Step 18 — Open the PR
+- [x] Step 18 — Open the PR (#64)
 
 ## Surfaced decisions
 
