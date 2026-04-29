@@ -1,13 +1,22 @@
 // Spectre Devcontainer.
 //
 // VS Code "Reopen in Container" produces a Linux environment with
-// Rust, Go, Node, Python, Chrome, ChromeDriver, and curl-impersonate
-// already installed. First-time build is ~5-10 minutes; subsequent
-// reopens are instant. ADR-0018 records the decisions; the user-facing
-// guide is docs/architecture/development-environment.md.
+// Rust, Go, Node, Python, Chrome, ChromeDriver, curl-impersonate,
+// kind, and kubectl already installed. R6.3 (ADR-0025 §6 R6.3
+// update + ADR-0018 §3a) added the docker-in-docker feature so the
+// devcontainer also hosts the Compose stack and a local kind cluster
+// inside its own Docker daemon — the unified `docker compose up`
+// shape master strategy §2.5 commits to. First-time build is ~10–15
+// minutes (DinD feature install + multi-language toolchains +
+// Playwright Chromium download + kind cluster creation); subsequent
+// reopens are instant.
 //
-// GitHub Codespaces consumes the same config — opening the repo in a
-// Codespace produces an equivalent environment.
+// GitHub Codespaces consumes the same config — the `docker-in-docker`
+// feature works in Codespaces (the host VM supports DinD).
+//
+// User-facing guide: docs/architecture/development-environment.md.
+// Architectural records: ADR-0018 (devcontainer + engine image),
+// ADR-0025 §6 R6.3 update (operator + kind unified shape).
 {
   "name": "Spectre",
   "build": {
@@ -15,11 +24,48 @@
     "context": "."
   },
   "remoteUser": "vscode",
+  "features": {
+    // Docker-in-Docker via the official VS Code feature. `moby: true`
+    // selects the Moby (OSS upstream of Docker CE) variant;
+    // `dockerDashComposeVersion: "v2"` ensures `docker compose` (v2
+    // plugin) is available. Master plan ADR-0020 §85 commitment.
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
-  // No services to forward at PR13. The engine and adapters are
-  // subprocess + UDS only; PR15's Compose stack will introduce
-  // forwarded ports.
-  "forwardPorts": [],
+  // R6.3 forwards every application + stateful service port from the
+  // unified Compose stack so a contributor on the host (browser /
+  // grpcurl / kubectl) reaches them through VS Code's port-forwarding
+  // tunnel. The operator's probe port 8081 is reserved (ADR-0025 §6
+  // R6.3 update) but not mapped — the operator surfaces work via
+  // `kubectl get scrapejob` and `docker compose logs control-plane`.
+  "forwardPorts": [
+    8080,
+    8090,
+    8091,
+    8092,
+    8093,
+    5432,
+    6379,
+    9000,
+    9001,
+    9092
+  ],
+  "portsAttributes": {
+    "8080": { "label": "kafka-console (UI)" },
+    "8090": { "label": "engine (gRPC)" },
+    "8091": { "label": "playwright-adapter (gRPC)" },
+    "8092": { "label": "seleniumbase-adapter (gRPC)" },
+    "8093": { "label": "curl-impersonate-adapter (gRPC)" },
+    "5432": { "label": "postgres" },
+    "6379": { "label": "redis" },
+    "9000": { "label": "minio (S3 API)" },
+    "9001": { "label": "minio (UI)" },
+    "9092": { "label": "kafka (broker)" }
+  },
   "customizations": {
     "vscode": {
       "extensions": [
@@ -33,7 +79,8 @@
         "esbenp.prettier-vscode",
         "redhat.vscode-yaml",
         "yzhang.markdown-all-in-one",
-        "bufbuild.vscode-buf"
+        "bufbuild.vscode-buf",
+        "ms-azuretools.vscode-docker"
       ],
       "settings": {
         "editor.formatOnSave": true,
