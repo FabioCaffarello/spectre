@@ -29,7 +29,7 @@ Webhook variants, CEL-validated).
 | PostgreSQL job state               | shipped           | R4.2       |
 | Per-service Dockerfiles            | shipped           | R6.1       |
 | Compose stack (app services)       | shipped           | R6.2       |
-| Operator in Compose + DinD/kind    | not started       | R6.3       |
+| Operator in Compose + DinD/kind    | shipped           | R6.3       |
 | Helm chart                         | not started       | R7.1       |
 | `ScrapeFleet` / `ScrapeSchedule`   | not started       | post-Phase3|
 
@@ -80,19 +80,20 @@ the engine and adapters run as separate services. Per-service
 Dockerfiles for them shipped in R6.1 (orchestrated via
 `docker buildx bake`). R6.2 wired the application services
 (engine + three adapters) into the Compose stack
-(`docker-compose.yml`, ADR-0025); the operator stays a host
-process for R6.2 (ADR-0025 §6 deferral) and joins the unified
-shape in R6.3 (Devcontainer with Docker-in-Docker).
-Production packaging via Helm chart is R7.1 (ADR-0026).
+(`docker-compose.yml`, ADR-0025). R6.3 brought the operator into
+that same Compose stack alongside a local kind cluster running in
+the devcontainer's Docker-in-Docker daemon (ADR-0025 §6 R6.3
+update + ADR-0018 §3a). Production packaging via Helm chart is
+R7.1 (ADR-0026).
 
 ### Deployment shapes
 
-| Shape                         | Operator location | Engine location                            | Status              |
-|-------------------------------|-------------------|--------------------------------------------|---------------------|
-| Pre-R6.2 hybrid               | host              | host (`just engine-run`)                   | retired in R6.2     |
-| **R6.2** (current)            | host (`just op-run`) | Compose container, host port 8090       | **shipped**         |
-| R6.3 unified Compose          | Compose container | Compose container                         | not started         |
-| R7.1+ Kubernetes (Helm)       | Pod               | Pod                                       | not started         |
+| Shape                         | Operator location  | Engine location              | Kubernetes API     | Status              |
+|-------------------------------|--------------------|------------------------------|--------------------|---------------------|
+| Pre-R6.2 hybrid               | host               | host (`just engine-run`)     | external kind      | retired in R6.2     |
+| R6.2                          | host (`just op-run`)| Compose container            | external kind      | retired in R6.3     |
+| **R6.3** (current)            | Compose container  | Compose container            | in-DinD kind       | **shipped**         |
+| R7.1+ Kubernetes (Helm)       | Pod                | Pod                          | production cluster | not started         |
 
 ## Engine endpoint resolution
 
@@ -322,53 +323,59 @@ over an in-process bufconn gRPC server), and prints coverage.
 First run takes ~2 minutes (binary downloads); cached runs
 complete in under 30 seconds.
 
-### Host operator against a Compose-running engine
+### Operator-as-Compose-service against a kind API server
 
-R6.2 wires the engine and the three adapters into the Compose
-stack but keeps the operator a host process (ADR-0025 §6
-deferral). To exercise the operator end-to-end against a
-`kubectl apply`-driven `ScrapeJob`:
+R6.3 collapses the R6.2 host/Compose split into a single Compose
+stack with the operator as the eleventh service (ADR-0025 §6
+R6.3 update). The kind cluster lives in the devcontainer's
+Docker-in-Docker daemon; `just kind-up` is the lifecycle entry
+point. The standard end-to-end flow from inside the devcontainer:
 
 ```bash
-# Bring up the Compose stack — engine on 127.0.0.1:8090,
-# adapters on 8091/8092/8093, stateful deps on their canonical
-# ports.
-just images
-just compose-up
+# First-time setup is automatic via .devcontainer/post-create.sh
+# (kind-up + crds-install). For an explicit walkthrough:
+just images                # build the five service images via bake
+just kind-up               # idempotent — creates 'spectre-dev' cluster
+just crds-install          # apply the v1alpha2 ScrapeJob CRD
+just compose-up            # eleven services, including operator
 
-# Ensure a kind cluster exists; install the v1alpha2 CRD.
-kind get clusters || kind create cluster
-just op-install-crds
-
-# Run the operator from the host. SPECTRE_ENGINE_ENDPOINT
-# defaults to 127.0.0.1:8090 (the Compose host-port mapping for
-# the engine container); this becomes the EngineRef-nil fallback.
-just op-run
-
-# In another terminal, apply a sample and watch.
+# Apply a sample ScrapeJob.
 kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
-kubectl get scrapejob -w
+kubectl get scrapejob -w   # Pending → Running → Completed
+
+# Inspect operator activity.
+docker compose logs -f control-plane | grep -E 'reconciling|completed|failed'
+
+# Confirm Postgres has the row.
+docker exec spectre-postgres psql -U spectre -d spectre \
+  -c 'SELECT id, status, output_sink_kind, rows_extracted FROM jobs ORDER BY created_at DESC LIMIT 1'
 ```
 
-Phase transitions: `Pending → Running → Completed`. JSONL rows
-stream from the engine to the operator's stdout (the foreground
-terminal running `just op-run`) per ADR-0019 §6. The `_endpoint`
-sample uses the `EngineRef.Endpoint` form (`127.0.0.1:8090`) so
-the operator dials the host-mapped engine port without needing a
-Kubernetes Service.
+Phase transitions: `Pending → Running → Completed`. The operator
+container's stdout (visible via `docker compose logs
+control-plane`) replaces the R6.2 foreground terminal. JSONL rows
+stream from the engine to the operator's stdout per
+ADR-0019 §6.
 
-R6.3 (Devcontainer with Docker-in-Docker) replaces this
-host/Compose split with a unified Compose-in-DinD shape: the
-operator container, the kind API server, and the Compose stack
-all live in the same Docker daemon, eliminating the cross-network
-bridging the R6.2 `host.docker.internal`-shaped flow leans on.
+The `_endpoint` sample dials the Compose-internal `engine:8090`
+hostname directly. The same address matches the operator's
+`SPECTRE_ENGINE_ENDPOINT` fallback, so a sample without an
+`engineRef` field would resolve identically — the explicit
+endpoint makes the demo's intent visible.
+`spectre_v1alpha2_scrapejob_hello-hackernews.yaml` (Service form)
+targets R7.1's in-cluster Helm shape and does not work in the
+post-R6.3 dev flow.
 
 ### Tearing down
 
 ```bash
-just op-uninstall-crds          # delete CRD + any in-flight ScrapeJobs
-# Stop the engine and adapter terminals with Ctrl-C.
+just compose-down               # stop services, preserve volumes
+just kind-down                  # delete kind cluster + kubeconfig
+just crds-uninstall             # delete CRD before kind-down (optional)
 ```
+
+`compose-down` does NOT touch the kind cluster — the lifecycles
+are independent (ADR-0025 §6 R6.3 update / phase prompt §4.5).
 
 ## Architecture decisions
 

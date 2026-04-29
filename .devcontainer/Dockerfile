@@ -2,24 +2,37 @@
 #
 # Base: Microsoft-curated Ubuntu 22.04 (LTS through April 2027) with a
 # pre-configured non-root `vscode` user that has passwordless sudo.
-# All four language toolchains plus the browser stack live in this
-# single image so the conformance suite (which needs Python + Node +
-# Chrome + Go + curl-impersonate together) works out of the box.
-# ADR-0018 records the decisions.
+# All four language toolchains plus the browser stack plus the kind
+# + kubectl Kubernetes tooling live in this single image so the
+# conformance suite (Python + Node + Chrome + Go + curl-impersonate)
+# and the post-R6.3 Compose-in-DinD flow (kind cluster + operator
+# container + Compose application services) both work out of the box.
+# ADR-0018 records the original decisions; ADR-0018 §3a R6.3
+# evolution + ADR-0025 §6 R6.3 update record the addition of
+# Docker-in-Docker (via `.devcontainer/devcontainer.json`'s features
+# block) and the kind/kubectl pins below.
 #
-# Pinned versions for reproducibility:
-#   Go          1.25.3 (matches the kubebuilder-scaffolded
+# Pinned versions mirror build/docker/versions.env so the
+# devcontainer's installed toolchains track the bake-driven image
+# pins. CI runs sets the same pins as bake variables.
+#
+#   Go          1.25.3 (matches kubebuilder-scaffolded
 #                       core/control-plane go.mod; backwards-compatible
 #                       with adapters that pin go 1.24)
 #   Node        20 LTS (Active LTS through April 2026)
 #   Python      3.12   (apt deadsnakes PPA)
 #   protoc      27.2   (matches engine Dockerfile)
+#   buf         1.55.1 (matches versions.env)
 #   curl-impersonate 0.6.1 (matches CI; ADR-0016 §1)
-#   kubebuilder 4.13.1 (PR14: scaffolding for `kubebuilder create api`
-#                       on Phase 3 follow-up CRDs; ADR-0019 §1)
-#   kubectl     1.31.0 (PR14: apply ScrapeJob CRs against a local
-#                       cluster; the operator's `make install/run`
-#                       targets call kubectl directly)
+#   kubebuilder 4.13.1 (CRD scaffolding via `kubebuilder create api`)
+#   kubectl     1.31.0 (apply CRs against the local kind cluster from
+#                       the devcontainer terminal — kind creates
+#                       `~/.kube/config` automatically with the host-
+#                       port URL on first cluster creation)
+#   kind        0.24.0 (R6.3 — local Kubernetes-in-Docker; lifecycle
+#                       managed by `just kind-up`/`kind-down`/
+#                       `kind-status`; first cluster creation runs
+#                       inside the post-create script)
 #
 # Chrome / ChromeDriver track the apt stable channel (auto-update on
 # image rebuild). PR14+ may pin them if conformance flakes.
@@ -29,12 +42,18 @@ ARG GO_VERSION=1.25.3
 ARG NODE_MAJOR=20
 ARG PROTOC_VERSION=27.2
 ARG CURL_IMPERSONATE_VERSION=0.6.1
-ARG BUF_VERSION=1.45.0
+ARG BUF_VERSION=1.55.1
 ARG JUST_VERSION=1.36.0
 ARG ACTIONLINT_VERSION=1.7.4
 ARG GITLEAKS_VERSION=8.21.2
 ARG KUBEBUILDER_VERSION=4.13.1
 ARG KUBECTL_VERSION=1.31.0
+# Kubernetes tooling — added in R6.3 for the operator + kind
+# workflow. Pins live alongside the existing Go / Node / Python /
+# protoc pins; bumping is a one-line edit. Both binaries also appear
+# in docs/architecture/development-environment.md "Kubernetes-in-
+# Docker (kind)" subsection.
+ARG KIND_VERSION=0.24.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -201,12 +220,25 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# Kubernetes operator tooling (PR14, ADR-0019). kubebuilder scaffolds
-# CRDs and controllers; kubectl drives `make install/run` against the
-# developer's current kubectl context. setup-envtest, controller-gen,
-# kustomize, and golangci-lint are vendored on demand by the
-# kubebuilder Makefile into core/control-plane/bin/, so the image
-# itself only needs the two top-level binaries.
+# Kubernetes tooling (kubebuilder + kubectl + kind).
+#
+# kubebuilder scaffolds CRDs and controllers (`kubebuilder create api`
+# on Phase-3 follow-up CRDs; ADR-0019 §1). setup-envtest,
+# controller-gen, kustomize, and golangci-lint are vendored on demand
+# by the kubebuilder Makefile into core/control-plane/bin/, so the
+# image itself only needs the top-level binaries.
+#
+# kubectl drives applies / gets / logs against the local kind cluster
+# from the devcontainer terminal. Kind writes `~/.kube/config` with
+# the host-port URL on first cluster creation; the operator container
+# uses a separate kubeconfig at `build/kind/kubeconfig` written by
+# `just kind-up --internal` with the in-network URL.
+#
+# kind (R6.3 — ADR-0025 §6 R6.3 update) provisions a local
+# Kubernetes cluster inside the devcontainer's Docker-in-Docker
+# daemon. The post-create script runs `just kind-up` once on first
+# devcontainer build; the cluster lives in the DinD daemon and is
+# torn down only via `just kind-down`.
 # ---------------------------------------------------------------------------
 RUN KB_ARCH=$(case "$(uname -m)" in \
         x86_64) echo "amd64" ;; \
@@ -224,6 +256,16 @@ RUN KC_ARCH=$(case "$(uname -m)" in \
  && curl -fsSL -o /usr/local/bin/kubectl \
       "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${KC_ARCH}/kubectl" \
  && chmod +x /usr/local/bin/kubectl
+RUN KIND_ARCH=$(case "$(uname -m)" in \
+        x86_64) echo "amd64" ;; \
+        aarch64) echo "arm64" ;; \
+        *) echo "unsupported"; exit 1 ;; \
+    esac) \
+ && curl -fsSL -o /tmp/kind \
+      "https://kind.sigs.k8s.io/dl/v${KIND_VERSION}/kind-linux-${KIND_ARCH}" \
+ && install -m 0755 /tmp/kind /usr/local/bin/kind \
+ && rm /tmp/kind \
+ && kind --version
 
 # ---------------------------------------------------------------------------
 # Per-user PATH propagation. The vscode user inherits the system tools

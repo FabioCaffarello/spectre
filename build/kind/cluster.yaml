@@ -1,0 +1,19 @@
+# kind cluster configuration for the Spectre dev environment
+# (R6.3 — ADR-0025 §6 resolution).
+#
+# Single-node, bare. The operator container (Compose service
+# `control-plane`) joins the kind node's Docker network and
+# dials kind's API at `kind-control-plane:6443` — the default
+# node hostname kind exposes on the Docker daemon's bridge. No
+# `extraPortMappings` are required because `kubectl` from the
+# devcontainer reaches kind through the in-DinD Docker network
+# without host port forwarding.
+#
+# Production parity is not the goal here — kind is a local
+# convenience. R7.1's Helm chart is what the production smoke
+# (R7.2) targets.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: spectre-dev
+nodes:
+  - role: control-plane

@@ -1,5 +1,5 @@
 ---
-status: accepted (partially superseded; see status notes in §4 and §5)
+status: accepted (partially superseded; see status notes in §3, §4 and §5)
 date: 2026-04-26
 deciders: [Fabio Caffarello]
 ---
@@ -91,6 +91,75 @@ uses `tonic` over `rustls` (no `openssl-sys`), so the static
 build is well-supported. Rejected: `alpine:3` (larger and bundles
 busybox unnecessarily); `scratch` (same final size but loses
 distroless's debug-image variant for triage).
+
+### 3a. R6.3 evolution: Docker-in-Docker for the devcontainer
+
+> **Status — added in R6.3 (2026-04-29).** Decision §1 chose a
+> single VS Code Devcontainer; decision §2 chose Ubuntu 22.04 LTS
+> as the base. Both stand. R6.3 amends the *content* of the
+> devcontainer rather than the choice itself: the
+> `docker-in-docker` feature
+> (`ghcr.io/devcontainers/features/docker-in-docker:2`, Moby
+> variant, `dockerDashComposeVersion: "v2"`) is added via
+> `.devcontainer/devcontainer.json`, and `kind` (0.24.0) plus
+> `kubectl` (1.31.0 — already pinned in PR13) are installed in the
+> Dockerfile. ADR-0025 §6 R6.3 update is the authoritative
+> reference for the post-R6.3 shape; this status note is the
+> audit trail.
+
+PR13's devcontainer was single-Docker-daemon — the host's daemon
+was invisible from inside the devcontainer; the contributor's
+local-dev path mixed host-side `docker compose up` with native
+binaries running inside the devcontainer. R6.2 brought the
+application services into the Compose stack; R6.3 (ADR-0025 §6
+R6.3 update) closes the loop by placing both the Compose stack
+and a `kind` cluster inside the devcontainer's own Docker
+daemon (DinD). The `docker` CLI inside the devcontainer talks to
+that inner daemon; tearing down the devcontainer destroys the
+DinD volumes, the Compose stack, and the kind cluster — clean
+slate.
+
+Master plan ADR-0020 §85–91 commits to DinD over the
+socket-mount pattern (`docker-outside-of-docker`):
+
+> **The Devcontainer ships with Docker-in-Docker enabled.** The
+> contribution barrier rises slightly; the architectural coherence
+> of "what runs in development equals what runs in production" is
+> the offsetting benefit.
+
+DinD is the architectural risk in this evolution (cgroup
+permissions, privileged-mode requirements, Docker Desktop vs
+native-Linux differences). The official feature handles those
+uniformly across hosts; the failure modes are documented in
+[`docs/architecture/development-environment.md`](../architecture/development-environment.md)
+under the "DinD model" subsection.
+
+Operational characteristics:
+
+- **First-time devcontainer build** rises from ~5–10 minutes
+  (PR13) to ~10–15 minutes — the DinD feature install adds ~30s,
+  the kind binary download adds ~10s, the post-create script's
+  `kind-up` step adds ~30s on first run. Subsequent reopens
+  remain instant.
+- **kind kubeconfig has two server URLs.** `kind get kubeconfig
+  --internal` writes `https://spectre-dev-control-plane:6443`
+  (in-network URL, used by the operator container's mounted
+  kubeconfig at `build/kind/kubeconfig`); kind also writes
+  `~/.kube/config` automatically with the host-port URL for
+  `kubectl` from the devcontainer terminal. The two-config dance
+  is standard kind practice and not project-specific.
+- **`kind` Docker network is shared.** `kind create cluster`
+  creates a Docker network named `kind`; `docker-compose.yml`
+  attaches the operator service to it via `external: true`. If
+  the network is missing (`compose-up` before `kind-up`),
+  Compose errors with "network kind not found" — the designed
+  behaviour.
+
+R6.3 also harmonises devcontainer toolchain ARGs with
+`build/docker/versions.env` (BUF 1.45.0 → 1.55.1; Go / Node /
+Python / protoc were already aligned). The single source of
+truth lives in `versions.env`; the Dockerfile's ARG values
+mirror it for clarity.
 
 ### 4. Per-adapter Dockerfiles deferred to PR14
 

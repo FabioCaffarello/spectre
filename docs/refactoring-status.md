@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-29
-Current phase: **R6.2 — ADR-0025 Compose stack (application services + profile topology + 8090–8093 port migration) (complete on merge of this PR, 2026-04-29)** — Phase R6 still open
-Next PR: **R6.3 — Devcontainer with Docker-in-Docker (operator + kind cluster join the unified Compose stack)**
+Current phase: **R6.3 — Devcontainer with Docker-in-Docker (operator + kind into the unified Compose stack) (complete on merge of this PR, 2026-04-29)** — **Phase R6 CLOSED**
+Next PR: **R7.1 — ADR-0026 Helm chart**
 
 ## Phases
 
@@ -31,47 +31,62 @@ for the per-phase ADR deltas.
 - [x] **R4.4 — Kafka producer (engine → topic)** *(merged 2026-04-28, PR #63 — closes Phase R4)*
 - [x] **R5.1 — ADR-0024 output sinks (S3 + webhook)** *(merged 2026-04-28, PR #64 — closes Phase R5)*
 - [x] **R6.1 — Per-service Dockerfiles (engine, control plane, three adapters) + `docker-bake.hcl` orchestration** *(merged 2026-04-29, PR #65 — opened Phase R6)*
-- [x] **R6.2 — ADR-0025 Compose stack (application services + profile topology + 8090–8093 port migration)** *(complete on merge of this PR, 2026-04-29)*
-- [ ] **R6.3 — Devcontainer with Docker-in-Docker (operator + kind into the unified Compose stack)** *(next)*
-- [ ] R7.1 — ADR-0026 Helm chart
+- [x] **R6.2 — ADR-0025 Compose stack (application services + profile topology + 8090–8093 port migration)** *(merged 2026-04-29, PR #66)*
+- [x] **R6.3 — Devcontainer with Docker-in-Docker (operator + kind into the unified Compose stack)** *(complete on merge of this PR, 2026-04-29 — closes Phase R6)*
+- [ ] **R7.1 — ADR-0026 Helm chart** *(next — opens Phase R7)*
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R6.2)
+## Current PR checklist (R6.3)
 
-The R6.2 PR's per-step checklist mirrors Section 7 of the phase
-prompt. R6.2 wires the five service images R6.1 produced into a
-unified `docker-compose.yml` with profile-based topology, enacts
-the ADR-0021 §4 port plan (8090–8093), retires the native-binary
-adapter run recipes, and introduces ADR-0025. **Phase R6 still
-open** — R6.3 brings the operator + a kind cluster into the
-unified Compose stack via Docker-in-Docker.
+The R6.3 PR's per-step checklist mirrors Section 7 of the phase
+prompt. R6.3 places the control-plane operator inside the
+unified Compose stack alongside a `kind` cluster running in the
+devcontainer's Docker-in-Docker daemon. **Phase R6 closes with
+this PR's merge.**
 
-- [x] Step 1 — Inventory: R6.1 merge confirmed; ADR-0021 §4 + §6, ADR-0023 §6 + §9, ADR-0024 §3 re-read; existing `docker-compose.yml` (six stateful services) and `docker-bake.hcl` (five build targets) re-read; engine binary `SPECTRE_ENGINE_PORT` env var name confirmed (the prompt's `SPECTRE_ENGINE_GRPC_PORT` sketch deviates from the binary; R6.2 uses what the binary reads); adapter Dockerfile bases verified for healthcheck-tool availability (Playwright Ubuntu Noble has bash; SeleniumBase python-slim has python but not nc; curl-impersonate Alpine has busybox nc; engine distroless static has nothing); six Section 4 decisions settled
-- [x] Step 2 — ADR-0025 (~470 lines: §1 context · §2 decision summary · §3 service topology + healthcheck strategy · §4 profiles · §5 conformance subprocess-harness rationale · §6 operator deferral to R6.3 + precise R6.3 problem statement · §7 port migration · §8 image-source policy · §9 R6.3 deferrals · §10 out of scope · §11 references); ADR-0021 §4 R6.2 implementation note added; ADR-0023 §9 cross-reference updated to point at ADR-0025; ADR-0019 §3 R6.2 forward-link to ADR-0025 §6; `docs/adr/README.md` indexed
-- [x] Step 3 — `docker-compose.yml` extended: four application services (engine, playwright-adapter, seleniumbase-adapter, curl-impersonate-adapter) added with `image:` + `pull_policy: never` + asymmetric per-base healthchecks + `depends_on` on stateful deps; SeleniumBase service sets `shm_size: 1gb`; existing six stateful services tagged with profile membership (`infra`, `core`, `adapters`, `app`, `full`); kafka-console deliberately excluded from `app`. Validated via `docker compose --profile <name> config --services` for each profile
-- [x] Step 4 — Port migration sweep 9090–9093 → 8090–8093 across `core/engine/src/bin/spectre.rs` (DEFAULT_PORT + module docs), `core/engine/src/server.rs` (module docs), `core/engine/src/registry.rs` (PLAYWRIGHT/SELENIUMBASE/CURL_IMPERSONATE_DEFAULT_ENDPOINT + module docs + tests), `core/engine/src/client.rs` (test fixtures), `core/control-plane/cmd/main.go` (defaultEngineEndpoint + flag help text), `core/control-plane/internal/runner/engine_client.go` (doc comment), `core/control-plane/internal/runner/engine_client_test.go` (dial-failure test endpoints), `core/control-plane/internal/controller/scrapejob_controller.go` (defaultEnginePort + comment), `core/control-plane/internal/controller/scrapejob_controller_test.go` (10 occurrences across resolveEngineEndpoint tests), `core/control-plane/internal/db/db_test.go` (Service-FQDN endpoint), `core/control-plane/api/v1alpha2/scrapejob_types.go` (kubebuilder default), `core/control-plane/config/crd/bases/spectre.io_scrapejobs.yaml` (regenerated CRD's port default), `core/control-plane/README.md` (operator port doc), eight `core/control-plane/config/samples/spectre_v1alpha2_scrapejob_*.yaml` manifests, `adapters/playwright/Dockerfile` + `adapters/seleniumbase/Dockerfile` + `adapters/curl-impersonate/Dockerfile` (EXPOSE + ENV defaults), three adapter READMEs (rewrote pw-run/sb-run/curl-imp-run sections to point at compose-up), `adapters/seleniumbase/src/spectre_seleniumbase/adapter.py` (module docstring), three adapter test fixtures (Playwright TS, SeleniumBase Python, curl-impersonate Go), `tools/conformance/src/spectre_conformance/demo_navigate.py` + `demo_full_cycle.py` (CLI help text), three example READMEs (hello-hackernews, seleniumbase-extract, curl-impersonate-extract — quick-start blocks rewritten for compose-up), `.env.example` (six default values + comment block referencing ADR-0021 §4 / ADR-0025 §7). Kafka 9092 broker + Kafka container internal listener ports 9092/9093/9094 untouched
-- [x] Step 5 — justfile recipe surgery: deleted `pw-run` / `sb-run` / `curl-imp-run` (no fallback); renamed `engine-run` → `engine-run-native` (debugging escape hatch with comment block pointing readers at compose-up); renamed `op-build-image` → `op-image` (parallel to engine-image / pw-image / sb-image / curl-imp-image); `compose-up` body becomes `docker compose --profile full up -d`; `compose-reset` chains `--profile full`; `compose-logs` accepts an optional SERVICE argument; new `compose-up-app` / `compose-up-core` / `compose-up-adapters` / `compose-up-infra` recipes; new `compose-restart SERVICE` and `compose-rebuild SERVICE` recipes (the latter chains `bake SERVICE && docker compose up -d --no-deps SERVICE` with bake-target-name → Compose-service-name mapping for adapters). `engine-grpc-test` default port flips 9090 → 8090. `just --list` confirms recipe set
-- [x] Step 6 — `docs/architecture/development-environment.md` rewritten (~150 lines: quick start, profiles, what runs where, port reference, conformance-suite flow, operator dev flow, devcontainer, native-binary debugging, related ADRs); `docs/architecture/control-plane.md` updated (Phase 3 status table flips Compose-stack row to "shipped"; engine port 0.0.0.0:8090; engine endpoint resolution defaults; operator-image deployment-shapes table added; "Host operator against a Compose-running engine" section replaces the multi-terminal native-binary flow); `docs/architecture/engine.md` adapter discovery defaults flipped 8091/8092/8093; `docs/architecture/redis.md` and `postgres.md` adapter run examples updated for compose-up
-- [x] Step 7 — `docs/refactor-audit.md` R6.2 row appended; `docs/refactoring-status.md` R6.2 → complete on merge, R6.3 → next; CHANGELOG Unreleased entries (Added: Compose stack + ADR-0025; Changed: port migration + recipe surgery); README quick-start rewritten for `just images && just compose-up`
-- [ ] Step 8 — Final verification: build images via `just images`; bring up `--profile full`; eleven services healthy; submit ScrapeJob via grpcurl against 127.0.0.1:8090; profile selectivity (infra / core / adapters / full); operator dev flow via `just op-run` against external kind; conformance suite passes unchanged
-- [ ] Step 9 — Open the PR
+- [x] Step 1 — Inventory: R6.2 merge confirmed; ADR-0020 §85–91 (DinD commitment), ADR-0025 §6 (problem statement) + §9 (deferrals) re-read; `docker-compose.yml` (ten services + no top-level networks block) confirmed; `.devcontainer/{devcontainer.json,Dockerfile,post-create.sh}` read in full; `core/control-plane/cmd/main.go` flag block confirmed (`--engine-endpoint`, `--health-probe-bind-address`, `--metrics-bind-address`, `--leader-elect`); `core/control-plane/Makefile` `install` / `uninstall` targets confirmed (apply CRDs from `config/crd` via kustomize+kubectl)
+- [x] Step 2 — `build/kind/cluster.yaml` (single-node `spectre-dev`) + `build/kind/.gitignore` (kubeconfig) created; `.gitignore` carve-out negation extended (`!/build/kind/`, `!/build/kind/**`)
+- [x] Step 3 — justfile surgery: `op-run` deleted entirely; `op-install-crds` / `op-uninstall-crds` renamed `crds-install` / `crds-uninstall` and repointed at `build/kind/kubeconfig` via `KUBECONFIG=$(realpath ../../build/kind/kubeconfig) make install/uninstall`; old names kept as one-cycle deprecation aliases (echo + forward); new `kind-up` (idempotent; writes `--internal` kubeconfig with server URL `https://spectre-dev-control-plane:6443`), `kind-down`, `kind-status` recipes; `compose-up` and `compose-reset` comment blocks updated for the post-R6.3 eleven-service topology + kind/Compose lifecycle independence
+- [x] Step 4 — `docker-compose.yml` extended: `control-plane` service (image `spectre-control-plane:dev` + `pull_policy: never`; depends on engine + postgres; joins `default` and external `kind` networks; reads-only mounts `build/kind/kubeconfig` at `/home/nonroot/.kube/config`; passes `--engine-endpoint=engine:8090 --health-probe-bind-address=:8081 --metrics-bind-address=0 --leader-elect=false`; profiles `app`, `full`); top-level `networks:` block declares `kind` as `external: true name: kind`. `_endpoint.yaml` sample updated `127.0.0.1:8090` → `engine:8090` for the post-R6.3 Compose-internal flow; `_hello-hackernews.yaml` comment corrected (Helm provisions the in-cluster Service; Compose dev uses Endpoint sample). Validated `docker compose --profile <name> config --services` for each profile (infra/core/adapters/app/full); local end-to-end smoke against host Docker daemon: `just kind-up && just compose-up` brings up eleven services; `kubectl apply -f` of an Endpoint-form ScrapeJob (curl-impersonate driver to avoid R6.1 Playwright runtime image version skew) reconciles Pending → Running → Completed in seconds; row visible in Postgres `jobs` table; operator container confirmed on both `kind` and `baas_default` networks via `docker network inspect`
+- [x] Step 5 — `.devcontainer/devcontainer.json` rewritten with the official `docker-in-docker:2` feature (Moby + Compose v2), eleven `forwardPorts`, `portsAttributes` labels, `ms-azuretools.vscode-docker` extension, R6.3-aware comment block; `.devcontainer/Dockerfile` adds `KIND_VERSION=0.24.0` ARG + kind binary install block (after kubebuilder), bumps BUF_VERSION 1.45.0 → 1.55.1 (harmonised with `build/docker/versions.env`), refreshes the comment block to cite ADR-0018 §3a + ADR-0025 §6 R6.3 update; `.devcontainer/post-create.sh` expanded from 5 to 8 numbered steps (kind-up + crds-install precede sanity checks; kind/kubectl version checks added)
+- [x] Step 7 — ADR amendments: ADR-0018 frontmatter status flips to "partially superseded; see status notes in §3, §4 and §5", new §3a "R6.3 evolution: Docker-in-Docker for the devcontainer" subsection appended (citing ADR-0020 §85–91 + ADR-0025 §6 R6.3 update; documenting first-build cost rise, two-kubeconfig dance, shared kind Docker network, BUF version harmonisation); ADR-0025 §6 gains "R6.3 update — resolution" subsection (recording dual-network join, kubeconfig mount path, `op-run` deletion, alias-then-remove plan for `op-install-crds` / `op-uninstall-crds`, four R6.3 decisions, end-to-end criteria); ADR-0025 §9 marked as "resolved in R6.3" with each deferral closed; `docs/adr/README.md` index status fields updated for both records
+- [x] Step 8 — `docs/architecture/development-environment.md` rewritten for post-R6.3 unified flow (Reopen-in-Container as the supported path; "What runs where" table gains operator row; Operator dev flow rewritten Compose-side only; new "Kubernetes-in-Docker (kind)" subsection — recipe table + two-kubeconfig dance; new "DinD model" subsection — nesting / failure modes / network-not-found troubleshooting; toolchain prerequisites slimmed); `docs/architecture/control-plane.md` Phase 3 status table flips R6.3 row to shipped, deployment-shapes table widened to four columns with R6.3 marked current, "Host operator against a Compose-running engine" replaced by "Operator-as-Compose-service against a kind API server"; README quick-start updated to Reopen-in-Container + `just images && just compose-up`; host-process operator commands removed
+- [x] Step 9 — `docs/refactor-audit.md` R6.3 row appended (this PR); `docs/refactoring-status.md` R6.3 → complete on merge, R7.1 → next, **Phase R6 marked CLOSED**; CHANGELOG Unreleased entry recording the DinD/kind/operator-in-Compose changes; ADR-0025 §6 + §9 + ADR-0018 §3a cross-references intact
+- [ ] Step 10 — Final verification (devcontainer rebuild + end-to-end smoke; conformance regression unchanged)
+- [ ] Step 11 — Open the PR
 
 ## Surfaced decisions
 
 No open architectural questions awaiting maintainer input. The
-six decisions for R6.2 (operator outside Compose for R6.2;
-8090–8093 port migration enacted; conformance stays subprocess-
-based; single-file profile-based Compose; asymmetric per-base
-healthchecks; `image:` + `pull_policy: never`) are settled by
-Section 4 of the phase prompt. One pre-existing implementation
-discrepancy was discovered during inventory: the engine binary
-reads `SPECTRE_ENGINE_PORT` (not `SPECTRE_ENGINE_GRPC_PORT` as
-ADR-0021 §4's table documents). R6.2 uses the env var name the
-binary actually reads in the Compose env block; correcting the
-binary or the ADR table would be source-modification beyond
-R6.2's port-default-only scope (ADR-0025 §10) and is left for a
-future small PR.
+seven decisions for R6.3 (DinD over socket-mount; kind via
+post-create + dedicated recipes, not as a Compose service;
+dual-network join via Compose's standard mechanism;
+`op-run` retired with `op-install-crds` one-cycle alias; no
+`compose-up` auto-runs `kind-up`; no new ADR; conformance flow
+unchanged) are settled by Section 4 of the phase prompt.
+
+One small reframe surfaced during execution: the kind API
+server's in-network DNS name is `spectre-dev-control-plane`
+(not `kind-control-plane` as the phase prompt's spec sketched).
+Kind names the API server node after the cluster
+(`<cluster>-control-plane`); the kubeconfig the `--internal`
+flag emits points at the cluster-named hostname. The phase
+prompt's references to `kind-control-plane:6443` were corrected
+in-line in the justfile + docker-compose.yml + ADR-0025 §6 R6.3
+update so the audit trail records the actual hostname rather
+than the prompt's sketch.
+
+One pre-existing-issue note: the Playwright runtime image pinned
+in `build/docker/versions.env` (`mcr.microsoft.com/playwright:v1.49.0-noble`)
+is out-of-step with the npm `playwright` dep (`1.59.1`); a
+ScrapeJob targeting the Playwright driver fails at adapter
+launch ("Executable doesn't exist at /ms-playwright/…"). The
+operator → engine → adapter chain works through that point —
+visible in the failure message, which proves R6.3's networking
+path. R6.3 does not bump the Playwright pin (out of scope per
+phase prompt §10); R7.x picks up the pin sync alongside the
+Helm chart.
 
 ## Known issues
 
