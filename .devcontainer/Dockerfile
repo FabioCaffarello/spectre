@@ -35,7 +35,7 @@
 #                       inside the post-create script)
 #
 # Chrome / ChromeDriver track the apt stable channel (auto-update on
-# image rebuild). PR14+ may pin them if conformance flakes.
+# image rebuild). Pin them if conformance flakes.
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
 
 ARG GO_VERSION=1.25.3

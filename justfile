@@ -326,14 +326,14 @@ engine-grpc-test PORT='8090':
 # ---------------------------------------------------------------------------
 # Go control plane / Kubernetes operator (core/control-plane)
 # ---------------------------------------------------------------------------
-# PR14 replaced the placeholder binary with a kubebuilder v4 scaffold.
-# The cp-* aggregates wrap the kubebuilder Makefile so top-level just
+# core/control-plane is a kubebuilder v4 scaffold; the cp-* aggregates
+# wrap the kubebuilder Makefile so top-level just
 # bootstrap/fmt/lint/test/build keep working; the op-* aliases below
 # are the discoverable surface for operator-specific workflows
 # (install/uninstall CRDs, run the manager locally). See ADR-0019.
 
-# The operator does not import the protocol bindings — it shells out to
-# the engine binary in PR15+, so cp-bootstrap drops the proto-generate
+# The operator does not import the protocol bindings — it dials the
+# engine over gRPC (R3.1), so cp-bootstrap drops the proto-generate
 # dependency the placeholder carried.
 cp-bootstrap:
     cd core/control-plane && go mod download
@@ -502,10 +502,9 @@ curl-imp-test:
 curl-imp-build:
     cd adapters/curl-impersonate && go build -o bin/adapter ./cmd/adapter
 
-# Run only the curl-impersonate conformance tests. PR11 wired
-# Initialize + Navigate; PR12 will add Close + Query + Extract.
-# Useful for iterating on the Go adapter without re-running the
-# Playwright + SeleniumBase suites.
+# Run only the curl-impersonate conformance tests. Useful for
+# iterating on the Go adapter without re-running the Playwright +
+# SeleniumBase suites.
 curl-imp-conf-test: curl-imp-build conf-bootstrap
     cd tools/conformance && \
     uv run pytest \
@@ -620,10 +619,9 @@ sb-install-chromedriver: sb-bootstrap
     cd adapters/seleniumbase && \
     .venv/bin/python -m seleniumbase install chromedriver
 
-# Run only the SeleniumBase conformance tests. PR9 wired
-# Initialize + Navigate; PR10 added Close, Query, Extract, and
-# Screenshot. Useful for iterating on the Python adapter without
-# re-running the Playwright suite.
+# Run only the SeleniumBase conformance tests. Useful for
+# iterating on the Python adapter without re-running the
+# Playwright suite.
 sb-conf-test: sb-bootstrap sb-install-chromedriver conf-bootstrap
     cd tools/conformance && \
     uv run pytest \
@@ -675,10 +673,10 @@ conf-lint:
 #   tests launch the Node adapter as a subprocess and Navigate
 #   needs the browser binary (ADR-0008, ADR-0009);
 # - the SeleniumBase adapter's uv-managed venv and ChromeDriver —
-#   PR9 added a Python adapter that the suite exercises in
-#   parallel with Playwright (ADR-0014).
-# - the curl-impersonate adapter binary — PR11 added a Go adapter
-#   that the suite exercises in parallel; the curl-impersonate
+#   the suite exercises the Python adapter in parallel with
+#   Playwright (ADR-0014).
+# - the curl-impersonate adapter binary — the suite exercises the
+#   Go adapter in parallel; the curl-impersonate
 #   tests skip when the curl_chrome116 binary is not on PATH so
 #   developers without the release tarball still get green
 #   Playwright + SeleniumBase results (ADR-0016).
