@@ -2,9 +2,9 @@
 
 Mirrors ``test_initialize.py`` (which targets the Playwright adapter)
 but asserts against SeleniumBase's narrower v1alpha1 capability list.
-ADR-0014 §1 records the "declared = tested" rule; PR10 grew the
-list from one to twelve names. ``screenshot_full_page`` is
-*intentionally absent* — see ADR-0015 §5.
+ADR-0014 §1 records the "declared = tested" rule; the declared list
+has twelve names. ``screenshot_full_page`` is *intentionally absent*
+— see ADR-0015 §5.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def test_seleniumbase_initialize_returns_a_session(
         f"driver.yaml `capabilities` must be a list, got {type(declared_raw).__name__}"
     )
     declared: list[str] = [str(name) for name in declared_raw]
-    # ADR-0014 §1 / ADR-0015 §5: PR10 declares twelve names in
+    # ADR-0014 §1 / ADR-0015 §5: declares twelve names in
     # alphabetical order — the eleven Playwright content-and-
     # navigation capabilities plus screenshot_viewport and
     # screenshot_element. screenshot_full_page is intentionally
@@ -64,7 +64,7 @@ def test_seleniumbase_initialize_returns_a_session(
         "screenshot_viewport",
     ]
     assert declared == expected, (
-        f"PR10 seleniumbase driver.yaml must declare exactly {expected}; got {declared}"
+        f"seleniumbase driver.yaml must declare exactly {expected}; got {declared}"
     )
     assert "screenshot_full_page" not in declared, (
         "ADR-0015 §5: SeleniumBase must not declare screenshot_full_page"

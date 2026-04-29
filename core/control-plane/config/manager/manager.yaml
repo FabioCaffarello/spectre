@@ -55,11 +55,15 @@ spec:
         # This ensures that deployments meet the highest security requirements for Kubernetes.
         # For more details, see: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         runAsNonRoot: true
-        # PR16: pin to the `pwuser` baked into the Microsoft Playwright
-        # base image (uid:gid 1001:1001). Without this the kustomize
-        # default would let the kubelet pick a uid that does not own
-        # /opt/spectre/adapters and the manager binary, causing
-        # CrashLoopBackOff with "permission denied".
+        # uid:gid 1001:1001 was pinned to match the `pwuser` baked
+        # into the Microsoft Playwright base image used by the
+        # pre-R3.1 bundled adapter Pod. R3.1 retired the bundled
+        # image; this pin is preserved for now to keep the existing
+        # manifest rolling out cleanly, but the manager binary on
+        # gcr.io/distroless/static:nonroot uses uid 65532.
+        # R7.1: revisit limits + securityContext for the manager-only
+        # Pod (post-R3.1 retirement of the bundled adapter image)
+        # when the Helm chart lands.
         runAsUser: 1001
         runAsGroup: 1001
         seccompProfile:
@@ -73,7 +77,7 @@ spec:
         image: controller:latest
         name: manager
         ports: []
-        # PR17 §4.4: opt the SeleniumBase adapter into the
+        # Opt the SeleniumBase adapter into the
         # container-friendly Chrome flags
         # (`--no-sandbox --disable-dev-shm-usage --disable-gpu
         # --disable-software-rasterizer --user-data-dir=<tmp>`).
@@ -121,17 +125,14 @@ spec:
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 10
-        # PR16 sized this Pod for Chromium under the bundled
-        # Playwright adapter; PR17 bumps the memory limit to 3 GiB
-        # so the SeleniumBase path (Python + Chrome with its
-        # renderer subprocess tree) has comfortable headroom on top
-        # of the resident manager + engine processes. At any moment
-        # at most one adapter runs (controller-runtime's default
-        # MaxConcurrentReconciles=1, plus the DSL `driver:` field
-        # selects exactly one of {Chromium, Chrome}); the limit is
-        # sized for whichever browser is heavier, not for both
-        # simultaneously. Adjust upwards if you raise
-        # MaxConcurrentReconciles or run heavier sites.
+        # These limits were sized for the pre-R3.1 bundled adapter
+        # Pod (Chromium + Chrome + their renderer subprocess trees
+        # alongside the manager + engine processes). R3.1 retired
+        # the bundled image and the manager Pod no longer launches
+        # browsers, so the working set is much smaller than these
+        # numbers suggest.
+        # R7.1: revisit limits for the manager-only Pod (post-R3.1
+        # retirement of the bundled image) when the Helm chart lands.
         resources:
           limits:
             cpu: "2"
@@ -164,10 +165,11 @@ spec:
             medium: Memory
             sizeLimit: 256Mi
       serviceAccountName: controller-manager
-      # PR16: bump from 10s. Chromium can take a few seconds to
-      # tear down a context cleanly; the reconciler in turn waits on
-      # the engine subprocess. 30s is comfortably above the engine's
-      # 10s adapter-shutdown deadline (ADR-0008 / launcher.rs
-      # DEFAULT_SHUTDOWN_TIMEOUT) without adding meaningful latency
-      # to legitimate restarts.
+      # 30s grace period was sized for the pre-R3.1 bundled adapter
+      # Pod where Chromium teardown could take several seconds. R3.1
+      # retired the bundled image; the manager-only Pod could
+      # tolerate a shorter grace period.
+      # R7.1: revisit terminationGracePeriodSeconds for the
+      # manager-only Pod (post-R3.1 retirement of the bundled image)
+      # when the Helm chart lands.
       terminationGracePeriodSeconds: 30

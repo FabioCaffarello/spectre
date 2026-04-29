@@ -3,11 +3,10 @@
 // Package server implements the v1alpha1 gRPC Driver service for
 // the curl-impersonate adapter.
 //
-// PR11 ships Initialize and Navigate. The other four RPCs
-// (Query, Extract, Screenshot, Close) are inherited from
-// UnimplementedDriverServer and return codes.Unimplemented; PR12
-// implements Close, Query, and Extract; the screenshot RPC will
-// never be implemented for this adapter (ADR-0016 §5).
+// Implements Initialize, Navigate, Close, Query, and Extract.
+// The screenshot RPC is permanently absent (ADR-0016 §5) and is
+// inherited from UnimplementedDriverServer, returning
+// codes.Unimplemented.
 //
 // Architectural decisions are recorded in ADR-0008 (handshake),
 // ADR-0009 (Navigate / session lifecycle), ADR-0014 (cross-
@@ -45,7 +44,7 @@ import (
 // asserts on ``grpc.StatusCode.UNAVAILABLE`` precisely against
 // this code path. ``ValidationUnknown`` continues to return the
 // in-band ``CODE_INVALID_ARGUMENT`` envelope so the behaviour on
-// a never-Initialized id is unchanged from PR12.
+// a never-Initialized id stays consistent with the unary surface.
 const (
 	differentInstanceMessage = "session belongs to a different adapter instance; client must re-Initialize"
 	redisUnavailablePrefix   = "redis unreachable"
@@ -78,9 +77,10 @@ const DefaultNavigateTimeout = 30 * time.Second
 // subprocess.
 type Fetcher func(ctx context.Context, opts curlx.Options) (*curlx.Response, error)
 
-// Server implements driverv1alpha1.DriverServer. PR11 implements
-// Initialize and Navigate; the other RPCs are forwarded to
-// UnimplementedDriverServer's codes.Unimplemented responses.
+// Server implements driverv1alpha1.DriverServer. Initialize,
+// Navigate, Close, Query, and Extract are implemented; the
+// screenshot RPC is forwarded to UnimplementedDriverServer's
+// codes.Unimplemented response (ADR-0016 §5).
 type Server struct {
 	driverv1alpha1.UnimplementedDriverServer
 
@@ -257,9 +257,7 @@ func (s *Server) Navigate(ctx context.Context, req *driverv1alpha1.NavigateReque
 	}, nil
 }
 
-// Close is the full session-teardown RPC. PR11 shipped a thin
-// implementation so the engine's executor could finish navigate-
-// only plans; PR12 promotes it to the full contract:
+// Close is the full session-teardown RPC:
 //
 //   - Strict session_id validation (empty → CODE_INVALID_ARGUMENT).
 //   - Idempotent rejection of unknown / already-closed ids
@@ -304,8 +302,8 @@ func (s *Server) Close(ctx context.Context, req *driverv1alpha1.CloseRequest) (*
 }
 
 // Query resolves a selector against the session's cached
-// document and returns one ElementRef per match. PR12 supports
-// CSS and XPATH only; TEXT and ATTRIBUTE are rejected because
+// document and returns one ElementRef per match. Supports CSS
+// and XPATH only; TEXT and ATTRIBUTE are rejected because
 // the curl-impersonate adapter does not declare query_text /
 // query_attribute (ADR-0017 §1: capability declaration is a
 // cross-driver semantic-equivalence contract, not a feasibility

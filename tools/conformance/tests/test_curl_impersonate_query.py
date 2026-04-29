@@ -1,6 +1,6 @@
 """Live ``Query`` conformance tests for the curl-impersonate adapter.
 
-PR12 implements Query with two SelectorKinds: CSS and XPATH.
+Query is implemented with two SelectorKinds: CSS and XPATH.
 ``SELECTOR_KIND_TEXT`` and ``SELECTOR_KIND_ATTRIBUTE`` are
 rejected with ``CODE_INVALID_ARGUMENT`` because the adapter does
 not declare ``query_text`` / ``query_attribute`` — see ADR-0017

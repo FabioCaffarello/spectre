@@ -9,15 +9,19 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-04-29
-Current phase: **R6.3 — Devcontainer with Docker-in-Docker (operator + kind into the unified Compose stack) (complete on merge of this PR, 2026-04-29)** — **Phase R6 CLOSED**
-Next PR: **R7.1 — ADR-0026 Helm chart**
+Current phase: **R6.5 — Quality & Hardening (in progress; R6.5.1 complete on merge of this PR, 2026-04-29)**
+Next PR: **R6.5.2 — CI hardening: image-build matrix completion + bake unification + full-stack gate**
 
 ## Phases
 
 The full refactor is delivered as roughly seventeen PRs across
-eight phases. Order is fixed; phases cannot be reordered or
-skipped. See [ADR-0020 §5](adr/0020-microservices-architecture-supersession.md)
-for the per-phase ADR deltas.
+eight master-plan phases, plus a four-PR **R6.5 Quality &
+Hardening** sub-phase inserted between R6.3 (Phase R6 close) and
+R7.1 (Helm chart) to address drift accumulated across the long
+refactor. Order is fixed; phases cannot be reordered or skipped.
+See [ADR-0020 §5](adr/0020-microservices-architecture-supersession.md)
+for the per-phase ADR deltas and §4 for the R6.5 insertion's
+audit-trail row.
 
 - [x] **R1.1 — ADR-0020 supersession** *(merged 2026-04-27, PRs #26 + #27)*
 - [x] **R2.1 — ADR-0021 service discovery + ADR-0022 TCP transport details** *(merged 2026-04-27, PR #28)*
@@ -32,61 +36,115 @@ for the per-phase ADR deltas.
 - [x] **R5.1 — ADR-0024 output sinks (S3 + webhook)** *(merged 2026-04-28, PR #64 — closes Phase R5)*
 - [x] **R6.1 — Per-service Dockerfiles (engine, control plane, three adapters) + `docker-bake.hcl` orchestration** *(merged 2026-04-29, PR #65 — opened Phase R6)*
 - [x] **R6.2 — ADR-0025 Compose stack (application services + profile topology + 8090–8093 port migration)** *(merged 2026-04-29, PR #66)*
-- [x] **R6.3 — Devcontainer with Docker-in-Docker (operator + kind into the unified Compose stack)** *(complete on merge of this PR, 2026-04-29 — closes Phase R6)*
-- [ ] **R7.1 — ADR-0026 Helm chart** *(next — opens Phase R7)*
+- [x] **R6.3 — Devcontainer with Docker-in-Docker (operator + kind into the unified Compose stack)** *(merged 2026-04-29 — closed Phase R6)*
+
+**Phase R6.5 — Quality & Hardening** *(inserted between R6.3
+close and R7.1 open; no new ADRs; recorded in ADR-0020 §4)*
+
+- [x] **R6.5.1 — Stale-references sweep + R6.1 leftovers (`build/docker/README.md`, `tools/build/check-versions-coherent.sh`)** *(complete on merge of this PR, 2026-04-29 — opens Phase R6.5)*
+- [ ] **R6.5.2 — CI hardening: image-build matrix completion, bake unification in CI, full-stack gate** *(next)*
+- [ ] R6.5.3 — Docker Hub registry wiring + multi-arch readiness
+- [ ] R6.5.4 — Dockerfile deduplication via shared codegen base image stage
+
+- [ ] **R7.1 — ADR-0026 Helm chart** *(opens Phase R7 once R6.5 closes)*
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R6.3)
+## Current PR checklist (R6.5.1)
 
-The R6.3 PR's per-step checklist mirrors Section 7 of the phase
-prompt. R6.3 places the control-plane operator inside the
-unified Compose stack alongside a `kind` cluster running in the
-devcontainer's Docker-in-Docker daemon. **Phase R6 closes with
-this PR's merge.**
+The R6.5.1 PR's per-step checklist mirrors Section 7 of the
+phase prompt. R6.5.1 sweeps stale `PR<N>` references out of
+live code, ships R6.1's two leftovers (`build/docker/README.md`
+and `tools/build/check-versions-coherent.sh`), and wires the
+coherence script into `just check` and CI's `proto` job.
+**Phase R6.5 opens with this PR's merge.**
 
-- [x] Step 1 — Inventory: R6.2 merge confirmed; ADR-0020 §85–91 (DinD commitment), ADR-0025 §6 (problem statement) + §9 (deferrals) re-read; `docker-compose.yml` (ten services + no top-level networks block) confirmed; `.devcontainer/{devcontainer.json,Dockerfile,post-create.sh}` read in full; `core/control-plane/cmd/main.go` flag block confirmed (`--engine-endpoint`, `--health-probe-bind-address`, `--metrics-bind-address`, `--leader-elect`); `core/control-plane/Makefile` `install` / `uninstall` targets confirmed (apply CRDs from `config/crd` via kustomize+kubectl)
-- [x] Step 2 — `build/kind/cluster.yaml` (single-node `spectre-dev`) + `build/kind/.gitignore` (kubeconfig) created; `.gitignore` carve-out negation extended (`!/build/kind/`, `!/build/kind/**`)
-- [x] Step 3 — justfile surgery: `op-run` deleted entirely; `op-install-crds` / `op-uninstall-crds` renamed `crds-install` / `crds-uninstall` and repointed at `build/kind/kubeconfig` via `KUBECONFIG=$(realpath ../../build/kind/kubeconfig) make install/uninstall`; old names kept as one-cycle deprecation aliases (echo + forward); new `kind-up` (idempotent; writes `--internal` kubeconfig with server URL `https://spectre-dev-control-plane:6443`), `kind-down`, `kind-status` recipes; `compose-up` and `compose-reset` comment blocks updated for the post-R6.3 eleven-service topology + kind/Compose lifecycle independence
-- [x] Step 4 — `docker-compose.yml` extended: `control-plane` service (image `spectre-control-plane:dev` + `pull_policy: never`; depends on engine + postgres; joins `default` and external `kind` networks; reads-only mounts `build/kind/kubeconfig` at `/home/nonroot/.kube/config`; passes `--engine-endpoint=engine:8090 --health-probe-bind-address=:8081 --metrics-bind-address=0 --leader-elect=false`; profiles `app`, `full`); top-level `networks:` block declares `kind` as `external: true name: kind`. `_endpoint.yaml` sample updated `127.0.0.1:8090` → `engine:8090` for the post-R6.3 Compose-internal flow; `_hello-hackernews.yaml` comment corrected (Helm provisions the in-cluster Service; Compose dev uses Endpoint sample). Validated `docker compose --profile <name> config --services` for each profile (infra/core/adapters/app/full); local end-to-end smoke against host Docker daemon: `just kind-up && just compose-up` brings up eleven services; `kubectl apply -f` of an Endpoint-form ScrapeJob (curl-impersonate driver to avoid R6.1 Playwright runtime image version skew) reconciles Pending → Running → Completed in seconds; row visible in Postgres `jobs` table; operator container confirmed on both `kind` and `baas_default` networks via `docker network inspect`
-- [x] Step 5 — `.devcontainer/devcontainer.json` rewritten with the official `docker-in-docker:2` feature (Moby + Compose v2), eleven `forwardPorts`, `portsAttributes` labels, `ms-azuretools.vscode-docker` extension, R6.3-aware comment block; `.devcontainer/Dockerfile` adds `KIND_VERSION=0.24.0` ARG + kind binary install block (after kubebuilder), bumps BUF_VERSION 1.45.0 → 1.55.1 (harmonised with `build/docker/versions.env`), refreshes the comment block to cite ADR-0018 §3a + ADR-0025 §6 R6.3 update; `.devcontainer/post-create.sh` expanded from 5 to 8 numbered steps (kind-up + crds-install precede sanity checks; kind/kubectl version checks added)
-- [x] Step 7 — ADR amendments: ADR-0018 frontmatter status flips to "partially superseded; see status notes in §3, §4 and §5", new §3a "R6.3 evolution: Docker-in-Docker for the devcontainer" subsection appended (citing ADR-0020 §85–91 + ADR-0025 §6 R6.3 update; documenting first-build cost rise, two-kubeconfig dance, shared kind Docker network, BUF version harmonisation); ADR-0025 §6 gains "R6.3 update — resolution" subsection (recording dual-network join, kubeconfig mount path, `op-run` deletion, alias-then-remove plan for `op-install-crds` / `op-uninstall-crds`, four R6.3 decisions, end-to-end criteria); ADR-0025 §9 marked as "resolved in R6.3" with each deferral closed; `docs/adr/README.md` index status fields updated for both records
-- [x] Step 8 — `docs/architecture/development-environment.md` rewritten for post-R6.3 unified flow (Reopen-in-Container as the supported path; "What runs where" table gains operator row; Operator dev flow rewritten Compose-side only; new "Kubernetes-in-Docker (kind)" subsection — recipe table + two-kubeconfig dance; new "DinD model" subsection — nesting / failure modes / network-not-found troubleshooting; toolchain prerequisites slimmed); `docs/architecture/control-plane.md` Phase 3 status table flips R6.3 row to shipped, deployment-shapes table widened to four columns with R6.3 marked current, "Host operator against a Compose-running engine" replaced by "Operator-as-Compose-service against a kind API server"; README quick-start updated to Reopen-in-Container + `just images && just compose-up`; host-process operator commands removed
-- [x] Step 9 — `docs/refactor-audit.md` R6.3 row appended (this PR); `docs/refactoring-status.md` R6.3 → complete on merge, R7.1 → next, **Phase R6 marked CLOSED**; CHANGELOG Unreleased entry recording the DinD/kind/operator-in-Compose changes; ADR-0025 §6 + §9 + ADR-0018 §3a cross-references intact
-- [ ] Step 10 — Final verification (devcontainer rebuild + end-to-end smoke; conformance regression unchanged)
-- [ ] Step 11 — Open the PR
+- [x] Step 1 — Inventory: R6.3 merge confirmed; the inventory
+  grep located stale `PR<N>` references in live code (excluding
+  `docs/adr/**`, `docs/MASTER_STRATEGY_REFACTOR.md`, and similar
+  history-bearing strategy docs). Section 4 decisions settled.
+- [x] Step 2 — `build/docker/README.md` authored (~155 lines):
+  versions.env contract, two-consumer model (bake + direct
+  Dockerfile builds), bump procedure, pin-inventory table
+  covering every variable in `versions.env` plus the
+  `core/engine` + `core/control-plane` no-default ARG split.
+- [x] Step 3 — `tools/build/check-versions-coherent.sh` authored
+  (~190 lines, executable, bash 3.2 compatible): sources
+  versions.env, verifies docker-bake.hcl variable defaults,
+  verifies adapter Dockerfile ARG defaults, sanity-checks the
+  bake `labels()` schema. Pass-path returns 0; intentional
+  drift returns non-zero with per-mismatch detail. `tools/build/`
+  carved out of the unanchored `build/` gitignore rule.
+- [x] Step 4 — Wired into `just check` via a top-level
+  `check-versions` recipe; `check` chain becomes
+  `check-versions lint test`. CI's `proto` job runs the script
+  as its first step (after checkout); R6.5.2 may promote it to a
+  dedicated job.
+- [x] Step 5 — Stale-reference sweep, batch 1 — curl-impersonate
+  Go source: nine files (Pattern A); one test rename
+  `TestNamesReturnsPR12List` → `TestNamesMatchesCapabilityManifest`.
+  Capability invariant 6 unchanged byte-for-byte; tests pass.
+- [x] Step 6 — Stale-reference sweep, batch 2 — SeleniumBase
+  Python source: eight files (Pattern A + B). Capability
+  invariant 12 unchanged byte-for-byte; tests pass.
+- [x] Step 7 — Stale-reference sweep, batch 3 — Playwright TS
+  source: five files (Pattern A); the capabilities test spec
+  name updates `"declares the thirteen PR6 capabilities"` →
+  `"declares the thirteen v1alpha1 capabilities"`. Capability
+  invariant 13 unchanged byte-for-byte; 88/88 tests pass.
+- [x] Step 8 — Stale-reference sweep, batch 4 — engine +
+  control-plane: dsl.rs (Pattern B), plan.rs (Pattern A),
+  runner.go + engine_client.go (Pattern C), manager.yaml
+  (Pattern A on PR# refs + Pattern D R7.1 deferral annotations
+  on resource limits / runAsUser / terminationGracePeriodSeconds
+  that were sized for the pre-R3.1 bundled adapter Pod).
+  cargo test --lib 82/82; go vet clean.
+- [x] Step 9 — Stale-reference sweep, batch 5 — conformance
+  suite: 15 files (Pattern A across capabilities.py,
+  demo_full_cycle.py, README.md, conftest.py, test docstrings).
+  Pytest collection holds at 64 tests (test bodies unchanged).
+- [x] Step 10 — Stale-reference sweep, batch 6 — build infra:
+  justfile, .github/workflows/ci.yml, .devcontainer/Dockerfile.
+- [x] Step 11 — Stale-reference sweep, batch 7 — module READMEs:
+  core/engine/README.md (one-line) and core/control-plane/README.md
+  (status block + runner.go bullet + multi-stage description +
+  "What this does not do (yet)" block, kept narrowly scoped to
+  PR# removal + the bundled-image staleness that was directly
+  reachable from the PR# wording).
+- [x] Step 12 — Final stale-ref grep clean (live-code paths
+  return zero hits); ADRs / strategy docs retain their refs.
+- [x] Step 13 — `docs/refactor-audit.md` ticks R6.5.1 + opens the
+  R6.5 phase block; this `docs/refactoring-status.md` advances
+  to R6.5; ADR-0020 §4 gains the R6.5 audit row; CHANGELOG
+  Unreleased entry recording the sweep + R6.1 leftovers.
+- [ ] Step 14 — Final verification (`just check`, `just
+  check-versions`, conformance suite, image build).
+- [ ] Step 15 — Open the PR.
 
 ## Surfaced decisions
 
 No open architectural questions awaiting maintainer input. The
-seven decisions for R6.3 (DinD over socket-mount; kind via
-post-create + dedicated recipes, not as a Compose service;
-dual-network join via Compose's standard mechanism;
-`op-run` retired with `op-install-crds` one-cycle alias; no
-`compose-up` auto-runs `kind-up`; no new ADR; conformance flow
-unchanged) are settled by Section 4 of the phase prompt.
+three decisions for R6.5.1 (Pattern A/B/C taxonomy for stale
+PR# refs; pin inventory in README, not in source comments;
+coherence script wired into `just check` + the existing CI
+`proto` job, not a new dedicated job) are settled by Section 4
+of the phase prompt.
 
-One small reframe surfaced during execution: the kind API
-server's in-network DNS name is `spectre-dev-control-plane`
-(not `kind-control-plane` as the phase prompt's spec sketched).
-Kind names the API server node after the cluster
-(`<cluster>-control-plane`); the kubeconfig the `--internal`
-flag emits points at the cluster-named hostname. The phase
-prompt's references to `kind-control-plane:6443` were corrected
-in-line in the justfile + docker-compose.yml + ADR-0025 §6 R6.3
-update so the audit trail records the actual hostname rather
-than the prompt's sketch.
+One scope adjustment surfaced during execution: the inventory
+grep's actual count (~125 hits across live code) was higher
+than the prompt's estimate of 102. The Playwright adapter — which
+the prompt said happened to be clean — actually had five
+references; module READMEs (which the prompt's Section 5 didn't
+enumerate) carried twenty-three more. Both were swept under the
+prompt's Pattern A guidance because criterion 2 (zero hits in
+live code) is unconditional.
 
-One pre-existing-issue note: the Playwright runtime image pinned
-in `build/docker/versions.env` (`mcr.microsoft.com/playwright:v1.49.0-noble`)
-is out-of-step with the npm `playwright` dep (`1.59.1`); a
-ScrapeJob targeting the Playwright driver fails at adapter
-launch ("Executable doesn't exist at /ms-playwright/…"). The
-operator → engine → adapter chain works through that point —
-visible in the failure message, which proves R6.3's networking
-path. R6.3 does not bump the Playwright pin (out of scope per
-phase prompt §10); R7.x picks up the pin sync alongside the
-Helm chart.
+One pre-existing-issue note carried over from R6.3: the
+Playwright runtime image pinned in `build/docker/versions.env`
+(`v1.49.0`) is out-of-step with the npm `playwright` dep
+(`1.59.1`). R6.5.1 documents the pinning contract but does not
+bump pins (Section 10 of the phase prompt). R7.x or a separate
+maintenance PR picks up the sync.
 
 ## Known issues
 

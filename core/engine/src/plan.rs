@@ -140,11 +140,11 @@ pub fn plan(job: &Job) -> Plan {
 
     steps.push(PlanStep::Close);
 
-    // js_execution is the only mode that gates at the engine layer in
-    // PR7. The DSL does not expose MODE_EVAL today (ADR-0012 §6), so
-    // this loop is a no-op for v1alpha1 jobs — but the structure is
-    // here so v1alpha2's `eval:` field-spec needs only the DSL change,
-    // not a planner change.
+    // js_execution is the only mode that gates at the engine layer.
+    // The DSL does not expose MODE_EVAL today (ADR-0012 §6), so this
+    // loop is a no-op for v1alpha1 jobs — but the structure is here
+    // so v1alpha2's `eval:` field-spec needs only the DSL change, not
+    // a planner change.
     for s in &steps {
         if let PlanStep::ExtractEach { fields } = s {
             for f in fields {

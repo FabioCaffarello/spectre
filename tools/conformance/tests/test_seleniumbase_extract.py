@@ -161,11 +161,10 @@ def test_seleniumbase_extract_eval_with_js_execution(
     local_http_server: LocalHttpServer,
 ) -> None:
     """``MODE_EVAL`` succeeds against the SeleniumBase adapter
-    because its declared capability list now includes
-    ``js_execution`` (PR10). The negative case — gate fires when
-    ``js_execution`` is absent — is covered as a unit test on
-    ``missing_capability_for_mode`` in
-    ``test_capabilities.py``."""
+    because its declared capability list includes ``js_execution``.
+    The negative case — gate fires when ``js_execution`` is absent
+    — is covered as a unit test on ``missing_capability_for_mode``
+    in ``test_capabilities.py``."""
 
     stub = driver_pb2_grpc.DriverStub(seleniumbase_adapter.dial())
     session_id = _open_elements_page(stub, local_http_server.base_url)

@@ -5,7 +5,7 @@ a populated ``DriverError`` rather than letting the exception
 propagate as a transport-level failure. The table below is the
 single source of truth for that translation; ADR-0014 §3 records
 the rationale for the Navigate-relevant rows and ADR-0015 §2 / §4
-record the additions PR10 needed for ``Query``, ``Extract``, and
+record the additions for ``Query``, ``Extract``, and
 ``Screenshot``.
 
 The shape mirrors the Playwright adapter's ``errors.ts``: a
@@ -111,7 +111,7 @@ def selenium_error_to_driver_error(exc: BaseException) -> MappedError:
     if NETWORK_ERROR_PATTERN.search(message):
         return MappedError(code=code_enum.CODE_TARGET_UNREACHABLE, message=message)
 
-    # PR10 additions (ADR-0015 §2 and §4).
+    # ADR-0015 §2 / §4 additions.
     #
     # StaleElementReferenceException is the SPA-mutation case: the
     # WebElement handle's underlying DOM node was detached without a

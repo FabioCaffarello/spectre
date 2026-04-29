@@ -82,11 +82,11 @@ func TestInitializeReturnsSessionAndCapabilities(t *testing.T) {
 	}
 	got := caps.GetNames()
 	if len(got) != len(wantNames) {
-		t.Fatalf("PR12 capability list must have %d entries; got %d (%v)", len(wantNames), len(got), got)
+		t.Fatalf("capability list must have %d entries; got %d (%v)", len(wantNames), len(got), got)
 	}
 	for i := range wantNames {
 		if got[i] != wantNames[i] {
-			t.Fatalf("PR12 capability list must be exactly %v; got %v", wantNames, got)
+			t.Fatalf("capability list must be exactly %v; got %v", wantNames, got)
 		}
 	}
 	if caps.GetDriverVersion() == "" {

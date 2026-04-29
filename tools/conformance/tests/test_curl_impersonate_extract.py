@@ -1,6 +1,6 @@
 """Live ``Extract`` conformance tests for the curl-impersonate adapter.
 
-PR12 implements Extract with five field modes (TEXT_CONTENT,
+Extract is implemented with five field modes (TEXT_CONTENT,
 INNER_TEXT, INNER_HTML, OUTER_HTML, ATTR) and the runtime
 capability gate from ADR-0010 §3 firing on MODE_EVAL. The
 headline test of this file is

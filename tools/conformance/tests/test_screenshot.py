@@ -25,7 +25,7 @@ Scenarios
 - ``test_screenshot_element_after_navigate_returns_invalid_argument``:
   an element-scoped Screenshot against a ref allocated before a
   Navigate is rejected with the stale-ref ``CODE_INVALID_ARGUMENT``
-  message PR5 established for ``Extract``.
+  message established for ``Extract``.
 """
 
 from __future__ import annotations

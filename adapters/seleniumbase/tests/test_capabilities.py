@@ -63,7 +63,7 @@ def test_capability_names_is_alphabetical() -> None:
 
 
 def test_coherence_accepts_pr10_list() -> None:
-    """The PR10 declared tuple must satisfy the coherence invariant."""
+    """The declared tuple must satisfy the coherence invariant."""
     assert_capability_coherence(CAPABILITY_NAMES)
 
 

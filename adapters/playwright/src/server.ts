@@ -2,9 +2,9 @@
 //
 // Spectre Playwright driver — gRPC service implementation.
 //
-// PR4 implemented `Initialize` and `Navigate`; PR5 added `Close`,
-// `Query`, and `Extract`; PR6 closes the v1alpha1 unary surface by
-// implementing `Screenshot`. See ADR-0008 (handshake), ADR-0009
+// Implements the v1alpha1 unary surface: `Initialize`, `Navigate`,
+// `Close`, `Query`, `Extract`, and `Screenshot`. See ADR-0008
+// (handshake), ADR-0009
 // (Navigate / session lifecycle / error mapping), ADR-0010 (element
 // lifecycle and capability gating), and ADR-0011 (Screenshot scope
 // mapping, JPEG quality default, payload-size boundary, read-only
@@ -779,7 +779,7 @@ export async function startServer(
     });
     // Tear down any browsers/contexts before exiting. A leaked
     // browser process would outlive the adapter — see ADR-0009,
-    // decision 2 (no eviction in PR4 means closeAll on shutdown is
+    // decision 2 (no idle eviction means closeAll on shutdown is
     // the only cleanup path).
     await sessions.closeAll().catch((err: unknown) => {
       process.stderr.write(`session teardown error: ${String(err)}\n`);

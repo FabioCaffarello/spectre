@@ -323,7 +323,7 @@ func TestCloseAllRemovesEveryJar(t *testing.T) {
 	}
 }
 
-// -- ElementRegistry (unchanged from PR12) ----------------------------
+// -- ElementRegistry --------------------------------------------------
 
 func TestSetDocumentCachesAndBumpsGeneration(t *testing.T) {
 	m, _ := newTestManager(t, expectAnySetSession)

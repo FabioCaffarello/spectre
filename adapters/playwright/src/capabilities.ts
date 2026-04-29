@@ -3,12 +3,12 @@
 // Capabilities declared by the Playwright adapter at handshake time.
 //
 // Each capability lands once its RPC and the conformance tests for
-// it ship together. PR3 declared none; PR4 added `navigation` and
-// `js_execution`; PR5 added the eight `query_*` / `extract_*` names
-// covering `Query` and `Extract`; PR6 adds the three `screenshot_*`
-// names covering the three `Screenshot` scopes. The exported value
-// MUST stay in lockstep with `driver.yaml`'s `capabilities:` block —
-// the conformance suite asserts byte-for-byte equality at runtime,
+// it ship together. The declared set is `navigation`, `js_execution`,
+// the four `query_*` names, the four `extract_*` names, and the
+// three `screenshot_*` names — thirteen entries total covering the
+// full v1alpha1 unary surface. The exported value MUST stay in
+// lockstep with `driver.yaml`'s `capabilities:` block — the
+// conformance suite asserts byte-for-byte equality at runtime,
 // including order.
 //
 // The capability mechanism splits into two roles (see ADR-0010,

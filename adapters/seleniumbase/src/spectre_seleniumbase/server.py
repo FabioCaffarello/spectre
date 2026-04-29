@@ -1,17 +1,15 @@
 """gRPC service implementation for the SeleniumBase adapter.
 
-PR9 implemented ``Initialize`` + ``Navigate`` (and a thin
-``Close``). PR10 closes the v1alpha1 unary surface for this
-driver: ``Close`` becomes the full contract, ``Query``,
-``Extract``, and ``Screenshot`` ship with strict ElementRef
-invalidation, runtime capability gating on ``MODE_EVAL``, and
-the Screenshot read-only contract from ADR-0011 — minus
-``screenshot_full_page``, which the SeleniumBase adapter does
-not declare. See ADR-0008 (handshake), ADR-0009 (Navigate /
-session lifecycle), ADR-0010 (element lifecycle and capability
-gating), ADR-0011 (Screenshot RPC), ADR-0014 (SeleniumBase PR9
-landing), and ADR-0015 (this PR — SeleniumBase-specific
-deviations).
+Implements the v1alpha1 unary surface for this driver:
+``Initialize``, ``Navigate``, ``Close``, ``Query``, ``Extract``,
+and ``Screenshot`` — with strict ElementRef invalidation, runtime
+capability gating on ``MODE_EVAL``, and the Screenshot read-only
+contract from ADR-0011 — minus ``screenshot_full_page``, which the
+SeleniumBase adapter does not declare. See ADR-0008 (handshake),
+ADR-0009 (Navigate / session lifecycle), ADR-0010 (element
+lifecycle and capability gating), ADR-0011 (Screenshot RPC),
+ADR-0014 (SeleniumBase initial landing), and ADR-0015
+(SeleniumBase-specific deviations).
 """
 
 from __future__ import annotations
@@ -58,7 +56,8 @@ from .sessions import SessionManager, UnknownSessionError, Validation
 # Redis. ``different_instance`` and Redis-unreachable surface as
 # transport-level gRPC ``UNAVAILABLE``; ``unknown`` continues to
 # return the in-band ``CODE_INVALID_ARGUMENT`` envelope so the
-# behavior on a never-Initialized id is unchanged from PR9.
+# behavior on a never-Initialized id stays consistent with the
+# unary surface.
 DIFFERENT_INSTANCE_MESSAGE = (
     "session belongs to a different adapter instance; client must re-Initialize"
 )
@@ -295,7 +294,7 @@ def _default_driver_factory() -> Any:
         # v1alpha2 capability candidate (see ADR-0014 §2 out of scope).
         "uc": False,
     }
-    # Container deployment knob (PR17 §4.4). Default behaviour is
+    # Container deployment knob. Default behaviour is
     # unchanged for non-containerised callers: the conformance suite
     # and the developer-host workflow continue to drive Chrome with
     # its sandbox enabled. When the operator Pod sets
@@ -350,7 +349,7 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
         request: driver_pb2.InitializeRequest,
         context: grpc.ServicerContext,
     ) -> driver_pb2.InitializeResponse:
-        del request  # PR9 ignores the request payload — see ADR-0009 §1.
+        del request  # ADR-0009 §1: Initialize ignores the request payload.
         session_id = str(uuid.uuid4())
         # ADR-0023 §6 makes Redis required: a metadata-write failure
         # surfaces at the transport layer so the caller sees the
@@ -724,9 +723,7 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
         request: driver_pb2.CloseRequest,
         context: grpc.ServicerContext,
     ) -> driver_pb2.CloseResponse:
-        # PR9 wired a thin Close so the engine's executor could finish
-        # navigate-only plans (examples/seleniumbase-navigate). PR10
-        # promotes it to the full contract; R4.3 adds the §5
+        # Close is the full session-teardown RPC. R4.3 adds the §5
         # restart-invalidation gate so a Close from a foreign instance
         # surfaces as ``UNAVAILABLE`` rather than tearing nothing down
         # silently. The Redis-delete inside ``close_session`` is
@@ -761,9 +758,7 @@ def _read_status_code(driver: Any) -> int:
     (for example a ``data:`` or ``about:blank`` URL), we return 0.
     Returning 0 is a deliberate "unknown" signal — the conformance
     suite's ``test_navigate_local_fixture_ok`` explicitly tolerates
-    either 0 or the real status code (PR10 will exercise the rich
-    behaviour once Extract gives the suite a way to introspect the
-    page beyond ``Navigate``).
+    either 0 or the real status code.
     """
     try:
         result = driver.execute_script(

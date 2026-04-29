@@ -36,8 +36,8 @@ import (
 // Completed.rows_extracted count from the terminal event.
 //
 // EngineClientRunner is the third implementation against the
-// JobRunner seam introduced by ADR-0019 §5; StubRunner (PR14) and
-// SubprocessRunner (PR15, retired in R3.1) preceded it. The seam
+// JobRunner seam introduced by ADR-0019 §5; StubRunner and
+// SubprocessRunner (retired in R3.1) preceded it. The seam
 // signature did not change. See ADR-0020 §5 for the refactor that
 // motivated the swap and ADR-0022 for the TCP transport.
 type EngineClientRunner struct {

@@ -124,8 +124,7 @@ def curl_impersonate_adapter() -> Iterator[DriverHarness]:
     builds the adapter and ensures the curl-impersonate binary is
     available before the tests run.
 
-    PR11 implements ``Initialize`` and ``Navigate``; the other
-    RPCs return ``codes.Unimplemented`` until PR12. ADR-0016
+    The adapter implements the v1alpha1 unary surface; ADR-0016
     records the third-runtime decisions.
     """
 

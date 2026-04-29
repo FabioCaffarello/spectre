@@ -322,6 +322,7 @@ ADRs so the audit trail evolves alongside the code.
 | R4    | 4      | Stateful services (PostgreSQL, Kafka, Redis)     | +ADR-0023. Updates ADR-0010 (session state location).              |
 | R5    | 1      | Output sinks (S3, webhook, Kafka topic)          | +ADR-0024.                                                          |
 | R6    | 3      | Per-service Dockerfiles + Compose stack + Devcontainer | +ADR-0025. Retires PR16-PR18 bundled-image pattern.           |
+| R6.5  | 4      | Quality & hardening (sub-phase insertion: stale-references sweep + R6.1 leftovers, CI hardening, Docker Hub registry wiring + multi-arch, shared codegen base) | None. Hygiene work; addresses drift accumulated across the long refactor. |
 | R7    | 2      | Helm chart + production smoke                    | +ADR-0026.                                                          |
 | R8    | 1      | Documentation refresh + narrative closing        | None (docs only).                                                   |
 

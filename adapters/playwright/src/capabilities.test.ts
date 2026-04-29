@@ -13,7 +13,7 @@ import {
 } from "./capabilities.js";
 
 describe("CAPABILITY_NAMES", () => {
-  it("declares the thirteen PR6 capabilities", () => {
+  it("declares the thirteen v1alpha1 capabilities", () => {
     expect(CAPABILITY_NAMES).toEqual([
       "extract_attribute",
       "extract_eval",

@@ -17,13 +17,12 @@ limitations under the License.
 // Package runner is the integration boundary between the ScrapeJob
 // reconciler and the engine. The reconciler depends on JobRunner;
 // R3.1 wires EngineClientRunner, which dials the engine's gRPC
-// service and streams Row events back. PR14 ships StubRunner, which
-// sleeps for a configurable duration and returns no rows; the
-// envtest reconciler suite continues to use it. See ADR-0019 §5 for
-// the seam rationale (with the R4.2 addendum recording the
-// `jobID` + `outputSinkKind` evolution) and ADR-0020 §5 for the
-// refactor that retired SubprocessRunner (PR15) in favour of the
-// gRPC client.
+// service and streams Row events back. StubRunner sleeps for a
+// configurable duration and returns no rows; the envtest reconciler
+// suite uses it. See ADR-0019 §5 for the seam rationale (with the
+// R4.2 addendum recording the `jobID` + `outputSinkKind` evolution)
+// and ADR-0020 §5 for the refactor that retired SubprocessRunner in
+// favour of the gRPC client.
 package runner
 
 import (
@@ -92,14 +91,13 @@ type JobRunner interface {
 	) (int64, error)
 }
 
-// StubRunner is the JobRunner used by PR14's reconciler and by every
-// envtest case in the suite. It sleeps for SleepDuration, honours
-// context cancellation, and returns (0, nil) on completion. It writes
-// nothing to the supplied writer because PR14 does not produce real
-// JSONL output. The R4.2 / R4.4 / R5.1 interface evolutions do not
-// change StubRunner's behaviour — new parameters are accepted and
-// ignored, since the test surface verifies state-machine
-// transitions, not engine interaction.
+// StubRunner is the JobRunner used by every envtest case in the
+// reconciler suite. It sleeps for SleepDuration, honours context
+// cancellation, and returns (0, nil) on completion. It writes
+// nothing to the supplied writer because the test surface verifies
+// state-machine transitions, not engine interaction. The R4.2 /
+// R4.4 / R5.1 interface evolutions accept and ignore new
+// parameters without changing StubRunner's behaviour.
 type StubRunner struct {
 	// SleepDuration is the simulated work time before Run returns.
 	// Tests use a short duration (~10ms); the deployed manager uses

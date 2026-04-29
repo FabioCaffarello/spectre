@@ -38,15 +38,14 @@ jobs:
               - 'core/engine/**'
               - '.github/workflows/ci.yml'
             go:
-              # PR14: core/control-plane moved to its own `operator`
-              # job because the kubebuilder Makefile owns lint/test
-              # via envtest. Only adapters/curl-impersonate remains in
-              # this matrix.
+              # core/control-plane has its own `operator` job (the
+              # kubebuilder Makefile owns lint/test via envtest);
+              # only adapters/curl-impersonate remains in this matrix.
               - 'adapters/curl-impersonate/**'
               - '.github/workflows/ci.yml'
             operator:
-              # PR14: core/control-plane is a kubebuilder v4 operator
-              # whose tests need envtest binaries (apiserver + etcd +
+              # core/control-plane is a kubebuilder v4 operator whose
+              # tests need envtest binaries (apiserver + etcd +
               # kubectl). The dedicated job below drives `make test`
               # and `make build`. See ADR-0019.
               - 'core/control-plane/**'
@@ -60,18 +59,17 @@ jobs:
               # Conformance tests launch the Playwright adapter as a
               # subprocess; a TS-only change must still re-run them.
               - 'adapters/playwright/**'
-              # PR11: the conformance suite also exercises the Go
+              # The conformance suite also exercises the Go
               # curl-impersonate adapter via a built binary, so a
               # change in adapters/curl-impersonate/** must re-run
               # the Python conformance job too.
               - 'adapters/curl-impersonate/**'
               - '.github/workflows/ci.yml'
             engine_image:
-              # PR13: rebuild the engine Docker image whenever the
-              # engine, the protocol schema, the Dockerfile, the
-              # build-context exclusions, or the workflow changes.
-              # See ADR-0018 §5 on why this job is build+run only,
-              # not push.
+              # Rebuild the engine Docker image whenever the engine,
+              # the protocol schema, the Dockerfile, the build-context
+              # exclusions, or the workflow changes. See ADR-0018 §5
+              # on why this job is build+run only, not push.
               - 'core/engine/**'
               - 'proto/**'
               - '.dockerignore'
@@ -86,6 +84,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      # Version-coherence gate: every PR runs through this job (the
+      # `proto` filter matches `.github/workflows/ci.yml`), so the
+      # cheapest place to fail fast on a versions.env <-> Dockerfile
+      # ARG drift is here. R6.5.2 may promote this into its own job.
+      - name: Check toolchain-pin coherence
+        run: bash tools/build/check-versions-coherent.sh
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -344,9 +348,10 @@ jobs:
       # fingerprint itself is not asserted, but pinning keeps CI
       # determinism. ADR-0016 §1.
       #
-      # PR18 §4.1: read VERSION + SHA256 from the pin file shared
-      # with the operator image (`adapters/curl-impersonate/.curl-impersonate-version`)
-      # so the operator-image runtime and the conformance suite stay
+      # Read VERSION + SHA256 from the pin file shared with the
+      # curl-impersonate adapter image
+      # (`adapters/curl-impersonate/.curl-impersonate-version`) so
+      # the adapter image runtime and the conformance suite stay
       # on the same release. Single source of truth.
       - if: matrix.package == 'tools/conformance'
         id: curl-imp-pin

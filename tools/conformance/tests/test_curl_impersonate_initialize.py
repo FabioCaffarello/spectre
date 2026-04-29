@@ -1,6 +1,6 @@
 """Live ``Initialize`` handshake conformance test for the curl-impersonate adapter.
 
-PR12 grows the declared list to six entries — alphabetical:
+The declared list has six entries — alphabetical:
 ``extract_attribute``, ``extract_html``, ``extract_text``,
 ``navigation``, ``query_css``, ``query_xpath``. The seven
 capabilities the adapter does *not* declare are the canonical
@@ -46,7 +46,7 @@ def test_curl_impersonate_initialize_returns_a_session(
     )
     declared: list[str] = [str(name) for name in declared_raw]
 
-    # ADR-0014 §1 / ADR-0017 §1: PR12 declares exactly six names.
+    # ADR-0014 §1 / ADR-0017 §1: declares exactly six names.
     expected = [
         "extract_attribute",
         "extract_html",
@@ -56,7 +56,7 @@ def test_curl_impersonate_initialize_returns_a_session(
         "query_xpath",
     ]
     assert declared == expected, (
-        f"PR12 curl-impersonate driver.yaml must declare exactly {expected}; got {declared}"
+        f"curl-impersonate driver.yaml must declare exactly {expected}; got {declared}"
     )
 
     # Capabilities the curl-impersonate adapter will *never* declare

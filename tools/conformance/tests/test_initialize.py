@@ -5,9 +5,7 @@ per-test Unix domain socket, dials it as a gRPC client, sends an
 ``InitializeRequest``, and validates the ``InitializeResponse``.
 
 Capability declaration: the response's ``capabilities.names`` must
-match the list in the adapter's ``driver.yaml`` byte-for-byte. PR3
-declares no capabilities at runtime; the assertion is meaningful for
-later PRs that expand the set.
+match the list in the adapter's ``driver.yaml`` byte-for-byte.
 """
 
 from __future__ import annotations

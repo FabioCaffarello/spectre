@@ -1,11 +1,9 @@
 """Live ``Close`` conformance tests for the SeleniumBase adapter.
 
-PR10 promotes the SeleniumBase ``Close`` from the thin PR9
-implementation (which existed only so the engine's executor
-could finish navigate-only plans) to the full contract: strict
+SeleniumBase ``Close`` is the full session-teardown RPC: strict
 ``session_id`` validation, idempotent rejection of unknown ids,
-ElementRegistry teardown, and driver.quit() so no Chrome
-process leaks past the call. See ADR-0010 §1 and ADR-0015 §1.
+ElementRegistry teardown, and driver.quit() so no Chrome process
+leaks past the call. See ADR-0010 §1 and ADR-0015 §1.
 
 Scenarios
 ---------

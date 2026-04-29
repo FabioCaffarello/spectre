@@ -1,11 +1,9 @@
 """Live ``Close`` conformance tests for the curl-impersonate adapter.
 
-PR11 shipped a thin Close so the engine's executor could finish
-navigate-only plans (ADR-0014 set the precedent for SeleniumBase
-PR9). PR12 promotes Close to the full contract: strict
-``session_id`` validation, idempotent rejection of unknown ids,
-ElementRegistry teardown, and cookie-jar file deletion. See
-ADR-0010 §1 and ADR-0017 §3.
+Close is the full session-teardown RPC: strict ``session_id``
+validation, idempotent rejection of unknown ids, ElementRegistry
+teardown, and cookie-jar file deletion. See ADR-0010 §1 and
+ADR-0017 §3.
 
 Scenarios
 ---------
