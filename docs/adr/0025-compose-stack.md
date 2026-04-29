@@ -397,6 +397,85 @@ R6.2 commits to this future shape by:
 - Documenting the deferral in `docs/architecture/control-plane.md`
   §6 (R6.2 update) and pointing forward to R6.3.
 
+### R6.3 update — resolution
+
+> **Status — resolved in R6.3 (2026-04-29).** The §6 problem
+> statement above is the spec; R6.3 is the execution. No new
+> ADR was introduced (per ADR-0020 §4 the refactor table locks
+> Phase R6 to ADR-0025); R6.3's audit trail is this update note
+> plus ADR-0018 §3a R6.3 evolution.
+
+R6.3 places the operator inside the Compose stack as the
+`control-plane` service (image `spectre-control-plane:dev`,
+built by R6.1's `op-image` bake target). The kind cluster runs
+in the devcontainer's Docker-in-Docker daemon, managed by `just
+kind-up` / `kind-down` / `kind-status`. The operator container
+joins both the Compose default network (for `engine:8090` and
+`postgres:5432`) and the external `kind` Docker network (for
+`spectre-dev-control-plane:6443` — kind names the API-server
+node after the cluster); the kubeconfig at
+`build/kind/kubeconfig` (written by `just kind-up --internal`)
+is mounted read-only at `/home/nonroot/.kube/config`.
+
+The justfile changes match the §6 problem statement's
+prescription:
+
+- `op-run` is **deleted** (no legacy paths; ADR-0020 §4 + master
+  strategy §2.2). The host-process operator flow is gone.
+- `op-install-crds` / `op-uninstall-crds` are renamed
+  `crds-install` / `crds-uninstall` and repointed at
+  `build/kind/kubeconfig`. The old names survive one cycle as
+  deprecation aliases (printed note + forward to the new
+  recipes); removed in R7.1.
+- New recipes: `kind-up`, `kind-down`, `kind-status` for the
+  cluster lifecycle.
+
+The unified flow is `just kind-up && just compose-up`; on first
+devcontainer build the post-create script runs `kind-up` +
+`crds-install` automatically. `compose-up` and `compose-down` do
+not touch the kind cluster — the lifecycles are independent
+(§4.5 of the R6.3 phase prompt records the rationale: kind
+startup is paid once per devcontainer session, not per
+`compose-up`).
+
+The four R6.3 decisions that warrant explicit recording here
+(carried forward from the phase prompt's §4):
+
+1. **DinD over socket-mount.** Master plan ADR-0020 §85–91
+   commitment; the official `docker-in-docker` feature carries
+   the cross-platform load.
+2. **kind via lifecycle recipes, not as a Compose service.**
+   Lifecycle independence; kind is infrastructure for the
+   operator's reconciliation API, not an application service in
+   the Compose sense.
+3. **Operator joins both networks** via Compose's
+   per-service `networks:` list + a top-level
+   `networks: kind: external: true name: kind` declaration.
+   `kind get kubeconfig --internal` produces the in-network
+   URL the operator's mounted kubeconfig points at.
+4. **Conformance flow unchanged.** §5 above remains in force —
+   R6.3's DinD + kind work does not migrate the conformance
+   harness onto the Compose adapters.
+
+After R6.3 merges:
+
+- `docker compose --profile full up -d` brings up eleven
+  services (six stateful + engine + three adapters + operator).
+- A `spectre-dev` kind cluster runs in the devcontainer's DinD
+  daemon.
+- `kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml`
+  reconciles Pending → Running → Completed end-to-end through
+  the operator → engine → adapter chain, with the row visible in
+  Postgres (`SELECT id, status, output_sink_kind, rows_extracted FROM jobs`).
+- The host-process `op-run` recipe is gone.
+- ADR-0018 §3a R6.3 evolution records the devcontainer side of
+  the change.
+- **Phase R6 closes** with this PR. The master-strategy §2.5
+  promise — "what runs in development equals what runs in
+  production" — holds for application services and their direct
+  dependencies. v1alpha1 deferrals (mTLS, multi-arch images,
+  Helm chart) are Phase R7 work.
+
 ## §7 — Port migration: 9090–9093 → 8090–8093
 
 ADR-0021 §4's port plan has read 8090–8093 since R2.1; the
@@ -521,29 +600,35 @@ The justfile makes the contract explicit:
 
 ## §9 — What's deferred to R6.3
 
+> **Status — resolved in R6.3 (2026-04-29).** Every deferral
+> below is closed by the §6 R6.3 update above. Phase R6 is
+> CLOSED with R6.3's merge.
+
 R6.3 is "Devcontainer with Docker-in-Docker" in the master
 strategy plan. The deferrals from R6.2 are:
 
-- **Operator in Compose.** §6 above. Resolved by R6.3's DinD
-  + kind shape.
-- **`kind` cluster as a Compose-managed service.** R6.3
-  introduces a kind-in-Docker container (the kind project
-  publishes one) running inside the devcontainer's Docker
-  daemon, with the Compose stack also running in that same
-  daemon.
-- **Devcontainer Docker-in-Docker.** R6.3 adds the
-  `dind`-feature to the devcontainer so a single VS Code
-  "Reopen in Container" session has access to a Docker daemon
-  inside the devcontainer.
+- **Operator in Compose.** §6 above. **Resolved in R6.3** by the
+  DinD + kind + dual-network-join shape (§6 R6.3 update).
+- **`kind` cluster as a Compose-managed service.** **Resolved in
+  R6.3 with a small reframe.** Per §4.2 of the R6.3 phase
+  prompt, kind is managed by lifecycle recipes (`just kind-up`
+  / `kind-down` / `kind-status`), not by Compose's profile
+  system; the Compose stack attaches to kind's existing Docker
+  network via `external: true`. Lifecycle independence beat the
+  "kind-as-Compose-service" sketch on simplicity and on
+  per-`compose-up` startup cost.
+- **Devcontainer Docker-in-Docker.** **Resolved in R6.3** by
+  adding the official
+  `ghcr.io/devcontainers/features/docker-in-docker:2` feature
+  to `.devcontainer/devcontainer.json`. ADR-0018 §3a R6.3
+  evolution records the audit trail.
 - **The unified `just compose-up` shape that brings up
-  everything.** R6.2's `--profile full` brings up the eleven
-  services that R6.2 owns; R6.3 extends `full` to include the
-  operator and adjusts the README quick-start to remove the
-  separate `just op-run` step.
+  everything.** **Resolved in R6.3** — `--profile full` brings up
+  eleven services (the R6.2 ten + the new `control-plane`).
+  README quick-start updated; the host-process `op-run` recipe
+  is deleted entirely.
 
-Phase R6 closes when R6.3 lands. Until then, R6.2's deliverable
-is operationally complete for application services and stateful
-deps; the operator deferral is the single explicit caveat.
+Phase R6 closes when R6.3 lands — done.
 
 ## §10 — Out of scope
 
