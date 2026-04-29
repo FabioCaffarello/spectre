@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase R6.5 opens — stale-references sweep + R6.1 leftovers
+  (R6.5.1).** R6.5 is a four-PR sub-phase inserted between R6.3
+  (Phase R6 close) and R7.1 (Helm chart) to clear monorepo-health
+  drift before the chart consumes a clean foundation. R6.5.1
+  removes ~125 stale `PR<N>` references from live code (ADRs,
+  CHANGELOG, and strategy docs intentionally retain theirs as
+  audit trail) using three rewrite patterns documented in the
+  phase prompt: Pattern A (delete temporal context — the dominant
+  rewrite), Pattern B (replace with the canonical ADR anchor),
+  Pattern C (replace with the R-tag for refactor-evolution
+  context). One Go test renamed
+  `TestNamesReturnsPR12List → TestNamesMatchesCapabilityManifest`
+  (the new name describes what the test asserts, not which
+  historical PR introduced it). R6.1's two leftover deliverables
+  ship: `build/docker/README.md` documenting the versions.env
+  contract, the bake/Dockerfile-ARG split, the bump procedure,
+  and the pin inventory; and `tools/build/check-versions-coherent.sh`
+  enforcing versions.env ↔ docker-bake.hcl ↔ adapter Dockerfile
+  ARG defaults coherence + sanity-checking the bake `labels()`
+  schema. The script is wired into `just check` (via a new
+  top-level `check-versions` recipe; `check` chain becomes
+  `check-versions lint test`) and CI's `proto` job (first step
+  after checkout). `core/control-plane/config/manager/manager.yaml`
+  PR# refs are removed; the resource limits / `runAsUser` /
+  `terminationGracePeriodSeconds` (sized for the pre-R3.1 bundled
+  adapter Pod that R3.1 retired) are tagged with explicit
+  `# R7.1: revisit ...` annotations rather than retuned — the
+  Helm chart owns the manager-only Pod sizing. Capability
+  invariant 13/12/6 unchanged byte-for-byte; pytest collection
+  count holds at 64; engine cargo test --lib 82/82; Playwright
+  88/88; SeleniumBase pytest green; curl-impersonate go test
+  green. **No new ADR introduced** — Phase R6.5 is hygiene work,
+  recorded in ADR-0020 §4's refactor table as a four-PR
+  insertion. R6.5.2 (CI hardening) is next.
 - **Devcontainer with Docker-in-Docker; kind cluster managed by
   `kind-up` / `kind-down`; control-plane operator added as a
   Compose service; closes Phase R6 (R6.3).** R6.3 places the
