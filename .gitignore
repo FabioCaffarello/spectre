@@ -62,6 +62,12 @@ build/
 !/build/docker/**
 !/build/kind/
 !/build/kind/**
+# `tools/build/` (R6.5.1) hosts the version-coherence script that
+# enforces build/docker/versions.env <-> Dockerfile ARG defaults.
+# Source-controlled; carved out from the unanchored `build/` rule
+# above which targets Node/TS build outputs.
+!tools/build/
+!tools/build/**
 .pnpm-store/
 .turbo/
 .tsbuildinfo
