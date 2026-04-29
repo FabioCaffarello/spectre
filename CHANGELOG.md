@@ -9,6 +9,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Devcontainer with Docker-in-Docker; kind cluster managed by
+  `kind-up` / `kind-down`; control-plane operator added as a
+  Compose service; closes Phase R6 (R6.3).** R6.3 places the
+  operator inside the unified Compose stack alongside a local
+  `spectre-dev` kind Kubernetes cluster running in the
+  devcontainer's Docker-in-Docker daemon (ADR-0025 §6 R6.3
+  update + ADR-0018 §3a R6.3 evolution). The
+  `.devcontainer/devcontainer.json` adds the official
+  `ghcr.io/devcontainers/features/docker-in-docker:2` feature
+  (Moby variant + Compose v2), populates `forwardPorts` for
+  eleven application + stateful service ports, attaches human
+  labels via `portsAttributes`, and adds
+  `ms-azuretools.vscode-docker`. The Dockerfile pins
+  `KIND_VERSION=0.24.0` and harmonises `BUF_VERSION` 1.45.0 →
+  1.55.1 with `build/docker/versions.env`; the post-create
+  script grows from five to eight numbered steps (kind cluster
+  creation + CRD install + version-print sanity precede the
+  ready banner). New `build/kind/cluster.yaml` (single-node
+  `spectre-dev` config) + `build/kind/.gitignore`; the
+  `.gitignore` carve-out is extended to track `/build/kind/`
+  alongside `/build/docker/`. `docker-compose.yml` gains a
+  `control-plane` service (image `spectre-control-plane:dev` +
+  `pull_policy: never`; depends on engine + postgres-healthy;
+  joins both the Compose default network and the external
+  `kind` Docker network; mounts `build/kind/kubeconfig` read-only
+  at `/home/nonroot/.kube/config`; passes
+  `--engine-endpoint=engine:8090 --health-probe-bind-address=:8081
+  --metrics-bind-address=0 --leader-elect=false`; profiles
+  `app`, `full`); top-level `networks:` block declares `kind` as
+  `external: true name: kind`. New justfile recipes:
+  `kind-up` (idempotent — writes `kind get kubeconfig --internal`
+  to `build/kind/kubeconfig` with server URL
+  `https://spectre-dev-control-plane:6443`), `kind-down`,
+  `kind-status`, `crds-install`, `crds-uninstall`. The
+  R6.2 host-process `op-run` recipe is **deleted** entirely (no
+  legacy paths per master strategy §2.2);
+  `op-install-crds` / `op-uninstall-crds` are renamed
+  `crds-install` / `crds-uninstall` and repointed at
+  `build/kind/kubeconfig`, with one-cycle deprecation aliases
+  preserving the old names (removed in R7.1). Sample-manifest
+  endpoints updated: `_endpoint.yaml` flips
+  `127.0.0.1:8090` → `engine:8090` (the Compose-internal
+  hostname the operator container resolves);
+  `_hello-hackernews.yaml` comment corrected (Helm provisions
+  the in-cluster Service; Compose dev uses the Endpoint
+  sample). ADR-0018 frontmatter status flipped to
+  "partially superseded; see status notes in §3, §4 and §5";
+  new §3a "R6.3 evolution: Docker-in-Docker for the
+  devcontainer" subsection records the audit trail (citing
+  ADR-0020 §85–91 master commitment, the two-kubeconfig dance,
+  the shared `kind` Docker network, and BUF version
+  harmonisation). ADR-0025 §6 gains "R6.3 update — resolution"
+  subsection; §9 deferrals each marked "(resolved in R6.3)".
+  `docs/architecture/development-environment.md` rewritten for
+  the post-R6.3 unified flow (Reopen-in-Container as the
+  supported path; new "Kubernetes-in-Docker (kind)" + "DinD
+  model" subsections; toolchain prerequisites slimmed to "Docker
+  on the host"). `docs/architecture/control-plane.md` Phase 3
+  status table flips the R6.3 row to shipped; deployment-shapes
+  table widened with R6.3 marked current; the host-operator
+  subsection replaced by the post-R6.3 "Operator-as-Compose-
+  service against a kind API server" walkthrough. README
+  quick-start rewritten. **Phase R6 CLOSED** with this PR's
+  merge — the master-strategy §2.5 promise ("what runs in
+  development equals what runs in production") holds for
+  application services and their direct dependencies; v1alpha1
+  deferrals (mTLS, multi-arch images, Helm chart) are Phase R7
+  work. **No new ADR** — ADR-0020 §4 refactor table locks Phase
+  R6 to ADR-0025 only. **No source-code changes** beyond
+  sample-manifest endpoint updates (topology). Conformance suite
+  unchanged per ADR-0025 §5. Capability invariant 13/12/6 holds
+  byte-for-byte.
 - **Unified Compose stack with application services; profile-based
   topology; ADR-0025 introduced (R6.2).** `docker-compose.yml`
   gains four application services — engine, playwright-adapter,
@@ -138,6 +210,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Devcontainer toolchain `BUF_VERSION` harmonised 1.45.0 →
+  1.55.1 (R6.3 — `build/docker/versions.env` is the single
+  source of truth).** ADR-0018 §3a records the harmonisation;
+  Go / Node / Python / protoc were already aligned.
+- **`spectre_v1alpha2_scrapejob_endpoint.yaml` sample (R6.3).**
+  The `engineRef.endpoint` field flips
+  `127.0.0.1:8090` → `engine:8090` to reflect the post-R6.3
+  topology where the operator runs as a Compose service and
+  resolves engine via the Compose default network's DNS. The
+  comment block describes the unified `just kind-up && just
+  compose-up` flow that replaces the R6.2 multi-terminal
+  `op-run` walkthrough. The `_hello-hackernews.yaml`
+  Service-form sample's comment block is corrected: Helm (R7.1)
+  provisions the in-cluster Service; the post-R6.3 dev flow
+  uses the Endpoint sample.
 - **Application port range migrated from 9090–9093 to 8090–8093
   (R6.2 — ADR-0021 §4 / ADR-0025 §7).** The engine's bind port
   default flips 9090 → 8090; adapter Dockerfile `EXPOSE` /
@@ -168,6 +255,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`just op-run` recipe (R6.3 — ADR-0025 §6 R6.3 update).** The
+  R6.2 host-process operator flow is gone; the operator runs as
+  the `control-plane` Compose service. No fallback path
+  survives — master strategy §2.2 forbids "temporary" legacy
+  fallbacks during refactor. `op-install-crds` /
+  `op-uninstall-crds` are renamed `crds-install` /
+  `crds-uninstall`; the old names are kept as one-cycle
+  deprecation aliases (removed in R7.1).
 - **`TestFailedOnUnsupportedSink` deleted (R5.1).** Every
   v1alpha2 `OutputSink` variant is now wired; the test's input
   set (a sink the reconciler rejects) has gone to zero.
