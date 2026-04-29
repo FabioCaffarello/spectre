@@ -404,10 +404,12 @@ op-image-smoke: op-image
 # R6.3 places the control-plane operator inside the Compose stack
 # alongside a `kind` cluster running in the same Docker daemon
 # (Docker-in-Docker, devcontainer-managed). The operator container
-# joins kind's Docker network and dials `kind-control-plane:6443`
-# directly; `kubectl` from the devcontainer terminal reaches the same
-# cluster via kind's host-side kubeconfig at `~/.kube/config` (kind
-# writes that automatically on cluster creation).
+# joins kind's Docker network and dials
+# `spectre-dev-control-plane:6443` directly (kind names the node
+# after the cluster, `<cluster>-control-plane`); `kubectl` from the
+# devcontainer terminal reaches the same cluster via kind's
+# host-side kubeconfig at `~/.kube/config` (kind writes that
+# automatically on cluster creation).
 #
 # Lifecycle is independent of Compose: `kind-up` is idempotent and
 # the post-create script runs it once per devcontainer build;
@@ -416,10 +418,10 @@ op-image-smoke: op-image
 # Create the local kind cluster used by the operator container
 # (ADR-0025 §6 resolution / R6.3). Idempotent — skips creation if
 # the cluster exists. Writes the in-DinD-rewritten kubeconfig
-# (server URL `https://kind-control-plane:6443`) to
-# `build/kind/kubeconfig`, which `docker-compose.yml`'s
-# `control-plane` service mounts read-only at
-# `/home/nonroot/.kube/config`.
+# (server URL `https://spectre-dev-control-plane:6443` — kind
+# names the node after the cluster) to `build/kind/kubeconfig`,
+# which `docker-compose.yml`'s `control-plane` service mounts
+# read-only at `/home/nonroot/.kube/config`.
 kind-up:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -431,7 +433,7 @@ kind-up:
     mkdir -p build/kind
     kind get kubeconfig --name spectre-dev --internal \
         > build/kind/kubeconfig
-    echo "wrote build/kind/kubeconfig (server: https://kind-control-plane:6443)"
+    echo "wrote build/kind/kubeconfig (server: https://spectre-dev-control-plane:6443)"
 
 # Tear down the kind cluster. Used by the contributor when they
 # want a clean reset; not run by `compose-down` (the cluster is

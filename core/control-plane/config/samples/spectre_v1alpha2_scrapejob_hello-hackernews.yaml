@@ -5,9 +5,11 @@
 #
 # This sample assumes a `spectre-engine` Kubernetes Service in the
 # `spectre-system` namespace exposing the engine's gRPC port (8090).
-# Helm (R7.1) and the Compose stack (R6.2) provision that Service.
-# For ad-hoc local testing without a Service, see
-# spectre_v1alpha2_scrapejob_endpoint.yaml.
+# Helm (R7.1) provisions that Service for in-cluster deployments.
+# For the post-R6.3 Compose dev flow (where the engine runs as a
+# Compose service rather than an in-cluster Pod), use
+# spectre_v1alpha2_scrapejob_endpoint.yaml, which dials the
+# Compose-internal `engine:8090` hostname directly.
 apiVersion: spectre.io/v1alpha2
 kind: ScrapeJob
 metadata:

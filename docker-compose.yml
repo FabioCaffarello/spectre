@@ -1,22 +1,29 @@
 # Spectre — local-development Compose stack.
 #
-# R6.2 brings the application services (engine + three reference
+# R6.2 brought the application services (engine + three reference
 # adapters) into the Compose stack alongside the stateful services
-# from R4.x and R5.1. The full development graph is eleven services
-# under one network; the recommended invocation is
-# `docker compose --profile full up -d` (aliased as
-# `just compose-up`). See ADR-0025 for the topology, profile
-# design, port-migration scope, conformance-suite scope, and the
-# operator-outside-Compose deferral.
+# from R4.x and R5.1. R6.3 added the control-plane operator as the
+# eleventh service (ADR-0025 §6 R6.3 update). The full development
+# graph is eleven services on the Compose default network plus a
+# kind cluster on its own Docker network — the operator joins both.
+# The recommended invocation is `docker compose --profile full up
+# -d` (aliased as `just compose-up`). See ADR-0025 for the
+# topology, profile design, port-migration scope, conformance-suite
+# scope, and the resolved operator + kind deferral.
 #
-# Operator deferral (ADR-0025 §6). The control-plane operator
-# (`core/control-plane/`) stays a host process for R6.2; running
-# it from `just op-run` against the developer's external `kind`
-# cluster, dialling the Compose-running engine via the host-port
-# mapping `127.0.0.1:8090`. R6.3 (Devcontainer with
-# Docker-in-Docker) brings the operator into the unified shape.
+# Operator topology (ADR-0025 §6 R6.3 update). The control plane
+# (`core/control-plane/`) runs as the `control-plane` Compose
+# service. It dials `engine:8090` on the Compose default network
+# and `spectre-dev-control-plane:6443` on the external `kind`
+# Docker network (kind names the API-server node after the cluster).
+# The kubeconfig at `build/kind/kubeconfig` (written by `just
+# kind-up` with the `--internal` flag, server URL
+# `https://spectre-dev-control-plane:6443`) is mounted read-only
+# at `/home/nonroot/.kube/config`. The contributor flow is `just
+# kind-up && just compose-up`; on first devcontainer build the
+# post-create script runs `kind-up` automatically.
 #
-# Profiles (ADR-0025 §4):
+# Profiles (ADR-0025 §4 + §6 R6.3 update):
 #   infra    — six stateful services only (pre-R6.2 default).
 #              Used by the conformance suite (subprocess-spawned
 #              adapters) and by contributors running native-binary
@@ -25,8 +32,8 @@
 #              Engine integration tests target this profile.
 #   adapters — redis + the three adapter services. Adapter-only
 #              experimentation via `grpcurl`.
-#   app      — headless full stack (no observability UIs). Aimed
-#              at CI runs.
+#   app      — headless full stack (no observability UIs) +
+#              control-plane operator. Aimed at CI runs.
 #   full     — everything (app + kafka-console). Default human
 #              dev flow. The README quick-start uses this profile.
 #
@@ -389,6 +396,75 @@ services:
       retries: 5
       start_period: 10s
     profiles: ["adapters", "app", "full"]
+
+  # Control-plane operator — Kubernetes-style controller reconciling
+  # ScrapeJob CRs. R6.3 (ADR-0025 §6 R6.3 update) brings the operator
+  # into the unified Compose stack alongside a kind cluster running
+  # in the same Docker daemon (Docker-in-Docker, devcontainer-managed).
+  #
+  # Networking topology:
+  #   - Joins the Compose default network → reaches `engine:8090`
+  #     and `postgres:5432` by service-name DNS.
+  #   - Joins the external `kind` Docker network → reaches
+  #     `spectre-dev-control-plane:6443` (the in-DinD kind API
+  #     server; kind names the node after the cluster).
+  #   - The kubeconfig at `build/kind/kubeconfig` (host path on
+  #     the devcontainer; container path
+  #     `/home/nonroot/.kube/config`) is written by `just kind-up`
+  #     with `--internal` so the server URL resolves on the kind
+  #     Docker network. `just kind-up` must run before
+  #     `compose-up`; the post-create script runs it automatically
+  #     on first devcontainer build.
+  #
+  # No `ports:` mapping for 8081 (operator probes) — dev-mode
+  # noise the contributor doesn't usually inspect. Reconciliation
+  # surfaces through `kubectl get scrapejob -w` and
+  # `docker compose logs control-plane`. Uncomment a `- "8081:8081"`
+  # mapping if needed.
+  #
+  # `--metrics-bind-address=0` disables the metrics server (the
+  # kubebuilder default-disable; v1alpha1 adds no Prometheus stack).
+  # `--leader-elect=false` is the dev-default; R7.1's Helm chart
+  # turns it on for production via values.
+  control-plane:
+    image: spectre-control-plane:dev
+    container_name: spectre-control-plane
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      engine:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    networks:
+      - default
+      - kind
+    environment:
+      SPECTRE_ENGINE_ENDPOINT: "engine:8090"
+      SPECTRE_POSTGRES_URL: "postgres://spectre:spectre_dev_password@postgres:5432/spectre"
+      KUBECONFIG: "/home/nonroot/.kube/config"
+    volumes:
+      - ./build/kind/kubeconfig:/home/nonroot/.kube/config:ro
+    command:
+      - "--engine-endpoint=engine:8090"
+      - "--health-probe-bind-address=:8081"
+      - "--metrics-bind-address=0"
+      - "--leader-elect=false"
+    profiles: ["app", "full"]
+
+# `default` is Compose's auto-named network — every other service
+# uses it implicitly. `kind` is the external Docker network kind
+# creates when `kind create cluster` runs (`just kind-up` —
+# ADR-0025 §6 R6.3 update). Declaring it `external: true` means
+# Compose attaches the control-plane container to it without
+# trying to create it; if the network is missing, `compose up`
+# fails with "network kind not found", which is the designed
+# behaviour (run `just kind-up` first).
+networks:
+  default:
+  kind:
+    external: true
+    name: kind
 
 volumes:
   spectre_postgres_data:
