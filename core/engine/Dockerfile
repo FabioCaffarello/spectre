@@ -27,6 +27,26 @@
 # Usage: docker buildx bake engine
 
 ARG RUST_VERSION
+
+# Forward-readiness for multi-arch (R6.5.3). TARGETPLATFORM /
+# TARGETARCH are auto-populated by BuildKit per stage when declared
+# inside the stage; declaring them at the top documents the
+# build-arg surface contributors will use once the cross-compile
+# blocker below is unblocked.
+ARG TARGETPLATFORM
+ARG TARGETARCH
+
+# R7.x: multi-arch unblock — see ADR-0018 §5 R6.5.3 update for the
+# cross-compile plan. The engine ships amd64-only today: MUSL_TARGET
+# is hardcoded to x86_64-unknown-linux-musl; the apt-installed
+# musl-tools + the manual `x86_64-linux-musl-g++` symlink + the
+# `cp -r /usr/include/x86_64-linux-gnu/curl /usr/include/x86_64-linux-musl/curl`
+# step are all amd64-specific. Unblock requires (a) selecting
+# MUSL_TARGET per ${TARGETARCH} (aarch64-unknown-linux-musl on
+# arm64), (b) installing the matching cross-compiler
+# (gcc-aarch64-linux-gnu + g++-aarch64-linux-gnu) and creating an
+# `aarch64-linux-musl-g++` symlink, (c) selecting the libcurl
+# include-path source per ${TARGETARCH}.
 ARG MUSL_TARGET=x86_64-unknown-linux-musl
 
 # ---------------------------------------------------------------------------
