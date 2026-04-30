@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (partially evolved by ADR-0027 — see status notes in §2 and §3)
 date: 2026-04-25
 deciders: [Fabio Caffarello]
 ---
@@ -90,6 +90,20 @@ All four paths are gitignored. All four are produced reproducibly:
 the same protobuf input yields byte-identical output, with no
 embedded timestamps.
 
+#### ADR-0027 evolution (Phase R6.6)
+
+[ADR-0027](0027-sdk-strategy.md) §2 evolves §2's per-language
+output locations once the first SDK migration lands. Per-language
+generated bindings move into `sdks/<lang>/<protocol>/<version>/`
+(per-language workspace, per-protocol-version package); each SDK
+package owns its codegen invocation. The four locations recorded
+above describe the pre-SDK pattern (every Dockerfile re-runs `buf
+generate`) preserved at R6.6-close. ADR-0027 §2 is explicit that
+ADR-0007 §1 (per-language generators) and ADR-0007 §4 (CI shape)
+carry forward unchanged; only output locations and bootstrap
+sequencing evolve. See ADR-0027 for the migration trajectory and
+the gating on the first consumer-side adoption.
+
 ### 3. Bootstrap order
 
 `proto-generate` is a prerequisite of every consumer's
@@ -111,6 +125,19 @@ happens lazily on the first `cargo check` / `cargo build` /
 Rust output until cargo is invoked. That is consistent with how
 tonic-build is expected to integrate, and it means Rust generation
 output never appears in `proto/gen/`.
+
+#### ADR-0027 evolution (Phase R6.6)
+
+[ADR-0027](0027-sdk-strategy.md) §3 evolves §3's bootstrap
+sequencing in tandem with §2. Once an SDK package owns codegen for
+its language and protocol version, the consumer's bootstrap
+prerequisite shifts from `proto-generate` to a per-SDK-package
+build/install step, and the per-Dockerfile `buf generate` invocation
+is retired in that consumer's image. The migration is per-consumer
+and gated; the §3 sequencing recorded above is the contract for
+consumers that have not yet migrated. ADR-0027 §3 specifies the
+migration order (engine first, adapters second) and the cutover
+acceptance gates.
 
 ### 4. CI integration shape
 
