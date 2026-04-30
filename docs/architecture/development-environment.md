@@ -199,7 +199,7 @@ just images && just compose-up
 # Apply a sample ScrapeJob. The Endpoint-form sample dials the
 # Compose-internal `engine:8090` hostname directly — the
 # canonical post-R6.3 dev-flow demo.
-kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
+kubectl apply -f operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
 kubectl get scrapejob -w       # Pending → Running → Completed
 
 # Inspect operator activity.

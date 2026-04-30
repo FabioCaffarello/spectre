@@ -4,7 +4,7 @@ The Spectre control plane is a Kubernetes-native operator that lets
 operators submit, observe, and (eventually) schedule extraction jobs
 against the engine and its adapters. PR14 opened Phase 3 with the
 operator's foundation: a kubebuilder v4 scaffold under
-`core/control-plane/`, a `ScrapeJob` Custom Resource Definition, and
+`operators/control-plane/`, a `ScrapeJob` Custom Resource Definition, and
 a state-machine reconciler. R3.1 wired the operator as a thin gRPC
 client of the engine service. R3.2 evolves the CRD to v1alpha2 with
 two substantive additions — `EngineRef` (Service or Endpoint) and
@@ -229,9 +229,9 @@ EOF
 
 `ScrapeJob` represents a single execution of a DSL job. The full
 schema lives at
-[`api/v1alpha2/scrapejob_types.go`](../../core/control-plane/api/v1alpha2/scrapejob_types.go);
+[`api/v1alpha2/scrapejob_types.go`](../../operators/control-plane/api/v1alpha2/scrapejob_types.go);
 the canonical YAML is
-[`config/crd/bases/spectre.io_scrapejobs.yaml`](../../core/control-plane/config/crd/bases/spectre.io_scrapejobs.yaml).
+[`config/crd/bases/spectre.io_scrapejobs.yaml`](../../operators/control-plane/config/crd/bases/spectre.io_scrapejobs.yaml).
 
 ### Spec
 
@@ -292,10 +292,10 @@ kubectl delete scrapejob --all --all-namespaces
 # 2. Install the v1alpha2 CRD (Helm or raw kustomize).
 helm upgrade spectre charts/spectre        # R7.1 path
 # or
-kubectl apply -k core/control-plane/config/crd/
+kubectl apply -k operators/control-plane/config/crd/
 
 # 3. Apply v1alpha2 CRs.
-kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml
+kubectl apply -f operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml
 ```
 
 `Status.ResolvedEngineEndpoint` lets you confirm `EngineRef`
@@ -312,7 +312,7 @@ kubectl get scrapejob hello-hackernews \
 
 ```bash
 just op-test
-# Equivalent to: cd core/control-plane && make test
+# Equivalent to: cd operators/control-plane && make test
 ```
 
 `make test` downloads apiserver and etcd binaries via setup-envtest,
@@ -340,7 +340,7 @@ just crds-install          # apply the v1alpha2 ScrapeJob CRD
 just compose-up            # eleven services, including operator
 
 # Apply a sample ScrapeJob.
-kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
+kubectl apply -f operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
 kubectl get scrapejob -w   # Pending → Running → Completed
 
 # Inspect operator activity.
@@ -454,7 +454,7 @@ These deferrals are intentional and have phase pointers:
 - **Run `just op-test`.** envtest's first run pulls binaries; expect
   ~2 minutes the first time.
 - **Read the reconciler at
-  [`internal/controller/scrapejob_controller.go`](../../core/control-plane/internal/controller/scrapejob_controller.go).**
+  [`internal/controller/scrapejob_controller.go`](../../operators/control-plane/internal/controller/scrapejob_controller.go).**
   It is a `switch` over phases with two new helpers
   (`resolveEngineEndpoint`, `validateOutputSink`); the
   `runner.JobRunner` call site at the Running case is wired to
@@ -462,7 +462,7 @@ These deferrals are intentional and have phase pointers:
   envtest. The `RunnerFactory` field is the per-Reconcile
   construction seam (R3.2).
 - **Read `EngineClientRunner` at
-  [`internal/runner/engine_client.go`](../../core/control-plane/internal/runner/engine_client.go).**
+  [`internal/runner/engine_client.go`](../../operators/control-plane/internal/runner/engine_client.go).**
   ~140 lines of gRPC stream consumption; the bufconn-based
   test suite next to it covers the success / failure /
   cancellation / dial-error / writer-error branches.

@@ -4,7 +4,7 @@ The Spectre engine is a stateless gRPC service that compiles a
 Spectre DSL document into a sequence of Driver Protocol RPCs and
 streams the resulting JSONL rows back to the caller. After R2.3
 (ADR-0020 §3) it is no longer a CLI; the binary at
-`core/engine/src/bin/spectre.rs` does one thing — start the gRPC
+`engines/engine/src/bin/spectre.rs` does one thing — start the gRPC
 service.
 
 This document describes the post-R2.3 shape. For the DSL → plan

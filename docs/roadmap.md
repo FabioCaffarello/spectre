@@ -1,337 +1,266 @@
 # Roadmap
 
-This roadmap is a forecast, not a promise. Dates are absent on
-purpose — the maintainers will move milestones based on real
-progress, not a schedule the prompt forced into existence. The
-phases are listed in dependency order; each phase unblocks the next.
+This roadmap is a forecast, not a commitment. Dates are absent on
+purpose — milestones move with real progress, not a schedule a
+prompt forced into existence. The roadmap is organised by
+[platform category](architecture/overview.md#§1--platform-taxonomy)
+rather than by chronological phase: it answers "what comes next
+under each part of the platform" rather than "which PR ships
+when". Per-phase execution is tracked in
+[`refactoring-status.md`](refactoring-status.md); the historical
+audit lives in [`refactor-audit.md`](refactor-audit.md).
 
-> **Last updated:** 2026-04-27 (Phase 3 in progress; PR18 closes v1alpha1 adapter bundling — the operator image now ships engine + Playwright + SeleniumBase + curl-impersonate, all three kind smokes green). **An architectural refactor (R1–R8) is now in progress; see [ADR-0020](adr/0020-microservices-architecture-supersession.md) and [`docs/refactoring-status.md`](refactoring-status.md). Phase 3's subprocess-in-pod execution model is superseded; `ScrapeFleet`, `ScrapeSchedule`, the Helm chart, and webhooks are deferred until the refactor completes.**
->
-> **R2.1 update.** The transport and discovery contracts that R2.2 / R2.3 implement are now recorded as [ADR-0021 (service discovery)](adr/0021-service-discovery.md) and [ADR-0022 (TCP / gRPC transport)](adr/0022-tcp-grpc-transport.md). The full UDS removal inventory consumed by R2.2 / R2.3 lives in [`docs/refactor-audit.md`](refactor-audit.md). ADR-0008 §2 / §4 are formally superseded.
+> **Last updated:** 2026-04-30 (Phase R6.6 close — Platform
+> Maturation. Four ADRs (0026–0029) accepted; the repository
+> restructure is enacted; fossil documents from the bootstrap
+> era removed; architecture overview rewritten. R7.1 — Helm
+> chart packaging — opens next.)
 
-## Phase 0 — Foundation (current)
+## §1 — Where we are (post-R6.6)
 
-Goal: a credible, navigable repository that signals "this person
-knows what they are doing." Nothing has to *run* yet.
+The microservices runtime ([ADR-0020](adr/0020-microservices-architecture-supersession.md))
+shipped end-to-end across Phases R1–R6.5:
 
-- [x] Repository structure and foundational documents (LICENSE,
-      README, CONTRIBUTING, GOVERNANCE, SECURITY).
-- [x] Editor / Git config, pre-commit, CI workflow scaffolding.
-- [x] Architecture Decision Records 0001–0007.
-- [x] `justfile` build orchestration.
-- [x] Driver Protocol skeleton at `v1alpha1` (Step 2.6).
-- [x] Three reference adapter skeletons (Playwright, SeleniumBase,
-      curl-impersonate) — directory layout, manifests, README, build
-      passes (Step 2.8).
-- [x] Conformance suite skeleton (Step 2.9).
-- [x] Protocol code-generation pipeline wired across Rust, Go,
-      Python, and TypeScript (ADR-0007). Every consumer imports
-      generated types instead of literal protocol strings.
+- **Transport (R2.1 + R2.2 + R2.3).** UDS retired; gRPC over TCP
+  is the only supported transport. Adapters run as long-running
+  services with `grpc.health.v1.Health` readiness.
+- **Control plane (R3.1 + R3.2).** The operator submits jobs to
+  the engine via gRPC `RunJob`; the `ScrapeJob` CRD is
+  v1alpha2-only with discriminated-union fields and CEL
+  validation. The `SubprocessRunner` and the `spectre run` CLI
+  are retired.
+- **Stateful services (R4.2 + R4.3 + R4.4).** PostgreSQL persists
+  job state; Kafka receives streamed row events; Redis caches
+  per-session metadata.
+- **Output sinks (R5.1).** S3 and HTTP webhook complete the
+  four-sink set (stdout / Kafka / S3 / webhook).
+- **Devcontainer + image story (R6.1 + R6.2 + R6.3).** Every
+  service is built by `docker-bake.hcl`; the Compose stack runs
+  end-to-end inside the devcontainer with operator-as-Compose
+  joining a Docker-in-Docker `kind` external network.
+- **Quality and hardening (R6.5.1 + R6.5.2 + R6.5.3 + R6.5.4).**
+  Stale-references swept; CI matrix `images` and `full-stack`
+  gate green on every PR; multi-arch publish to Docker Hub wired
+  for the two unblocked images; shared `buf-base` codegen base
+  cuts build duplication.
+- **Platform Maturation (R6.6).** Four ADRs (0026–0029) commit
+  the platform taxonomy, SDK strategy, infra-services catalog,
+  and data-platform model. Repository restructure dissolves
+  `core/` into `engines/` + `operators/`; four placeholder
+  categories (`infra-services/`, `sdks/`, `data-platform/`,
+  `shared-libs/`) reserve home for v1alpha2 growth.
 
-Exit criterion: every component compiles to nothing useful but
-compiles cleanly. CI is green. **Met.** Phase 1 work is unblocked.
+The platform is feature-complete for the v1alpha1 surface. The
+remaining refactor work is production-readiness (R7.x) and a
+narrative-closing documentation pass (R8.1).
 
-## Phase 1 — Hello, World (complete)
+## §2 — v1alpha1 production posture (R7.x)
 
-Goal: end-to-end execution of a trivial job through the protocol.
+Phase R7 ships v1alpha1 in production-installable shape. Two
+phases are committed; details land in their per-phase prompts.
 
-PR8 closed Phase 1. The `spectre` CLI is the engine binary
-(ADR-0013) and `spectre run examples/hello-hackernews/job.yaml`
-produces JSONL against the live Hacker News front page.
+- **R7.1 — Helm chart packaging.** A `build/helm/spectre/` chart
+  (or equivalent — final location is R7.1's call per
+  [ADR-0026](adr/0026-platform-taxonomy.md) §3.9 since Helm
+  artifacts are out-of-band) installs the engine + three
+  adapters + control plane + stateful dependencies into a
+  cluster. Configuration surface mirrors Compose: per-service
+  env vars, Postgres/Redis/Kafka connection strings, sink
+  targets. The chart consumes the published images from
+  [Docker Hub](architecture/releases.md). Acceptance: a
+  contributor with a fresh cluster can `helm install spectre`
+  and submit a `ScrapeJob` end-to-end.
+- **R7.2 — Production smoke.** A scheduled CI job installs the
+  Helm chart into a kind cluster, runs the three reference
+  ScrapeJobs to `Completed`, and asserts row events arrive at
+  each sink (Kafka, S3 / MinIO, webhook). The end-to-end signal
+  that R7.1's chart matches Compose semantics.
 
-- [x] Engine parses the minimal DSL (one navigation + one extract).
-      ADR-0012 §1, §2.
-- [x] Engine speaks gRPC over UDS to a single driver. tonic client
-      with a tower-based UDS connector; `:authority` set to
-      `localhost` to mirror ADR-0008. ADR-0012 §3, §4.
-- [x] Playwright reference adapter implements every v1alpha1 unary
-      RPC. The protocol surface is complete on this driver;
-      remaining Phase 1 work is engine-side.
-  - [x] `Initialize` — gRPC over UDS, with `Capabilities` declared
-        at handshake. ADR-0008.
-  - [x] `Navigate` — lazy Chromium launch, per-session
-        `BrowserContext`, error-mapping table from
-        `Playwright → DriverError.Code`. ADR-0009.
-  - [x] `Close`, `Query`, `Extract` — strict ElementRef
-        invalidation on Navigate, per-session UUID registry,
-        runtime gating of `MODE_EVAL` on `js_execution`. ADR-0010.
-  - [x] `Screenshot` — three scopes (viewport, full-page,
-        element), two formats (PNG, JPEG with quality 80),
-        read-only contract (no generation bump, refs remain
-        valid), payload-size boundary documented at ~4MB.
-        ADR-0011.
-- [x] `spectre run examples/hello-hackernews/job.yaml` produces a
-      JSONL file with the expected rows. Delivered by PR8: the
-      `spectre` CLI is the engine binary at
-      `core/engine/src/bin/spectre.rs`, with three subcommands
-      (`run`, `validate`, `version`). ADR-0013 records why the CLI
-      moved from Go (per ADR-0002) to Rust after PR7 made the engine
-      binary real.
-- [x] Conformance suite covers every v1alpha1 unary RPC against
-      the Playwright adapter (`Initialize`, `Navigate × 5`,
-      `Close × 3`, `Query × 5`, `Extract × 5`, `Screenshot × 4`).
-      The Driver Protocol byte-for-byte capability assertion
-      holds against the thirteen declared capability names.
+Three multi-arch unblocks are tracked outside the phase
+sequencing — each has a per-image trigger documented in
+[ADR-0018](adr/0018-devcontainer-and-engine-image.md) §5
+(R6.5.3 update):
 
-Exit criterion: a new contributor can `git clone && just bootstrap &&
-spectre run examples/hello-hackernews/job.yaml` and see results.
-**Met.** Phase 2 work is unblocked.
+- **Engine** — Rust musl arm64 cross-compile path.
+- **SeleniumBase** — Chromium arm64 availability or a documented
+  swap to a Chromium-equivalent runtime.
+- **curl-impersonate** — runtime base image with arm64 support
+  and the curl-impersonate variant binaries available there.
 
-## Phase 2 — Three drivers, one protocol
+Each unblocks under its own focused PR; none gates R7.1 / R7.2.
 
-Goal: validate the protocol design by running it against all three
-reference runtimes.
+## §3 — Documentation refresh (R8.1)
 
-- [ ] SeleniumBase reference adapter — `v1alpha1` minimum capability
-      set. Passes conformance.
-  - [x] `Initialize` + `Navigate` over gRPC on a UDS.
-        Capabilities declared: `["navigation"]`. Selenium-error
-        mapping table for Navigate-relevant rows. Cross-language
-        conformance pattern (two explicit fixtures). ADR-0014.
-        (PR9.)
-  - [x] `Close`, `Query`, `Extract` — strict ElementRef
-        invalidation per ADR-0010, plus the eight `query_*` /
-        `extract_*` capability declarations, the `js_execution`
-        gate, and the SeleniumBase-specific deviations
-        (WebElement vs Locator with two distinct stale messages,
-        SELECTOR_KIND_TEXT via XPath escaping, Field.Mode
-        mapping onto Selenium APIs). ADR-0015 §1–§4. (PR10.)
-  - [x] `Screenshot` — `screenshot_viewport` and
-        `screenshot_element` only; `screenshot_full_page` is
-        intentionally not declared because Selenium WebDriver
-        has no reliable, browser-independent full-page capture
-        API. The read-only contract from ADR-0011 carries
-        forward unchanged. ADR-0015 §5. (PR10.)[^sb-fullpage]
+Phase R8.1 closes the refactor's narrative. The targets:
 
-[^sb-fullpage]: `screenshot_full_page` for SeleniumBase is a
-    v1alpha2 candidate, likely as a Chromium-specific
-    sub-capability (e.g. `screenshot_full_page_cdp`) that
-    operators opt into with awareness of the dependency. The
-    Playwright adapter declares the umbrella name today; the
-    SeleniumBase adapter does not, validating the capability
-    progression contract from ADR-0014 §1.
-- [x] curl-impersonate reference adapter — `v1alpha1` capability set
-      tailored to HTTP-only flows (no JS execution, no screenshots).
-      Passes conformance.
-  - [x] `Initialize` + `Navigate` over gRPC on a UDS, plus a thin
-        `Close` so the engine's executor can finish navigate-only
-        plans (same precedent ADR-0014 set for SeleniumBase PR9).
-        Capabilities declared: `["navigation"]`. curl-error mapping
-        table for Navigate-relevant rows. Per-session cookie-jar
-        architecture readied for PR12. Subprocess-over-cgo and
-        WaitCondition-as-no-op decisions recorded. ADR-0016. (PR11.)
-  - [x] `Close` (full contract), `Query`, `Extract` — declared
-        capabilities grow to **six** entries (alphabetical:
-        `extract_attribute`, `extract_html`, `extract_text`,
-        `navigation`, `query_css`, `query_xpath`). goquery
-        (CSS) and htmlquery (XPath) land as the parsing
-        libraries. The MODE_EVAL runtime gate from ADR-0010 §3
-        is exercised at conformance for the first time
-        (`test_curl_impersonate_extract_eval_returns_capability_missing`).
-        ADR-0017 §1 records the most architecturally significant
-        decision: `query_text` and `query_attribute` are
-        deliberately omitted, formalising the contract that
-        capability declaration is a cross-driver semantic-
-        equivalence promise rather than a feasibility decision.
-        `js_execution`, `extract_eval`, and the `screenshot_*`
-        family remain permanently absent from this driver. (PR12.)
-- [ ] Streaming RPCs added behind a feature flag in `v1alpha2`:
-      `WatchEvents` for network monitoring, `WatchDom` for mutation
-      observation.
-- [ ] Capability extensions for cookies, header overrides, basic
-      proxy.
-- [ ] Driver manifest validation tooling.
+- `docs/MASTER_STRATEGY_REFACTOR.md` — operationally useful
+  through R7.x; R8.1 makes the keep-or-delete call.
+- `docs/refactor-audit.md` and `docs/refactoring-status.md` —
+  same lifecycle. Both retain stewardship value while the
+  refactor has open phases; R8.1 decides whether to retire as
+  historical record, fold the audit into the CHANGELOG, or
+  freeze in place.
+- `CHANGELOG.md` — promote the Unreleased section to a tagged
+  v1alpha1 entry once R7.2 closes.
+- Architecture docs — final consistency pass (every doc cites
+  current paths; every category README is in sync with its
+  governing ADR).
 
-**Exit criterion: the same `job.yaml` runs unchanged across all
-three adapters where their capabilities allow. Conformance gates
-merges to `proto/`. Met by PR12.** The visible proof is the
-[cross-driver equivalence demo](../examples/README.md#cross-driver-equivalence-demo-phase-2-exit-criterion-proof):
-`hello-hackernews` (Playwright), `seleniumbase-extract`
-(SeleniumBase), and `curl-impersonate-extract` (curl-impersonate)
-share DSL shape and exercise the four-capability intersection
-(`navigation`, `query_css`, `extract_text`, `extract_attribute`).
-Capability divergence:
+After R8.1 merges, the refactor is **done**. The platform's
+growth into v1alpha2 happens against the post-R6.6 taxonomy
+without further structural restructuring.
 
-| Adapter           | Declared count | Subset relationship                              |
-|-------------------|----------------|--------------------------------------------------|
-| Playwright        | 13             | superset of SeleniumBase + `screenshot_full_page`|
-| SeleniumBase      | 12             | superset of curl-impersonate                     |
-| curl-impersonate  |  6             | strict subset of SeleniumBase                    |
+## §4 — Beyond v1alpha1: platform trajectory
 
-ADR-0017 records PR12's decisions and the final capability table.
+The four reserved categories ([§8 of the architecture
+overview](architecture/overview.md#§8--forward-looking-categories))
+ship their first inhabitants in v1alpha2. The order below is
+forecast, not commitment; admission is gated per the governing
+ADRs.
 
-## Phase 2.5 — Container infrastructure (in progress)
+### 4.1 — `sdks/` (first migration)
 
-Goal: package the components for contributor onboarding and for
-future control-plane consumption. ADR-0014 §5 records the deferral
-rationale: containers add an inter-process boundary with no protocol
-benefit until Phase 3's control plane consumes them, so the work is
-sequenced *after* Phase 2 proves the cross-language thesis rather
-than alongside it. PR13 opens the phase with the smallest defensible
-slice; ADR-0018 records the per-axis decisions.
+[ADR-0027](adr/0027-sdk-strategy.md) commits per-language
+workspaces at `sdks/<lang>/` and per-protocol-version packages
+at `<protocol>/<version>/`. The first migration moves the engine
+and the three reference adapters off the per-Dockerfile `buf
+generate` pattern and onto consuming
+`sdks/<lang>/driver/v1alpha1/` directly. The migration is
+per-consumer and gated; ADR-0027 §3 records the order
+(engine first, adapters second) and the cutover criteria.
 
-- [x] Devcontainer config so contributors can build the engine,
-      adapters, and conformance suite without a local
-      Rust/Node/Python toolchain. Single Ubuntu 22.04 image with
-      Rust + Go + Node + Python + Chrome + curl-impersonate;
-      "Reopen in Container" produces a working environment in
-      ~5–10 minutes. ADR-0018 §1, §2. (PR13.)
-- [x] Engine Dockerfile + image. Multi-stage build (cargo-chef +
-      musl static + distroless/static:nonroot); resulting image is
-      ~15 MB. Built and smoke-tested on every PR via the new CI
-      `engine-image` job; no registry publishing yet. ADR-0018 §3,
-      §5. (PR13.)
-- [ ] Per-adapter Dockerfiles producing single-binary (or
-      single-virtualenv) images that bundle the runtime browser
-      where required. (PR14.)
-- [ ] Compose stack for local multi-service development against the
-      engine plus a chosen adapter. (PR15.)
-- [ ] CI variants that build and exercise the per-adapter images.
-      (PR14+.)
+[ADR-0007](adr/0007-protocol-code-generation.md) §2 / §3 carry
+in-place evolution notes recording the trajectory; ADR-0007 §1
+(per-language generators) and §4 (CI shape) carry forward
+unchanged.
 
-Exit criterion: a contributor can `docker compose up` a working
-engine + Playwright (or SeleniumBase) stack, and CI publishes
-adapter images keyed on tagged releases.
+### 4.2 — `infra-services/` (first slot)
 
-## Phase 3 — Distributed execution (kickoff: PR14)
+[ADR-0028](adr/0028-ancillary-infra-services-catalog.md)
+catalogues five named slots:
 
-Goal: the control plane. PR14 ships the foundation — kubebuilder v4
-scaffold, the `ScrapeJob` CRD, and a state-machine reconciler whose
-execution path is a stub. Subsequent PRs replace the stub with real
-engine invocation, add fan-out and scheduling CRDs, and package the
-operator for distribution. ADR-0019 records the per-axis decisions
-and the v1alpha2 escape hatches.
+- **`proxy-broker`** (high-conviction) — every production
+  scrape deployment needs proxy management. The natural first
+  target.
+- **`captcha-solver`** (high-conviction) — second priority;
+  unblocks adversarial targets.
+- **`fingerprint-broker`**, **`session-store`**,
+  **`rate-limit-broker`** (probable) — admission as concrete
+  consumer needs emerge.
 
-- [x] kubebuilder v4 scaffold + `ScrapeJob` CRD (v1alpha1) +
-      state-machine reconciler. `JobRunner` interface + `StubRunner`
-      implementation. envtest suite covering five phase
-      transitions. Three sample CRs, one per reference adapter.
-      ADR-0019 §1–§6. (PR14.)
-- [x] Real job execution via `SubprocessRunner` — shells out to the
-      spectre engine binary the operator image bundles, captures
-      JSONL on stdout, and reports `RowsExtracted` to the
-      reconciler. The §5 invariant from ADR-0019 held: zero changes
-      to the reconciler control flow, the `JobRunner` signature, or
-      the envtest suite (one-line writer swap from `io.Discard` to
-      `os.Stdout` so JSONL surfaces in `kubectl logs`). The operator
-      image is multi-stage: it pulls `/usr/local/bin/spectre` out of
-      `spectre-engine:dev` so the runtime layer carries both
-      binaries. (PR15.)
-- [x] Operator image bundles the Playwright adapter (Microsoft
-      Playwright base, pinned by digest) and the in-cluster smoke
-      against `hello-hackernews` ticks: 30 JSONL rows from the
-      Hacker News front page through engine → adapter → Chromium,
-      surfaced via `kubectl logs`. The §3 invariant
-      (subprocess-in-pod) and the §5 invariant (reconciler /
-      `JobRunner` / envtest unchanged) both held. SeleniumBase and
-      curl-impersonate replicate the builder-stage pattern in
-      PR17 and PR18 respectively. (PR16.)
-- [x] Operator image bundles the SeleniumBase adapter. PR17 added
-      a `seleniumbase-builder` stage that uses `uv` (pinned 0.5.11)
-      to build the adapter's venv at the final runtime path so
-      shebangs land correctly without relocation; the runtime stage
-      extends the Microsoft Playwright base from PR16 with apt-
-      installed Python 3.12, `google-chrome-stable`, and a
-      ChromeDriver provisioned via SeleniumBase's own installer
-      (Chrome 147 / ChromeDriver 147 in lockstep, asserted at
-      build time). The only adapter source diff was a five-line
-      `_default_driver_factory` patch behind a
-      `SPECTRE_SELENIUMBASE_CONTAINER` env var that adds
-      `--no-sandbox --disable-dev-shm-usage` for the `restricted`
-      PodSecurityStandard. The §3 invariant
-      (subprocess-in-pod) and the §5 invariant (reconciler /
-      `JobRunner` / runner tests / envtest unchanged) both held;
-      zero Go changes. The kind smoke now runs both samples
-      sequentially (hello-hackernews → seleniumbase-extract);
-      both reach Completed. curl-impersonate replicates the
-      same pattern in PR18. (PR17.)
-- [x] Operator image bundles the curl-impersonate adapter. PR18
-      added a `curl-impersonate-builder` stage (Go,
-      `CGO_ENABLED=0`) that regenerates the protocol bindings and
-      produces a single static `bin/adapter`. The runtime stage
-      downloads the upstream release tarball at the version + SHA-256
-      pinned in
-      [`adapters/curl-impersonate/.curl-impersonate-version`](../adapters/curl-impersonate/.curl-impersonate-version)
-      and extracts the variant binaries (`curl_chrome116` and
-      friends) onto `/usr/local/bin/`. ADR-0016 §1's
-      subprocess-over-cgo contract held byte-for-byte: the adapter
-      `os/exec`s `curl_chrome116` per Navigate, no link against
-      `libcurl-impersonate.so`. No Pod-spec change (no browser to
-      sandbox). The §3 invariant (subprocess-in-pod) and the §5
-      invariant (reconciler / `JobRunner` / runner tests / envtest
-      unchanged) both held; zero Go changes for the third PR running.
-      The kind smoke now runs all three samples sequentially
-      (hello-hackernews → seleniumbase-extract →
-      curl-impersonate-extract); all three reach Completed. PR18
-      closes v1alpha1 adapter bundling. (PR18.)
-- [ ] `ScrapeFleet` CRD (fan-out wrapper that creates N
-      `ScrapeJob` instances with parameter substitution) and
-      `ScrapeSchedule` CRD (cron-like recurring `ScrapeJob`
-      creator). Both build on `ScrapeJob` semantics. (PR19+.)
-- [ ] Helm chart at `helm/spectre-control-plane/` for cluster-side
-      installation. (PR19+.)
-- [ ] Validating and mutating webhooks beyond
-      `+kubebuilder:validation` markers. (PR19+.)
-- [ ] Observability: Prometheus metrics, OpenTelemetry traces,
-      structured logs beyond controller-runtime defaults. (Phase 3
-      follow-up.)
+The canonical shape per slot: proto definition + N providers
+(at least two for the slot to ship — one is a non-shape) +
+per-language SDKs + Compose service + Helm chart presence.
+Admission gate (ADR-0028 §5): ≥1 consumer + ≥2 providers + proto
++ SDKs + deployment posture.
 
-Exit criterion: a job submitted to the control plane runs against
-the engine, with bounded retries, quota enforcement, and observable
-state. The PR14 kickoff tightens this scope to "the operator
-recognises and reacts to ScrapeJob CRs"; the full criterion is met
-once `SubprocessRunner` (PR15) and observability are in place.
+### 4.3 — `data-platform/` (first parser)
 
-## Phase 4 — Intelligence layer
+[ADR-0029](adr/0029-data-platform-and-lake-dsls.md) commits a
+four-layer medallion lake model (L0 raw / L1 bronze / L2 silver /
+L3 gold) and three stages: `parse/` (file-format extraction the
+engine cannot do — PDF, XLSX, complex HTML), `transform/`
+(L1 → L2 cleansing), `aggregate/` (L2 → L3 rollups). Up to
+three layer-transition DSLs are reserved per criteria in
+ADR-0029 §3.
 
-Goal: selector self-healing and computer-vision-assisted extraction
-for adopters who want them.
+The engine's existing job DSL
+([ADR-0012](adr/0012-engine-dsl-and-execution-pipeline.md)) is
+the L0 entry DSL — preserved unchanged. The first
+data-platform module is likely a `parse/pdf/` or `parse/xlsx/`
+worker that consumes the `jobs.completed` Kafka topic and
+materialises L1 records.
 
-- [ ] LLM-backed selector repair: when a `Query` returns no matches,
-      the engine can request the intelligence layer suggest an
-      updated selector based on the page's current DOM and the job's
-      historical successful selectors.
-- [ ] Visual diff for layout regressions.
-- [ ] Vision-based extraction for pages where the DOM is uninformative
-      (canvas-rendered tables, images of text, etc.).
+### 4.4 — `shared-libs/` (organic admission)
 
-Exit criterion: a job whose selector silently broke after a target
-site redesign auto-heals, with clear human-readable audit logs.
+ADR-0026 §3.8 records the lightweight admission contract: a
+shared lib lands when cross-cutting copy-paste pressure crosses
+the threshold (three concrete consumer-side duplications). No
+reserved slots; first inhabitant gets reviewed against §3.8.
 
-## Phase 5 — Stable protocol and ecosystem
+Likely candidates: a logging / structured-event helper consumed
+by the engine + operator + adapters; a config-loading helper
+shared between Go services.
 
-Goal: declare `v1` and grow the driver ecosystem.
+## §5 — Stable protocol
 
-- [ ] Promote `v1alpha*` → `v1beta1` after capability surface settles.
-- [ ] Promote `v1beta1` → `v1` after a stabilisation period with no
-      breaking changes and three drivers in production use.
-- [ ] Driver registry: a published index of community-maintained
-      drivers, their declared capabilities, and their conformance
-      status.
-- [ ] SDKs in TypeScript, Python, and Go for embedding Spectre into
-      applications.
-- [ ] CLI ships as a static binary across macOS, Linux, and Windows.
+The promotion path is `v1alpha1 → v1beta1 → v1`. Promotion
+gates:
 
-Exit criterion: a third party publishes a driver against `v1`, and
-Spectre runs it without protocol changes.
+- **`v1alpha1 → v1beta1`** — capability surface stable for ≥6
+  months across the three reference adapters; no breaking
+  proto changes; conformance suite passes byte-for-byte across
+  all three drivers.
+- **`v1beta1 → v1`** — three drivers in production use across
+  external organisations (the canonical "third-party validation"
+  criterion).
 
-## Beyond Phase 5
+The capability set itself stabilises through use. The 13/12/6
+divergence at R6.6-close is the empirical baseline; a v1
+declaration likely renames `screenshot_full_page` to a more
+precise name, splits `js_execution` into pre/post-navigation
+variants, and adds capability strings for the proxy and
+fingerprint surfaces (consumer-facing manifestations of
+infra-services slots).
 
-Open questions, not yet committed:
+A driver registry — a published index of community-maintained
+drivers, their declared capabilities, and their conformance
+status — ships alongside the v1 declaration.
 
-- Browser-side WASM engine for in-page extraction without an external
-  driver.
-- A higher-level DSL above the current minimal one (joins,
-  pagination, deduplication semantics).
-- A managed-service offering as a reference deployment, hosted
-  separately from the open-source project.
+## §6 — Beyond v1
 
-These are tracked in issues labelled `phase:next` and will move to
-this document only after they have been concretely scoped.
+Open questions, deliberately unscoped:
 
-## How to influence the roadmap
+- **Browser-side WASM engine** — in-page extraction without an
+  external driver. Plausible once the Driver Protocol stabilises
+  and a WASM runtime can host the three adapter shapes
+  uniformly.
+- **Higher-level DSL** — joins, pagination, deduplication
+  semantics above the current minimal extraction DSL. Lives in
+  the `data-platform/` layer-transition DSLs (per ADR-0029) once
+  patterns emerge.
+- **Multi-cluster federation** — orchestrating ScrapeFleets
+  across geo-distributed kind clusters with per-region proxy
+  pools and routing decisions. Probably an `operators/`
+  v1alpha2 evolution rather than a new category.
+- **Managed-service offering** — a hosted reference deployment.
+  Out of scope for the open-source project.
 
-- Open a feature request on GitHub.
-- For non-trivial changes, draft an ADR.
-- Engage on existing issues. Maintainer attention follows where the
-  community is paying attention.
+These move into per-category trajectory sections only after
+they are concretely scoped against admission criteria.
+
+## §7 — How phases get scheduled
+
+[ADR-0026](adr/0026-platform-taxonomy.md) §6 commits the
+admission contract:
+
+- **New category** — requires a new ADR. The four reserved
+  categories carry pre-written ADRs (0027 / 0028 / 0029 +
+  shared-libs in ADR-0026 §3.8). A fifth category requires
+  case-specific reasoning.
+- **New module within a category** — the per-category ADR
+  records admission criteria. `infra-services/` requires the
+  five-element shape (proto + ≥2 providers + SDKs + Compose
+  + Helm). `data-platform/` requires per-stage admission per
+  ADR-0029 §7. `sdks/` requires per-language admission per
+  ADR-0027 §3.
+
+A roadmap entry — a forecast, not a commitment — follows once
+the admission criteria look reachable. The roadmap is rewritten
+at every phase boundary that adds or completes work; the
+authoritative source for a future phase's intent is its phase
+prompt, not this document.
+
+## §8 — How to influence the roadmap
+
+- **Open a feature request on GitHub** for concrete, scoped work.
+- **Draft an ADR** for non-trivial additions, especially anything
+  that crosses category boundaries or proposes a fifth category.
+- **Engage on existing issues.** Maintainer attention follows
+  community attention; an issue with five thoughtful comments
+  outweighs five issues with one comment each.
+
+The roadmap reflects current intent. It does not commit to a
+schedule, a particular PR shape, or a particular set of
+milestones. Subscribe to the CHANGELOG (and the `Unreleased`
+section in particular) for granular progress.
