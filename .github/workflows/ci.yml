@@ -317,6 +317,26 @@ jobs:
     defaults:
       run:
         working-directory: ${{ matrix.package }}
+    # All three adapters (Playwright, SeleniumBase, curl-impersonate)
+    # ping Redis at startup as a health check (Redis session
+    # externalization landed in 1479e3a / 4077d81). The conformance
+    # suite launches each adapter as a subprocess and dials it over
+    # gRPC; without a reachable Redis the adapters exit before
+    # reporting health, surfacing as 56 `HarnessFailure: driver
+    # subprocess exited before reporting health` errors. Pinned to
+    # `redis:7-alpine` for parity with `docker-compose.yml`. The
+    # service applies to both matrix entries; the seleniumbase entry
+    # ignores it.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
