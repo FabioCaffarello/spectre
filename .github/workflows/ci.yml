@@ -437,6 +437,10 @@ jobs:
       - if: matrix.package == 'tools/conformance'
         id: curl-imp-pin
         name: Resolve curl-impersonate pin (conformance)
+        # Override the job-level `defaults.run.working-directory:
+        # ${{ matrix.package }}` so the relative pin-file path
+        # resolves at the repo root, not inside `tools/conformance/`.
+        working-directory: ${{ github.workspace }}
         run: |
           read -r version sha256 < <(grep -v '^#' adapters/curl-impersonate/.curl-impersonate-version | head -n 1)
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -610,6 +614,18 @@ jobs:
           # Match the toolchain kubebuilder v4 scaffolds in go.mod;
           # `make install` invokes controller-gen.
           go-version: "1.25"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Generate the protocol bindings before `make install`
+      # (which transitively runs `make manifests` →
+      # `controller-gen`). The control-plane resolves
+      # `github.com/FabioCaffarello/spectre/proto/gen/go` via a
+      # local `replace` directive (see ADR-0007).
+      - name: Generate protocol bindings
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
       # Build the five images at TAG=dev so docker-compose.yml's
       # `image: spectre-<name>:dev` references resolve without
       # re-tagging. Local-flow byte-for-byte parity (just images).
@@ -721,7 +737,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.publish_dry_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Multi-arch (linux/amd64 + linux/arm64) builds for control-plane
+    # and playwright go through QEMU emulation on the runner; the
+    # 30-min budget proved too tight (the bake step alone consumed
+    # the full window). 45 min absorbs the playwright Chromium
+    # rebuild on a cold cache without leaving large headroom.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-qemu-action@v3
