@@ -713,19 +713,37 @@ jobs:
       - name: Apply v1alpha2 CRDs to kind
         working-directory: operators/control-plane
         run: make install
-      - name: Apply hello-hackernews sample ScrapeJob
-        run: kubectl apply -f operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml
-      - name: Wait for ScrapeJob phase=Completed
+      - name: Apply hello-hackernews-endpoint sample ScrapeJob
+        # The hello-hackernews.yaml sample uses
+        # `engineRef.service.name=spectre-engine, namespace=spectre-system,
+        # port=8090`, which the operator resolves to
+        # `spectre-engine.spectre-system.svc.cluster.local:8090` — a
+        # K8s Service that only exists when the engine runs in-cluster
+        # (Helm path, R7.1). The CI full-stack test runs the engine
+        # as a Compose service alongside the operator, so we use the
+        # endpoint-form sample which dials `engine:8090` directly via
+        # Compose's DNS (the same flow `compose up` exercises locally).
+        run: kubectl apply -f operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
+      - name: Wait for ScrapeJob phase=Completed (or Failed)
         run: |
-          # Hello-hackernews finishes in <60s locally; 5 minutes
-          # absorbs CI cold-start image pulls and slow runners.
+          # The endpoint-form sample's resource is named
+          # `hello-hackernews-endpoint`. Locally the job finishes in
+          # well under a minute; 5 minutes absorbs CI cold-start image
+          # pulls and slow runners. Fail-fast on terminal Failed so the
+          # job surfaces a real diagnosis instead of a 5-min timeout
+          # the next reader has to debug.
           timeout 300 bash -c '
-            until [ "$(kubectl get scrapejob hello-hackernews -o jsonpath={.status.phase} 2>/dev/null)" = "Completed" ]; do
-              kubectl get scrapejob hello-hackernews 2>/dev/null || true
+            while :; do
+              phase=$(kubectl get scrapejob hello-hackernews-endpoint -o jsonpath={.status.phase} 2>/dev/null)
+              kubectl get scrapejob hello-hackernews-endpoint 2>/dev/null || true
+              case "$phase" in
+                Completed) exit 0 ;;
+                Failed)    echo "ScrapeJob terminal Failed"; exit 1 ;;
+              esac
               sleep 5
             done
           '
-          kubectl describe scrapejob hello-hackernews
+          kubectl describe scrapejob hello-hackernews-endpoint
       - name: Operator logs (always)
         if: always()
         run: docker compose logs control-plane | tail -200 || true
