@@ -102,7 +102,7 @@ The control-plane operator joins the Compose stack as the
 End-to-end via the kind cluster:
 
 ```bash
-kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
+kubectl apply -f operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
 kubectl get scrapejob -w              # Pending → Running → Completed
 docker compose logs control-plane     # reconciler events
 ```

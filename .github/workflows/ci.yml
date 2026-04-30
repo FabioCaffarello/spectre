@@ -41,20 +41,20 @@ jobs:
               - 'proto/**'
               - '.github/workflows/ci.yml'
             rust:
-              - 'core/engine/**'
+              - 'engines/engine/**'
               - '.github/workflows/ci.yml'
             go:
-              # core/control-plane has its own `operator` job (the
+              # operators/control-plane has its own `operator` job (the
               # kubebuilder Makefile owns lint/test via envtest);
               # only adapters/curl-impersonate remains in this matrix.
               - 'adapters/curl-impersonate/**'
               - '.github/workflows/ci.yml'
             operator:
-              # core/control-plane is a kubebuilder v4 operator whose
+              # operators/control-plane is a kubebuilder v4 operator whose
               # tests need envtest binaries (apiserver + etcd +
               # kubectl). The dedicated job below drives `make test`
               # and `make build`. See ADR-0019.
-              - 'core/control-plane/**'
+              - 'operators/control-plane/**'
               - '.github/workflows/ci.yml'
             typescript:
               - 'adapters/playwright/**'
@@ -79,15 +79,15 @@ jobs:
             # corresponding output to skip unchanged targets while
             # still listing them in the run UI.
             image_engine:
-              - 'core/engine/**'
-              - 'core/engine/.dockerignore'
+              - 'engines/engine/**'
+              - 'engines/engine/.dockerignore'
               - 'proto/**'
               - 'docker-bake.hcl'
               - 'build/docker/**'
               - '.github/workflows/ci.yml'
             image_control_plane:
-              - 'core/control-plane/**'
-              - 'core/control-plane/.dockerignore'
+              - 'operators/control-plane/**'
+              - 'operators/control-plane/.dockerignore'
               - 'proto/**'
               - 'docker-bake.hcl'
               - 'build/docker/**'
@@ -125,8 +125,8 @@ jobs:
               - 'docker-bake.hcl'
               - 'build/docker/**'
               - 'build/kind/**'
-              - 'core/control-plane/config/samples/**'
-              - 'core/control-plane/config/crd/**'
+              - 'operators/control-plane/config/samples/**'
+              - 'operators/control-plane/config/crd/**'
               - '.github/workflows/ci.yml'
             # Publish dry-run gate (R6.5.3). Triggers on anything
             # that affects the publish path — any Dockerfile, the
@@ -177,7 +177,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: core/engine
+        working-directory: engines/engine
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -192,7 +192,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: core/engine
+          workspaces: engines/engine
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-features
@@ -482,7 +482,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: core/engine
+          workspaces: engines/engine
       - name: Generate protocol bindings
         run: |
           cd proto && buf generate
@@ -513,7 +513,7 @@ jobs:
         working-directory: adapters/playwright
         run: pnpm exec playwright install-deps chromium
       - name: Run engine integration test
-        working-directory: core/engine
+        working-directory: engines/engine
         env:
           PLAYWRIGHT_AVAILABLE: "1"
         run: cargo test --test integration -- --ignored --nocapture
@@ -525,7 +525,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: core/control-plane
+        working-directory: operators/control-plane
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -543,8 +543,8 @@ jobs:
       - name: Cache kubebuilder tool chain
         uses: actions/cache@v5
         with:
-          path: core/control-plane/bin
-          key: kubebuilder-bin-${{ runner.os }}-${{ hashFiles('core/control-plane/go.sum') }}
+          path: operators/control-plane/bin
+          key: kubebuilder-bin-${{ runner.os }}-${{ hashFiles('operators/control-plane/go.sum') }}
       - name: Run tests
         run: make test
       - name: Build
@@ -714,10 +714,10 @@ jobs:
           '
           docker compose ps
       - name: Apply v1alpha2 CRDs to kind
-        working-directory: core/control-plane
+        working-directory: operators/control-plane
         run: make install
       - name: Apply hello-hackernews sample ScrapeJob
-        run: kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml
+        run: kubectl apply -f operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml
       - name: Wait for ScrapeJob phase=Completed
         run: |
           # Hello-hackernews finishes in <60s locally; 5 minutes

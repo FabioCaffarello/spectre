@@ -12,7 +12,7 @@
 # scope, and the resolved operator + kind deferral.
 #
 # Operator topology (ADR-0025 §6 R6.3 update). The control plane
-# (`core/control-plane/`) runs as the `control-plane` Compose
+# (`operators/control-plane/`) runs as the `control-plane` Compose
 # service. It dials `engine:8090` on the Compose default network
 # and `spectre-dev-control-plane:6443` on the external `kind`
 # Docker network (kind names the API-server node after the cluster).

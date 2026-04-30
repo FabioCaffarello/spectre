@@ -164,7 +164,7 @@ target "buf-base" {
 
 target "engine" {
   context    = "."
-  dockerfile = "core/engine/Dockerfile"
+  dockerfile = "engines/engine/Dockerfile"
   tags       = [image("engine")]
   labels     = labels(
     "spectre-engine",
@@ -179,7 +179,7 @@ target "engine" {
 
 target "control-plane" {
   context    = "."
-  dockerfile = "core/control-plane/Dockerfile"
+  dockerfile = "operators/control-plane/Dockerfile"
   contexts = {
     buf-base = "target:buf-base"
   }

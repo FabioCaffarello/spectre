@@ -51,8 +51,10 @@ with each driver added to the ecosystem.
 A new driver must:
 
 1. Implement the Driver Protocol defined in
-   `proto/spectre/driver/v1alpha1/`. You can use either gRPC or
-   JSON-RPC over stdio as the transport.
+   `proto/spectre/driver/v1alpha1/`. The transport is gRPC over
+   TCP; the adapter runs as a long-running service exposing
+   `Driver` plus `grpc.health.v1.Health`
+   (see [ADR-0022](docs/adr/0022-tcp-grpc-transport.md)).
 2. Declare its capabilities in a `driver.yaml` manifest. See existing
    adapters in `adapters/` for reference.
 3. Pass the conformance test suite at `tools/conformance/`. The suite
@@ -96,8 +98,8 @@ within one week.
 
 | Tool                          | Used for                                                  |
 |-------------------------------|-----------------------------------------------------------|
-| Rust (stable)                 | `core/engine`                                             |
-| Go (1.24+ for adapters; 1.25+ for `core/control-plane`) | `core/control-plane`, `adapters/curl-impersonate` |
+| Rust (stable)                 | `engines/engine`                                             |
+| Go (1.24+ for adapters; 1.25+ for `operators/control-plane`) | `operators/control-plane`, `adapters/curl-impersonate` |
 | `goimports`                   | Pre-commit Go imports hook                                |
 | `golangci-lint`               | Go lint aggregator (used by `just cp-lint`)               |
 | `kubectl` (optional)          | Apply ScrapeJob CRs against a local cluster               |
@@ -142,7 +144,7 @@ just check                    # runs lint and tests across all components
 Each component directory has its own README with build and test
 instructions specific to that language.
 
-### Operator development (`core/control-plane`)
+### Operator development (`operators/control-plane`)
 
 The control plane is a kubebuilder v4 operator. Its tests run against
 a real apiserver and etcd via the controller-runtime `envtest`
@@ -192,7 +194,7 @@ just op-run            # run the operator in the foreground; uses
                        # the workspace's release-build spectre binary
                        # and the workspace adapters/ directory
 # Apply a sample CR in another terminal:
-kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
+kubectl apply -f operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
 kubectl get scrapejob -w
 just op-uninstall-crds # tear down
 ```

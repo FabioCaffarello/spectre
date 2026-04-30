@@ -71,7 +71,7 @@ repos:
       - id: cargo-fmt
         name: cargo fmt
         description: Check Rust formatting with rustfmt
-        entry: bash -c 'cd core/engine && cargo fmt --all -- --check'
+        entry: bash -c 'cd engines/engine && cargo fmt --all -- --check'
         language: system
-        files: ^core/engine/.*\.rs$
+        files: ^engines/engine/.*\.rs$
         pass_filenames: false

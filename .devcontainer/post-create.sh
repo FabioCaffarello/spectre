@@ -45,7 +45,7 @@ just crds-install
 
 echo
 echo "[7/8] sanity checks"
-spectre_versions=$(core/engine/target/release/spectre version 2>/dev/null \
+spectre_versions=$(engines/engine/target/release/spectre version 2>/dev/null \
   || echo "spectre binary not yet built — run 'just spectre-build'")
 echo "spectre: ${spectre_versions}"
 echo "go:      $(go version | awk '{print $3}')"

@@ -12,8 +12,8 @@
 /docs/adr/                       @FabioCaffarello
 
 # Per-area
-/core/engine/                    @FabioCaffarello
-/core/control-plane/             @FabioCaffarello
+/engines/engine/                    @FabioCaffarello
+/operators/control-plane/             @FabioCaffarello
 /adapters/                       @FabioCaffarello
 /tools/                          @FabioCaffarello
 /.github/                        @FabioCaffarello

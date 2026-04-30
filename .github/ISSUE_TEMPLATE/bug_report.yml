@@ -15,7 +15,7 @@ body:
     attributes:
       label: Component
       description: Which part of Spectre is affected?
-      placeholder: "core/engine, adapters/playwright, proto, control-plane, ..."
+      placeholder: "engines/engine, adapters/playwright, proto, control-plane, ..."
     validations:
       required: true
 
