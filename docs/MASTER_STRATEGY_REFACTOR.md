@@ -491,6 +491,44 @@ When all eight criteria pass, the refactor is done. The roadmap
 moves on to Phase 4 (Intelligence layer) on top of the
 microservices baseline.
 
+### Post-R6.6 amendment (Phase R6.6, 2026-04-30)
+
+Phase R6.6 inserted a **Platform Maturation** phase between
+R6.5 (closed at R6.5.4 merge) and R7.1 (Helm chart, the next
+phase). R6.6 ships four new ADRs that commit the platform's
+forward-looking shape:
+[ADR-0026 Platform taxonomy](adr/0026-platform-taxonomy.md),
+[ADR-0027 SDK strategy](adr/0027-sdk-strategy.md),
+[ADR-0028 Ancillary infra services catalog](adr/0028-ancillary-infra-services-catalog.md),
+[ADR-0029 Data platform and lake DSLs](adr/0029-data-platform-and-lake-dsls.md).
+The `core/` umbrella was dissolved — `engines/engine/` and
+`operators/control-plane/` are now top-level peers of
+`adapters/`. Four placeholder categories (`infra-services/`,
+`sdks/`, `data-platform/`, `shared-libs/`) reserve home for
+v1alpha2 growth.
+
+Criterion #5 above is expanded: the v1alpha1 ADR set spans
+**ADR-0020 through ADR-0029**, plus the future production-phase
+ADRs that R7.1 / R7.2 will introduce. ADR-0007 carries an
+in-place "partially evolved by ADR-0027" status and §2 / §3
+evolution notes. ADR-0013 status is refreshed to "superseded by
+ADR-0019 + ADR-0020" with the R3.1 supersession note in §1. No
+other accepted ADRs were edited (ADR text is immutable per
+ADR-0026 §4); a breadcrumb in `docs/adr/README.md` translates
+pre-R6.6 path citations (`core/engine/`, `core/control-plane/`)
+to post-R6.6 paths (`engines/engine/`, `operators/control-plane/`).
+
+The other criteria (#1, #2, #3, #4, #6, #7, #8) hold unchanged.
+Capability divergence is byte-for-byte 13 / 12 / 6; conformance
+passes 49 / 14; the eleven-service Compose stack reconciles a
+sample ScrapeJob to `Completed` end-to-end. `docs/MASTER_PROMPT.md`,
+`/memory/`, repo-root `MEMORY.md`, and `.claude/` runtime
+artifacts were swept (no-legacy commitment from §2.2 applied
+across the bootstrap-era scaffolding).
+
+The refactor's narrative-closing PR is **R8.1**; this strategy
+prompt's keep-or-delete decision is R8.1's territory.
+
 ---
 
 ## Section 10 — Final guidance
