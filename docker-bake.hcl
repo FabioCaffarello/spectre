@@ -90,7 +90,7 @@ variable "UV_VERSION" {
 }
 
 variable "PLAYWRIGHT_VERSION" {
-  default = "1.49.0"
+  default = "1.59.1"
 }
 
 variable "CURL_IMPERSONATE_IMAGE" {
