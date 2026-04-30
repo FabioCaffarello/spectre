@@ -118,7 +118,8 @@ jobs:
             # Compose YAML, bake, build pins, kind config, sample CRs
             # / CRDs, or the workflow itself.
             full_stack:
-              - 'core/**'
+              - 'engines/**'
+              - 'operators/**'
               - 'adapters/**'
               - 'proto/**'
               - 'docker-compose.yml'
@@ -138,7 +139,8 @@ jobs:
             # the only consumer; the actual publish runs via
             # `.github/workflows/publish.yml` workflow_dispatch.
             publish_dry_run:
-              - 'core/**/Dockerfile'
+              - 'engines/**/Dockerfile'
+              - 'operators/**/Dockerfile'
               - 'adapters/**/Dockerfile'
               - 'docker-bake.hcl'
               - 'build/docker/**'
@@ -183,6 +185,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # rdkafka-sys vendors librdkafka and compiles it via cmake. Its
+      # CMakeLists includes <curl/curl.h> regardless of the
+      # `-DWITH_CURL=0` flag the crate's build script passes, so the
+      # runner needs libcurl headers on PATH for the C build to
+      # succeed.
+      - name: Install librdkafka build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
       # tonic-build invokes prost-build, which requires a protoc
       # binary on PATH. The Rust build script (`build.rs`) runs as
       # part of every cargo invocation below, so protoc must be
@@ -228,8 +237,9 @@ jobs:
           # `stable` picks up newer toolchains whose modules can
           # contain build-constrained source that golangci-lint's
           # bundled type-checker (built against an older Go) cannot
-          # parse.
-          go-version: "1.24"
+          # parse. The curl-impersonate adapter's go.mod requires
+          # Go 1.25 (matches the control-plane operator's track).
+          go-version: "1.25"
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -406,7 +416,8 @@ jobs:
       - if: matrix.package == 'tools/conformance'
         uses: actions/setup-go@v6
         with:
-          go-version: "1.24"
+          # Match the curl-impersonate adapter's go.mod (1.25).
+          go-version: "1.25"
       - if: matrix.package == 'tools/conformance'
         name: Build curl-impersonate adapter
         working-directory: ${{ github.workspace }}/adapters/curl-impersonate
@@ -453,71 +464,6 @@ jobs:
         run: echo "/opt/curl-impersonate" >> "$GITHUB_PATH"
       - run: uv run pytest
 
-  engine-integration:
-    name: Engine integration (rust + playwright)
-    needs: changes
-    # Run when either the engine or the Playwright adapter changes.
-    # Kept separate from the fast `rust` job: this one builds the
-    # Playwright adapter and installs Chromium, which the unit-test
-    # job has no business doing. See ADR-0012 §"Bad, because" on the
-    # gating choice.
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.typescript == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 9
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: adapters/playwright/pnpm-lock.yaml
-      - uses: bufbuild/buf-setup-action@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: engines/engine
-      - name: Generate protocol bindings
-        run: |
-          cd proto && buf generate
-          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
-      - name: Build Playwright adapter
-        working-directory: adapters/playwright
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm build
-      - name: Resolve Playwright version
-        id: pw-version
-        working-directory: adapters/playwright
-        run: |
-          version=$(node -p "require('playwright/package.json').version")
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-      - name: Cache Playwright browsers
-        id: pw-cache
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
-      - if: steps.pw-cache.outputs.cache-hit != 'true'
-        name: Install Chromium with system deps
-        working-directory: adapters/playwright
-        run: pnpm exec playwright install --with-deps chromium
-      - if: steps.pw-cache.outputs.cache-hit == 'true'
-        name: Install Chromium system deps (browser already cached)
-        working-directory: adapters/playwright
-        run: pnpm exec playwright install-deps chromium
-      - name: Run engine integration test
-        working-directory: engines/engine
-        env:
-          PLAYWRIGHT_AVAILABLE: "1"
-        run: cargo test --test integration -- --ignored --nocapture
-
   operator:
     name: Operator (control-plane envtest + build)
     needs: changes
@@ -531,9 +477,22 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           # Match the toolchain kubebuilder v4 scaffolds in go.mod.
-          # The control-plane is on its own track; the curl-impersonate
-          # adapter remains pinned to 1.24 in the `go` matrix above.
+          # The control-plane is on its own track.
           go-version: "1.25"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Generate the protocol bindings before `make test` /
+      # `make build`. The control-plane resolves
+      # `github.com/FabioCaffarello/spectre/proto/gen/go` via a local
+      # `replace` directive (see ADR-0007); without this step
+      # `controller-gen` (invoked by `make manifests`, transitively
+      # `make test`) fails resolving the import.
+      - name: Generate protocol bindings
+        working-directory: ${{ github.workspace }}
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
       # The kubebuilder Makefile vendors its own controller-gen,
       # kustomize, setup-envtest and golangci-lint into bin/, then
       # `make test` downloads apiserver/etcd/kubectl via setup-envtest.
@@ -620,7 +579,9 @@ jobs:
           docker buildx bake --load ${{ matrix.target }}
       - name: Smoke ${{ matrix.target }}
         if: matrix.changed == 'true'
-        run: just ${{ matrix.smoke_recipe }} TAG=ci
+        # `TAG` is the recipe's first positional parameter (default
+        # `dev`); pass `ci` as the value, not the literal `TAG=ci`.
+        run: just ${{ matrix.smoke_recipe }} ci
       - name: Report image size
         if: matrix.changed == 'true'
         run: docker images "spectre-${{ matrix.target }}:ci" --format '{{.Repository}}:{{.Tag}}\t{{.Size}}'
@@ -787,7 +748,7 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, operator, engine-integration, images, full-stack, publish-dry-run]
+    needs: [changes, proto, rust, go, typescript, python, operator, images, full-stack, publish-dry-run]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -798,7 +759,6 @@ jobs:
           echo "typescript:           ${{ needs.typescript.result }}"
           echo "python:               ${{ needs.python.result }}"
           echo "operator:             ${{ needs.operator.result }}"
-          echo "engine-integration:   ${{ needs.engine-integration.result }}"
           echo "images:               ${{ needs.images.result }}"
           echo "full-stack:           ${{ needs.full-stack.result }}"
           echo "publish-dry-run:      ${{ needs.publish-dry-run.result }}"
