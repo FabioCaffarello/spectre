@@ -8,9 +8,9 @@ architectural commitment is recorded permanently in
 [ADR-0020](adr/0020-microservices-architecture-supersession.md);
 this document tracks execution.
 
-Last updated: 2026-04-29
-Current phase: **R6.5 — Quality & Hardening (CLOSES on merge of this PR, 2026-04-29; R6.5.4 closes the four-PR sub-phase)**
-Next PR: **R7.1 — ADR-0026 Helm chart (opens Phase R7)**
+Last updated: 2026-04-30
+Current phase: **R6.6 — Platform Maturation (CLOSES on merge of this PR, 2026-04-30; ADRs 0026–0029 accepted; restructure enacted; fossil sweep + doc refresh complete)**
+Next PR: **R7.1 — Helm chart (opens Phase R7)**
 
 ## Phases
 
@@ -44,108 +44,121 @@ close and R7.1 open; no new ADRs; recorded in ADR-0020 §4)*
 - [x] **R6.5.1 — Stale-references sweep + R6.1 leftovers (`build/docker/README.md`, `tools/build/check-versions-coherent.sh`)** *(merged 2026-04-29 — opened Phase R6.5)*
 - [x] **R6.5.2 — CI hardening: image-build matrix completion, bake unification in CI, full-stack gate** *(merged 2026-04-29, PR #69)*
 - [x] **R6.5.3 — Docker Hub registry wiring + multi-arch readiness** *(merged 2026-04-29, PR #70)*
-- [x] **R6.5.4 — Dockerfile deduplication via shared codegen base image stage** *(complete on merge of this PR, 2026-04-29 — closes Phase R6.5)*
+- [x] **R6.5.4 — Dockerfile deduplication via shared codegen base image stage** *(merged 2026-04-29, PR #71 — closed Phase R6.5)*
 
-- [ ] **R7.1 — ADR-0026 Helm chart** *(next; opens Phase R7)*
+**Phase R6.6 — Platform Maturation** *(inserted between R6.5
+close and R7.1 open; four new ADRs 0026–0029; recorded in
+ADR-0020 §5 R6.6 sub-row)*
+
+- [x] **R6.6 — Platform Maturation: ADRs 0026–0029 + repository restructure + fossil sweep + doc refresh** *(complete on merge of this PR, 2026-04-30 — closes Phase R6.6)*
+
+- [ ] **R7.1 — Helm chart packaging** *(next; opens Phase R7)*
 - [ ] R7.2 — Production smoke (Helm-installed cluster)
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R6.5.4)
+## Current PR checklist (R6.6)
 
-The R6.5.4 PR's per-step checklist mirrors Section 7 of the
-phase prompt. R6.5.4 deduplicates the buf install across four
-Dockerfiles via a single shared codegen base image stage
-consumed through bake's `contexts:` feature. ~30 lines net
-reduction; engine unchanged; image sizes unchanged. Phase
-R6.5 closes with this PR.
+The R6.6 PR is structured as **eight commit clusters** (A → B →
+C → D → E → F → H + final validation G). One PR, large by
+design. Each cluster is a focused commit; CI passes at every
+commit boundary; the maintainer can pause review at any
+cluster. ADRs 0026–0029 are the foundation; the restructure
+they prescribe enacts the platform taxonomy ahead of R7.1's
+production posture.
 
-- [x] Step 1 — Inventory: R6.5.3 merge confirmed
-  (`b42a0f3 Merge pull request #70`). The four buf install
-  RUN blocks audited (control-plane uses `aarch64` and
-  `${TARGETARCH:-amd64}`; the other three use `aarch_64` —
-  the wrong asset name — and `$(uname -m)`). Verified buf
-  release naming via direct fetch:
-  `buf-Linux-aarch64` is `302`, `buf-Linux-aarch_64` is `404`.
-  `docker-bake.hcl` target structure, `build/docker/README.md`,
-  and `tools/build/check-versions-coherent.sh` reviewed. The
-  five §4 decisions settled.
-- [x] Step 2 — `build/docker/buf-base.Dockerfile` shipped
-  (~25 lines on `debian:12-slim`; `ARG BUF_VERSION` +
-  `ARG TARGETARCH`; arch case echoes `aarch64` per buf's
-  actual asset name). Standalone build verified
-  (`docker buildx build` with `BUF_VERSION=1.55.1` produces
-  an image whose `buf --version` reports `1.55.1`).
-- [x] Step 3 — `docker-bake.hcl` `target "buf-base"` block
-  added (`output = ["type=cacheonly"]`; `BUF_VERSION` arg
-  passed through). Verified via
-  `docker buildx bake --print buf-base`.
-- [x] Step 4 — `contexts: { buf-base = "target:buf-base" }`
-  declared on the four buf-using consumer targets
-  (control-plane, curl-impersonate, playwright,
-  seleniumbase). Engine target intentionally untouched —
-  Rust uses `prost-build`. `docker buildx bake --print` shows
-  the four `contexts:` declarations.
-- [x] Step 5a — Go consumers (control-plane,
-  curl-impersonate): buf install RUN block deleted;
-  `COPY --from=buf-base /usr/local/bin/buf` added before
-  the `COPY proto/` line; `ARG BUF_VERSION` preserved with a
-  cache-key comment. Both built green via bake; both smokes
-  (op-image, curl-imp-image) pass.
-- [x] Step 5b — playwright: buf install RUN block deleted;
-  `COPY --from=buf-base` added; minimal
-  `apt-get install ca-certificates` retained because
-  `node:<version>-bookworm-slim` ships no trust store and
-  `buf generate` reaches the BSR over TLS for remote plugins
-  (caught during build verification). `pw-image-smoke`
-  passes.
-- [x] Step 5c — seleniumbase: interleaved buf+uv RUN split;
-  buf-specific commands deleted; uv install preserved
-  verbatim; `COPY --from=buf-base` added above the apt-get
-  RUN; `ARG BUF_VERSION` preserved with cache-key comment.
-  `sb-image-smoke` passes.
-- [x] Step 6 — `tools/build/check-versions-coherent.sh`
-  extended with a `dockerfile_arg_declared()` helper plus an
-  `ARG_DECLARED_CHECKS` list covering
-  `build/docker/buf-base.Dockerfile`. `just check-versions`
-  reports 0 mismatches; intentional drift reproduces a
-  non-zero exit.
-- [x] Step 7 — `build/docker/README.md` "Shared codegen base
-  (R6.5.4)" section added (multi-arch propagation, BUF_VERSION
-  bump procedure, why engine stays out). ADR-0018 §3 gains
-  an "R6.5.4 update — shared codegen base" subsection.
-- [x] Step 8 — `docs/refactor-audit.md` ticks R6.5.4 and
-  marks Phase R6.5 CLOSED; `docs/refactoring-status.md`
-  advances to R7.1-next with R6.5.4 ticked; CHANGELOG
-  Unreleased entry.
-- [ ] Step 9 — Final verification (`just check`, all five
-  images via bake, image sizes unchanged, conformance suite,
-  multi-arch dry-run locally).
-- [ ] Step 10 — Open the PR.
+- [x] Step 1 — Inventory and confirm: R6.5.4 merge confirmed
+  (`1aca726 Merge pull request #71`). Eight Section 4
+  decisions settled (single PR; ADR-0026 §4 enacted exhaustively;
+  accepted ADRs 0001–0025 immutable; fossil sweep unconditional;
+  master strategy + audit + status doc kept through R7.x;
+  ADR-0007 amended in place; path-based dependency rule
+  enforcement deferred).
+- [x] Step 2 — Verify the four ADRs match the in-progress
+  branch. ADR-0026 (~750 lines), ADR-0027 (~580 lines),
+  ADR-0028 (~620 lines), ADR-0029 (~590 lines) — frontmatter
+  correct (status: accepted; date: 2026-04-30; deciders:
+  [Fabio Caffarello]); titles match the prompt.
+- [x] Step 3 — Cluster A: four ADRs (single commit covering
+  all four).
+- [x] Step 4 — Cluster B: restructure sub-commits. (B.1)
+  rename `core/engine/` → `engines/engine/` via `git mv`;
+  (B.2) rename `core/control-plane/` → `operators/control-plane/`;
+  (B.3) Go module path flip + import flips across operator
+  source; (B.4) infrastructure path flips
+  (`docker-bake.hcl`, `docker-compose.yml`, `justfile`,
+  `.devcontainer/`, `.github/workflows/`, `.gitignore`,
+  `.dockerignore`, `.pre-commit-config.yaml`,
+  `build/docker/README.md`, `proto/buf.gen*.yaml`); (B.5)
+  `README.md` + `CONTRIBUTING.md` flips; (B.6) four
+  placeholder dirs materialised (`infra-services/`, `sdks/`,
+  `data-platform/{parse,transform,aggregate}/`,
+  `shared-libs/`); (B.7) empty `core/` dir cleanup.
+- [x] Step 5 — Cluster C: ADR amendments. (C.1) ADR-0007
+  frontmatter `accepted (partially evolved by ADR-0027)` +
+  §2 / §3 brief evolution subsections; (C.2) ADR-0013
+  frontmatter `superseded by ADR-0019 + ADR-0020` + §1
+  "Supersession (R3.1)" subsection; (C.3)
+  `docs/adr/README.md` index updates + breadcrumb note about
+  pre-R6.6 vs post-R6.6 path citation.
+- [x] Step 6 — Cluster D: fossil sweep. `docs/MASTER_PROMPT.md`
+  deleted via `git rm`; repo-root `MEMORY.md`,
+  `/memory/spectre_pr*.md`, `.claude/scheduled_tasks.lock`
+  removed from disk (already gitignored). `.gitignore`
+  unchanged (already covered the patterns).
+- [x] Step 7 — Cluster E: documentation refresh.
+  `docs/architecture/overview.md` rewritten (~400 lines);
+  `docs/roadmap.md` rewritten (~270 lines); JSON-RPC stripped
+  from `docs/architecture/driver-protocol.md` and
+  `docs/guides/writing-a-driver.md`; `CONTRIBUTING.md`
+  Driver Path snippet refreshed for gRPC-over-TCP. Subprocess
+  language preserved where it describes current behaviour
+  (conformance harness; curl-impersonate cgo wrapper;
+  R-series past-tense).
+- [x] Step 8 — Cluster F: bookkeeping. R6.6 row appended to
+  `docs/refactor-audit.md` (under a new "### Phase R6.6 —
+  Platform Maturation (CLOSED)" subsection); this status
+  doc advanced; CHANGELOG Unreleased extended to cover all
+  eight clusters.
+- [x] Step 9 — Cluster H: master strategy `§9` post-R6.6
+  amendment (~30 lines).
+- [ ] Step 10 — Cluster G: final local validation
+  (`cargo check`, `cargo test --lib`, `go build ./...`,
+  `go test ./...`, `just check`, `just images`,
+  `just images-smoke`, `just check-versions`,
+  `just conf-test`, eleven-service Compose stack with sample
+  ScrapeJob reaching `Completed`).
+- [ ] Step 11 — Open the PR.
 
 ## Surfaced decisions
 
 No open architectural questions awaiting maintainer input. The
-five decisions for R6.5.2 (single matrix job over five separate
-jobs; bake invocation matches local byte-for-byte; per-target
-`changes` outputs preserve selectivity; full-stack gate
-verifies Level 3 / sample ScrapeJob `Completed`; gate placement
-`needs: [changes, images]`) are settled by Section 4 of the
+eight decisions for R6.6 (single PR with eight commit clusters;
+ADR-0026 §4 enacted exhaustively; accepted ADRs 0001–0025
+immutable + breadcrumb in `docs/adr/README.md`; fossil sweep
+unconditional; master strategy + audit + status doc kept
+through R8.1; ADR-0007 amended in place per ADR-0027 §2's
+preservation stance; path-based dependency rule enforcement
+deferred per ADR-0026 §9) are settled by Section 4 of the
 phase prompt.
 
-One scope adjustment surfaced during execution: the prompt's
-Cluster B sketch hardcoded `images-smoke` recipe names that
-mostly differed from the project's actual conventions
-(`op-image-smoke`, `curl-imp-image-smoke`, `pw-image-smoke`,
-`sb-image-smoke`, `engine-image-run`). The matrix's
-`include:` form carries `smoke_recipe:` per entry to absorb
-that asymmetry; the prompt's Decision 4.1 anticipated the
-asymmetry and chose `include:` for exactly this reason.
-
-One pre-existing-issue note carried over from R6.3: the
+One pre-existing-issue note carried over from R6.3 / R6.5: the
 Playwright runtime image pinned in `build/docker/versions.env`
 (`v1.49.0`) is out-of-step with the npm `playwright` dep
 (`1.59.1`). R7.x or a separate maintenance PR picks up the
-sync; R6.5.2 doesn't bump pins.
+sync; R6.6 doesn't bump pins (path-only refactor).
+
+Two reservations clarified by R6.6 ahead of R7.1:
+
+- **ADR-0026 §1 reassignment.** ADR-0025 §10's implicit
+  reservation of "ADR-0026 for Helm" was never authoritative;
+  ADR-0026 §1 explicitly notes that the reservation was
+  implicit and now goes to the Platform taxonomy. R7.1's
+  Helm chart will pick up the next available ADR number when
+  it lands.
+- **`build/helm/spectre/` as the chart's home.** ADR-0026
+  §3.9 doesn't reserve a `helm/` category because Helm
+  artifacts are out-of-band; R7.1 makes the final location
+  call against the Compose-equivalence criterion.
 
 ## Known issues
 

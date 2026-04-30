@@ -7,6 +7,175 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Phase R6.6 — Platform Maturation: four ADRs + repository
+  restructure.** Phase R6.6 inserts a structural-maturation phase
+  between R6.5 (closed at R6.5.4) and the originally-planned R7.1
+  (Helm packaging). Four new accepted ADRs define the platform's
+  forward-looking taxonomy:
+  - **[ADR-0026](docs/adr/0026-platform-taxonomy.md) — Platform
+    taxonomy and module categories.** Eight production-code
+    categories (`proto/`, `engines/`, `operators/`, `adapters/`,
+    `infra-services/`, `sdks/`, `data-platform/`, `shared-libs/`)
+    plus four out-of-band (`tools/`, `build/`, `docs/`,
+    `examples/`). DAG of dependency direction made normative.
+    `core/` dissolved.
+  - **[ADR-0027](docs/adr/0027-sdk-strategy.md) — Multi-language
+    SDK strategy.** Per-language workspace (`sdks/<lang>/`) with
+    per-protocol-version packages
+    (`<protocol>/<version>/`). Codegen ownership moves into each
+    SDK package; ADR-0007 §1/§4 preserved, §2/§3 evolved without
+    supersession. Generated bindings remain gitignored.
+  - **[ADR-0028](docs/adr/0028-ancillary-infra-services-catalog.md)
+    — Ancillary infra services catalog.** Five named slots:
+    `proxy-broker`, `captcha-solver` (high conviction);
+    `fingerprint-broker`, `session-store`, `rate-limit-broker`
+    (probable). Canonical shape (proto + N providers + per-language
+    SDKs + Compose/Helm posture). Admission gate: ≥1 consumer +
+    ≥2 providers + proto + SDK + deployment.
+  - **[ADR-0029](docs/adr/0029-data-platform-and-lake-dsls.md) —
+    Data platform and lake DSLs.** Medallion lake model
+    (L0 raw / L1 bronze / L2 silver / L3 gold), three stages
+    (`parse/`, `transform/`, `aggregate/`), up to three layer-
+    transition DSLs governed by criteria for "extend vs. new".
+    Engine job DSL (ADR-0012) preserved as L0-entry DSL.
+- **Restructure (closes Phase R6.6).** Repository layout flips to
+  match the new taxonomy:
+  - `core/engine/` → `engines/engine/` (Cargo crate path; package
+    name `spectre-engine` unchanged).
+  - `core/control-plane/` → `operators/control-plane/`. Go module
+    path `github.com/FabioCaffarello/spectre/core/control-plane` →
+    `...spectre/operators/control-plane`; 10 Go files updated
+    (cmd/main.go + internal/* + test/e2e/* + go.mod + PROJECT).
+  - `core/` directory removed entirely.
+  - Four new top-level placeholder directories with READMEs:
+    `infra-services/`, `sdks/`, `data-platform/` (with `parse/`,
+    `transform/`, `aggregate/` sub-stages), `shared-libs/`. Each
+    `README.md` references the governing ADR (0026/0027/0028/0029).
+  - Path references updated repository-wide: `docker-bake.hcl`,
+    `docker-compose.yml`, `justfile`, `.devcontainer/`,
+    `.github/workflows/ci.yml`, `.github/dependabot.yml`,
+    `.github/CODEOWNERS`, `.github/ISSUE_TEMPLATE/`, `.gitignore`,
+    `.dockerignore` (`!core/` → `!engines/` + `!operators/`),
+    `.pre-commit-config.yaml`, `proto/buf.gen*.yaml`,
+    `proto/README.md`, `build/docker/` (Dockerfile + README +
+    versions.env), top-level `README.md`, `CONTRIBUTING.md`,
+    every `docs/architecture/*.md`, `docs/MASTER_PROMPT.md`,
+    `docs/roadmap.md`, `docs/refactor-audit.md`, the per-component
+    `README.md` files in `engines/engine/` and
+    `operators/control-plane/`.
+  - Accepted ADRs (0001–0025) intentionally NOT edited (immutable
+    per the status flow). A breadcrumb note added to
+    `docs/adr/README.md` records the path rename for future
+    readers reaching ADR text that cites the old paths.
+  - Image names, Compose service names, Kubernetes API group, and
+    proto package names unchanged. The taxonomy is about source
+    paths only; runtime identities are stable.
+- **In-place ADR amendments (R6.6).** Two accepted ADRs receive
+  the precedent-shaped in-place amendments (per ADR-0018 §3a /
+  §5 R6.5.x pattern):
+  - **[ADR-0007](docs/adr/0007-protocol-code-generation.md)
+    frontmatter** flipped from `accepted` to
+    `accepted (partially evolved by ADR-0027 — see status notes
+    in §2 and §3)`. Brief "ADR-0027 evolution (Phase R6.6)"
+    subsections appended to §2 (output locations) and §3
+    (bootstrap order) recording the trajectory. ADR-0007 §1
+    (per-language generators) and §4 (CI shape) carry forward
+    unchanged per ADR-0027 §2's preservation stance.
+  - **[ADR-0013](docs/adr/0013-cli-as-engine-binary.md)
+    frontmatter** refreshed from `superseded by ADR-0020` to
+    `superseded by ADR-0019 (control-plane architecture) +
+    ADR-0020 (microservices architecture supersession) — see
+    status note in §1`. New "Supersession (R3.1)" subsection at
+    the head of §1 records that `spectre run` was retired in
+    R3.1; the engine binary's CLI surface narrowed to a service
+    entry point.
+  - `docs/adr/README.md` index updated for both rows; the
+    breadcrumb note about pre-R6.6 vs post-R6.6 path citation
+    sits below ADR-0029 in the index.
+- **Documentation refresh (R6.6).** The doc surface that drifted
+  across the long refactor is brought into post-R6.6 reality:
+  - **`docs/architecture/overview.md`** rewritten end-to-end
+    (~400 lines, 10 sections — taxonomy, dependency DAG,
+    today's inhabitants, Compose runtime topology, build/image
+    story, CI shape, stateful services, forward-looking
+    categories, what stays, references). Pre-R2 transport
+    language ("gRPC over UDS or TCP/TLS or JSON-RPC over stdio")
+    and pre-R3 subprocess-spawn language removed.
+  - **`docs/roadmap.md`** rewritten as the post-R6.6 platform
+    roadmap (~270 lines), organised by category rather than by
+    pre-refactor PR-numbered phase. Old `Phase 0/1/2/2.5/3/4/5`
+    headings and `PR1–PR18` current-state references gone;
+    historical past-tense recap allowed in §1's "where we are"
+    section.
+  - **`docs/architecture/driver-protocol.md`** — the JSON-RPC
+    over stdio fallback section deleted; transport semantics
+    rewritten as gRPC-over-TCP only with a historical pointer
+    to ADR-0008's retired UDS / stdio considerations.
+  - **`docs/guides/writing-a-driver.md`** — Step 4 (transport)
+    rewritten for the long-running gRPC service shape;
+    `kind: jsonrpc-stdio` and the UDS-socket TS skeleton
+    removed; Step 2 (`buf generate`) gains an ADR-0027
+    forward-reference so future contributors know
+    `sdks/<lang>/driver/v<version>/` will replace the
+    per-Dockerfile pattern once the first SDK migration lands.
+  - **`CONTRIBUTING.md`** Driver Path snippet flipped from
+    "gRPC or JSON-RPC over stdio" to "gRPC over TCP" with an
+    ADR-0022 cross-reference.
+  - Subprocess language preserved where it describes current
+    behaviour: the conformance harness (ADR-0025 §5), the
+    curl-impersonate `os/exec` cgo replacement (ADR-0016 §1),
+    and R-series past-tense supersession notes.
+- **Master strategy amendment (R6.6).**
+  [`docs/MASTER_STRATEGY_REFACTOR.md`](docs/MASTER_STRATEGY_REFACTOR.md)
+  §9 gains a `Post-R6.6 amendment` subsection (~30 lines)
+  recording that R6.6 inserted a Platform Maturation phase
+  between R6.5 (closed) and R7.1 (next); criterion #5's ADR set
+  expanded to "0020–0029 plus future production-phase ADRs".
+  The strategy doc is kept through R7.x (R7.1 + R7.2 still need
+  it for context); R8.1 makes the keep-or-delete call.
+- **Bookkeeping closure (R6.6).**
+  [`docs/refactor-audit.md`](docs/refactor-audit.md) gains a
+  new "Phase R6.6 — Platform Maturation (CLOSED)" subsection
+  with one row that summarises all eight commit clusters and
+  cross-references every relevant ADR.
+  [`docs/refactoring-status.md`](docs/refactoring-status.md)
+  pointers advance to "R6.6 closed; R7.1 next"; the phase list
+  ticks R6.6 in a new "Phase R6.6 — Platform Maturation" block;
+  the per-PR checklist replaces R6.5.4's with R6.6's eleven
+  steps; "Surfaced decisions" refreshed with R6.6's eight
+  decisions and the two pre-R7.1 reservations.
+
+### Removed
+
+- **Fossil sweep (R6.6).** The bootstrap-era scaffolding that
+  survived 26 PRs of refactor without removal is gone:
+  - `docs/MASTER_PROMPT.md` (706 lines) — the PR1 / Phase 0
+    bootstrap prompt that authored the empty repo. Predates
+    the R-series entirely; describes mechanics that no longer
+    match reality. Deleted from version control via `git rm`.
+  - `/MEMORY.md` (repo root) and `/memory/spectre_pr_scope.md`
+    + `/memory/spectre_pr2_tooling.md` — PR1/PR2-era Claude
+    memory scaffolding describing codegen at
+    `core/engine/build.rs` (a path that no longer exists).
+    Already gitignored via the existing `.gitignore` block;
+    the on-disk files are removed to honour the no-legacy
+    commitment.
+  - `/.claude/scheduled_tasks.lock` (and the empty `/.claude/`
+    directory) — Claude-tooling runtime artifact. Already
+    gitignored; the on-disk file is removed.
+  - `.gitignore` already covers `.claude/`, `.ruff_cache/`,
+    `MEMORY.md`, and `memory/` — preserved unchanged. The
+    existing patterns prevent re-introduction.
+  - The fossil sweep is the largest application of master
+    strategy §2.2 ("no legacy paths survive") the refactor has
+    produced. Per the maintainer's R6.6 instruction:
+    *"é importante manter apenas documentos que vão dar boas
+    diretrizes para o futuro da nossa plataforma como um todo
+    e não devemos manter legado ou qualquer arquivo que possa
+    impactar negativamente na construção da plataforma"*.
+
 ### Changed
 
 - **Dockerfile deduplication via shared codegen base
