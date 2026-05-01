@@ -31,7 +31,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/onsi/ginkgo/v2 v2.28.2
-	github.com/onsi/gomega v1.39.1
+	github.com/onsi/gomega v1.40.0
 	github.com/pashagolub/pgxmock/v3 v3.4.0
 	google.golang.org/grpc v1.80.0
 	k8s.io/api v0.35.4
