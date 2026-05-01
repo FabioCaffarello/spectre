@@ -194,7 +194,7 @@ tempfile = "3"
 # build cost is small. wiremock was evaluated and rejected —
 # heavier abstraction, less control over the exact status sequence
 # the retry test needs.
-axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 
 [lints.rust]
 unsafe_code = "forbid"
