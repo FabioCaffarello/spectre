@@ -128,7 +128,7 @@ sqlx = { version = "0.8", default-features = false, features = [
 # rdkafka uses OpenSSL via librdkafka — *deliberately* a separate
 # TLS stack from the rustls 0.23 sqlx pulls in. The two libraries
 # do not conflict (different language ecosystems, different ABIs).
-rdkafka = { version = "0.36", default-features = false, features = [
+rdkafka = { version = "0.39", default-features = false, features = [
     "cmake-build",
     "ssl-vendored",
     "tokio",
