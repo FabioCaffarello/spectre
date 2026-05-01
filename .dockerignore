@@ -9,7 +9,8 @@
 # Pattern:
 #   1. Deny everything (`*`).
 #   2. Negate-include the top-level directories any image's stages
-#      need: proto/, core/, adapters/, tools/codegen/, build/docker/.
+#      need: proto/, engines/, operators/, adapters/, tools/codegen/,
+#      build/docker/.
 #   3. Re-deny generated trees inside those directories so
 #      contributor-side `proto/gen/`, `node_modules/`, `target/`,
 #      `.venv/`, etc., don't pollute the context.
@@ -23,7 +24,8 @@
 
 # 2) Negate-include the directories every image's stages might need.
 !proto/
-!core/
+!engines/
+!operators/
 !adapters/
 !tools/codegen/
 !build/docker/
@@ -43,7 +45,7 @@ adapters/playwright/src/proto/
 **/target/
 
 # Go build outputs at component roots.
-core/control-plane/bin/
+operators/control-plane/bin/
 adapters/curl-impersonate/bin/
 *.exe
 *.test

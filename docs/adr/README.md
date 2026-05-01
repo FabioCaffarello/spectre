@@ -29,13 +29,13 @@ A decision moves through three states:
 | 0004  | [Protocol versioning strategy](0004-protocol-versioning-strategy.md)          | accepted |
 | 0005  | [Licensing (Apache 2.0)](0005-licensing.md)                                   | accepted |
 | 0006  | [Build orchestration (Just)](0006-build-orchestration.md)                     | accepted |
-| 0007  | [Protocol code generation](0007-protocol-code-generation.md)                  | accepted |
+| 0007  | [Protocol code generation](0007-protocol-code-generation.md)                  | accepted (partially evolved by ADR-0027 — §2 / §3 carry an R6.6 evolution note) |
 | 0008  | [Driver handshake and conformance harness](0008-driver-handshake-and-conformance-harness.md) | accepted (§1 + §3 preserved; §2 + §4 superseded by ADR-0022 / ADR-0021 §6 in R2; implementation in R2.2 / R2.3) |
 | 0009  | [Navigate, session lifecycle, and the driver error mapping](0009-navigate-and-session-lifecycle.md) | accepted (session lifecycle revisited under ADR-0023 in R4) |
 | 0010  | [Element lifecycle, capability granularity, and selector mapping](0010-element-lifecycle-and-capability-gating.md) | accepted |
 | 0011  | [Screenshot RPC, scope mapping, and payload boundaries](0011-screenshot-rpc-and-payload-boundaries.md) | accepted |
 | 0012  | [Engine DSL surface, planner architecture, and execution pipeline](0012-engine-dsl-and-execution-pipeline.md) | accepted (§§1-3, 5, 6 preserved; §4 launcher contract superseded by ADR-0021 §5 / ADR-0022 §1 in R2.3) |
-| 0013  | [CLI as engine binary](0013-cli-as-engine-binary.md) (supersedes ADR-0002 CLI row) | superseded by ADR-0020 |
+| 0013  | [CLI as engine binary](0013-cli-as-engine-binary.md) (supersedes ADR-0002 CLI row) | superseded by ADR-0019 + ADR-0020 (R6.6 status refresh; CLI source deleted in R3.1) |
 | 0014  | [SeleniumBase adapter and cross-language conformance](0014-seleniumbase-adapter-and-cross-language-conformance.md) | accepted |
 | 0015  | [SeleniumBase element lifecycle and screenshot coverage](0015-seleniumbase-element-lifecycle-and-screenshot-coverage.md) | accepted |
 | 0016  | [curl-impersonate adapter and third-runtime divergence](0016-curl-impersonate-adapter-and-third-runtime-divergence.md) | accepted |
@@ -48,6 +48,25 @@ A decision moves through three states:
 | 0023  | [Stateful services architecture](0023-stateful-services-architecture.md)      | accepted (§5 gains R4.3 addendum on `adapter_instance_id`; §6 admission-gating asymmetry refined by ADR-0024 §5 in R5.1) |
 | 0024  | [Output sinks (S3 and HTTP webhook)](0024-output-sinks.md)                    | accepted |
 | 0025  | [Compose stack (application services + profile-based topology)](0025-compose-stack.md) | accepted (§6 + §9 R6.3 update — operator-in-Compose deferral resolved; closes Phase R6) |
+| 0026  | [Platform taxonomy and module categories](0026-platform-taxonomy.md) | accepted (Phase R6.6 — fundação) |
+| 0027  | [Multi-language SDK strategy](0027-sdk-strategy.md)                  | accepted (Phase R6.6 — evolves ADR-0007 §2/§3) |
+| 0028  | [Ancillary infra services catalog](0028-ancillary-infra-services-catalog.md) | accepted (Phase R6.6 — 5 named slots) |
+| 0029  | [Data platform and lake DSLs](0029-data-platform-and-lake-dsls.md)   | accepted (Phase R6.6 — closes phase prologue; restructure PR follows) |
+
+## A note on directory paths in older ADRs
+
+Several accepted ADRs (notably 0002, 0007, 0012, 0013, 0015, 0016,
+0018, 0019, 0022, 0023, 0024, 0025) reference source paths under
+`core/engine/` and `core/control-plane/`. As of Phase R6.6
+([ADR-0026](0026-platform-taxonomy.md) §4), `core/` was dissolved:
+those modules now live at `engines/engine/` and
+`operators/control-plane/`. The Go module path of the operator also
+changed (`github.com/FabioCaffarello/spectre/core/control-plane` →
+`...spectre/operators/control-plane`).
+
+ADR text is immutable per the status flow above; the older paths are
+a historical record of where the code lived when each decision was
+recorded. Future ADRs cite the post-R6.6 paths.
 
 ## When to write an ADR
 

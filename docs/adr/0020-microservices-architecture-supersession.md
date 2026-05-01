@@ -93,7 +93,10 @@ These four drivers concretise into commitments later ADRs will
 implement. ADR-0021 settles service discovery; ADR-0022 settles
 TCP transport details; ADR-0023 settles stateful service
 architecture; ADR-0024 settles output sinks; ADR-0025 settles
-the Compose layout; ADR-0026 settles the Helm chart structure.
+the Compose layout. The Helm chart structure was originally
+reserved for ADR-0026; ADR-0026 was reassigned by Phase R6.6
+to platform taxonomy, and the Helm chart's ADR will be assigned
+its number when R7.1 lands.
 This ADR commits to the architectural direction; subsequent ADRs
 fill in the specifics.
 
@@ -323,7 +326,8 @@ ADRs so the audit trail evolves alongside the code.
 | R5    | 1      | Output sinks (S3, webhook, Kafka topic)          | +ADR-0024.                                                          |
 | R6    | 3      | Per-service Dockerfiles + Compose stack + Devcontainer | +ADR-0025. Retires PR16-PR18 bundled-image pattern.           |
 | R6.5  | 4      | Quality & hardening (sub-phase insertion: stale-references sweep + R6.1 leftovers, CI hardening, Docker Hub registry wiring + multi-arch, shared codegen base) | None. Hygiene work; addresses drift accumulated across the long refactor. |
-| R7    | 2      | Helm chart + production smoke                    | +ADR-0026.                                                          |
+| R6.6  | 1      | Platform Maturation (taxonomy + restructure)     | +ADR-0026, +ADR-0027, +ADR-0028, +ADR-0029. ADR-0007 §2/§3 evolved (frontmatter status + in-place notes). ADR-0013 superseded refresh (frontmatter + §1 R3.1 note). `core/` dissolved → `engines/`, `operators/`. Living audit table edited per established R6.5.1 precedent. |
+| R7    | 2      | Helm chart + production smoke                    | +<future Helm chart ADR; number assigned in R7.1>.                  |
 | R8    | 1      | Documentation refresh + narrative closing        | None (docs only).                                                   |
 
 The driver protocol v1alpha1 directory at
@@ -459,5 +463,7 @@ refactor's no-legacy principle and the two-entry-point model
 - Forward references (ADRs introduced by subsequent phases):
   ADR-0021 (service discovery, R2.1), ADR-0022 (TCP transport
   details, R2.1), ADR-0023 (stateful services, R4.1), ADR-0024
-  (output sinks, R5.1), ADR-0025 (Compose layout, R6.2),
-  ADR-0026 (Helm chart structure, R7.1).
+  (output sinks, R5.1), ADR-0025 (Compose layout, R6.2). The
+  Helm chart's ADR is assigned when R7.1 lands; the number
+  originally reserved (ADR-0026) was reassigned by Phase R6.6
+  to platform taxonomy.

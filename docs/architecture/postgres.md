@@ -45,7 +45,7 @@ audit table. `ON DELETE CASCADE` makes retention single-statement.
 
 ## Migration discipline (ADR-0023 §13)
 
-Migrations live in `core/engine/migrations/` as
+Migrations live in `engines/engine/migrations/` as
 `<YYYYMMDDHHMMSS>_<name>.sql` files. R4.2 lands the first
 (`20260428150332_initial_schema.sql`); each subsequent schema
 change adds a new file. **Once committed and merged, a migration
@@ -66,7 +66,7 @@ adding or changing a `query!` invocation:
 just compose-up
 DATABASE_URL=postgres://spectre:spectre_dev_password@localhost:5432/spectre \
   cargo sqlx prepare --workspace
-git add core/engine/.sqlx/
+git add engines/engine/.sqlx/
 ```
 
 The cache is what lets the Dockerfile build under

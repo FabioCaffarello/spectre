@@ -11,7 +11,7 @@ updates:
       include: scope
 
   - package-ecosystem: gomod
-    directory: /core/control-plane
+    directory: /operators/control-plane
     schedule:
       interval: weekly
       day: monday
@@ -44,7 +44,7 @@ updates:
       include: scope
 
   - package-ecosystem: cargo
-    directory: /core/engine
+    directory: /engines/engine
     schedule:
       interval: weekly
       day: monday

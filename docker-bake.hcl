@@ -90,7 +90,7 @@ variable "UV_VERSION" {
 }
 
 variable "PLAYWRIGHT_VERSION" {
-  default = "1.49.0"
+  default = "1.59.1"
 }
 
 variable "CURL_IMPERSONATE_IMAGE" {
@@ -164,7 +164,7 @@ target "buf-base" {
 
 target "engine" {
   context    = "."
-  dockerfile = "core/engine/Dockerfile"
+  dockerfile = "engines/engine/Dockerfile"
   tags       = [image("engine")]
   labels     = labels(
     "spectre-engine",
@@ -179,7 +179,7 @@ target "engine" {
 
 target "control-plane" {
   context    = "."
-  dockerfile = "core/control-plane/Dockerfile"
+  dockerfile = "operators/control-plane/Dockerfile"
   contexts = {
     buf-base = "target:buf-base"
   }

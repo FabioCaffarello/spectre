@@ -1,10 +1,25 @@
 ---
-status: superseded by ADR-0020
+status: superseded by ADR-0019 (control-plane architecture) + ADR-0020 (microservices architecture supersession) — see status note in §1
 date: 2026-04-26
 deciders: [Fabio Caffarello]
 ---
 
 # CLI as engine binary
+
+> **Supersession (R3.1).** The `spectre run <job.yaml>` CLI was
+> retired in Phase R3.1: the operator now submits jobs to the
+> engine via gRPC `RunJob` ([ADR-0019](0019-control-plane-architecture.md)
+> §3 + [ADR-0020](0020-microservices-architecture-supersession.md)
+> §3 + §4). The engine binary's CLI surface (`spectre --help`,
+> `spectre version`) survives as a thin wrapper around the gRPC
+> server; `spectre validate` and `spectre run` no longer exist.
+> The `cargo install spectre-engine` distribution path described
+> in §3 below is also retired. All deletion of CLI source files
+> landed in R3.1; `engines/engine/src/bin/` retains only the
+> service-mode binary entry point. The body of this ADR records
+> the original PR8 decisions for historical context — see the
+> "Update (R1.1, ADR-0020)" note further down for the full
+> supersession argument.
 
 ## Context and Problem Statement
 

@@ -91,7 +91,7 @@ The `just images` recipe wraps that flow.
 
 ## Per-service notes
 
-### `spectre-engine` (`core/engine/Dockerfile`)
+### `spectre-engine` (`engines/engine/Dockerfile`)
 
 Cargo-chef pattern caches dependency compilation across source-only
 edits. Builds for the `x86_64-unknown-linux-musl` target so the
@@ -104,7 +104,7 @@ Runtime is `gcr.io/distroless/static:nonroot` — no shell, no
 package manager. ENTRYPOINT is `/usr/local/bin/spectre`; the binary
 is the gRPC service entry point per R2.3.
 
-### `spectre-control-plane` (`core/control-plane/Dockerfile`)
+### `spectre-control-plane` (`operators/control-plane/Dockerfile`)
 
 R3.1 retired the bundled-image execution model — the operator
 image now carries only the kubebuilder manager binary on
@@ -232,7 +232,7 @@ Every image carries the `org.opencontainers.image.*` set:
 (`Apache-2.0`), `source`, `revision`, `created`, `version`.
 Labels are injected by bake (R6.1 §9.3) so contributors don't
 repeat the schema in each Dockerfile. The contributor running
-`docker build -f core/engine/Dockerfile .` directly (without bake)
+`docker build -f engines/engine/Dockerfile .` directly (without bake)
 won't get the labels — bake is the canonical entry point from R6.1
 onward.
 
@@ -309,7 +309,7 @@ end-to-end on every relevant change. Eight steps:
    `spectre-ci-control-plane:6443`.
 5. `make install` (kubebuilder) applies the v1alpha2 CRD.
 6. `kubectl apply -f
-   core/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml`
+   operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml`
    submits the canonical sample.
 7. A 5-minute polling loop asserts
    `kubectl get scrapejob hello-hackernews -o
@@ -330,14 +330,14 @@ output that gates the heavy gate:
 
 | Output | Triggers |
 |---|---|
-| `image_engine` | `core/engine/**`, `core/engine/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
-| `image_control_plane` | `core/control-plane/**`, …`/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
+| `image_engine` | `engines/engine/**`, `engines/engine/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
+| `image_control_plane` | `operators/control-plane/**`, …`/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
 | `image_curl_impersonate` | `adapters/curl-impersonate/**`, …`/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
 | `image_playwright` | `adapters/playwright/**`, …`/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
 | `image_seleniumbase` | `adapters/seleniumbase/**`, …`/.dockerignore`, `proto/**`, `docker-bake.hcl`, `build/docker/**`, the workflow |
 | `full_stack` | `core/**`, `adapters/**`, `proto/**`, `docker-compose.yml`, `docker-bake.hcl`, `build/docker/**`, `build/kind/**`, sample CRs / CRDs, the workflow |
 
-Selectivity is preserved: a change in `core/engine/src/lib.rs`
+Selectivity is preserved: a change in `engines/engine/src/lib.rs`
 rebuilds only the engine image; a change in
 `build/docker/versions.env` rebuilds every image (toolchain pins
 are shared); a change in `proto/**` rebuilds every image **and**

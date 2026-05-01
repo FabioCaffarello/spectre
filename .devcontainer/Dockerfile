@@ -17,7 +17,7 @@
 # pins. CI runs sets the same pins as bake variables.
 #
 #   Go          1.25.3 (matches kubebuilder-scaffolded
-#                       core/control-plane go.mod; backwards-compatible
+#                       operators/control-plane go.mod; backwards-compatible
 #                       with adapters that pin go 1.24)
 #   Node        20 LTS (Active LTS through April 2026)
 #   Python      3.12   (apt deadsnakes PPA)
@@ -225,7 +225,7 @@ RUN apt-get update \
 # kubebuilder scaffolds CRDs and controllers (`kubebuilder create api`
 # on Phase-3 follow-up CRDs; ADR-0019 §1). setup-envtest,
 # controller-gen, kustomize, and golangci-lint are vendored on demand
-# by the kubebuilder Makefile into core/control-plane/bin/, so the
+# by the kubebuilder Makefile into operators/control-plane/bin/, so the
 # image itself only needs the top-level binaries.
 #
 # kubectl drives applies / gets / logs against the local kind cluster

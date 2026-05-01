@@ -18,8 +18,15 @@ behaviour. For the canonical schema, read the `.proto` files in
 2. **Capability negotiated.** Drivers declare what they can do at
    handshake. The engine refuses to run jobs that require missing
    capabilities, at compile time, with a clear error.
-3. **Transport pluggable.** Schema is canonical (protobuf); transport
-   is not (gRPC and JSON-RPC are both first-class).
+3. **Schema-transport separation.** The schema is canonical
+   (protobuf); the transport is gRPC over TCP, established at
+   handshake (ADR-0022). Earlier ADRs (notably
+   [ADR-0008](../adr/0008-driver-handshake-and-conformance-harness.md))
+   considered UDS and a JSON-RPC over stdio fallback; both were
+   retired in Phase R2 (R2.1 → R2.3) when the engine and adapters
+   moved to gRPC over TCP exclusively. The schema-transport
+   separation principle (ADR-0003) survives; "transport pluggable"
+   does not.
 4. **Versionable.** Path-based versioning lets new versions land
    alongside old ones; existing drivers do not break.
 
@@ -151,31 +158,23 @@ Drivers that want to expose richer diagnostics use the `details` map.
 
 ## Transport semantics
 
-Both transports carry the same protobuf messages. The differences are
-operational, not semantic.
+The transport is gRPC over TCP. Adapters run as long-running
+services (in a Compose service, a Kubernetes Pod, or a developer's
+local process) and expose a TCP listener; the engine resolves a
+`host:port` endpoint per adapter and dials it via tonic's TCP path.
+Adapter readiness is observable through the standard
+`grpc.health.v1.Health` service.
 
-### gRPC over Unix domain socket (local)
+See [ADR-0022](../adr/0022-tcp-grpc-transport.md) for the transport
+decision and [ADR-0021](../adr/0021-service-discovery.md) §5 / §6
+for endpoint resolution and the health contract.
 
-Used when the driver runs as a child process of the engine. The engine
-spawns the driver, the driver writes its socket path to stdout, the
-engine connects.
-
-### gRPC over TCP/TLS (distributed)
-
-Used when the driver runs in a separate pod or on a separate host.
-Mutual TLS is required. Certificate provisioning is the operator's
-concern.
-
-### JSON-RPC over stdio (fallback)
-
-Used when the driver lives in an ecosystem without strong protobuf
-tooling. The driver reads JSON-RPC requests from stdin and writes
-responses to stdout. The payloads carry the same protobuf messages,
-encoded via the canonical [protobuf JSON
-mapping](https://protobuf.dev/programming-guides/json/).
-
-The driver manifest declares which transports it speaks. The engine
-picks the first matching transport.
+Earlier transports (gRPC over a Unix domain socket spawned per
+job; a hypothetical JSON-RPC-over-stdio fallback discussed in
+[ADR-0008](../adr/0008-driver-handshake-and-conformance-harness.md))
+were retired in Phase R2 alongside the subprocess execution model
+they assumed; their record is preserved in the supersession
+notes on those ADRs.
 
 ## Versioning
 

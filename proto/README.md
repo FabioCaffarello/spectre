@@ -75,13 +75,13 @@ Output paths:
 
 | Language    | Path                                              | Consumed by                               |
 |-------------|---------------------------------------------------|-------------------------------------------|
-| Go          | `proto/gen/go/spectre/driver/v1alpha1/`           | `core/control-plane`, `adapters/curl-impersonate` (via local `replace`) |
+| Go          | `proto/gen/go/spectre/driver/v1alpha1/`           | `operators/control-plane`, `adapters/curl-impersonate` (via local `replace`) |
 | Python      | `proto/gen/python/spectre/driver/v1alpha1/`       | `adapters/seleniumbase`, `tools/conformance` (via uv editable source) |
 | TypeScript  | `adapters/playwright/src/proto/spectre/driver/v1alpha1/` | `adapters/playwright`                  |
-| Rust        | cargo `OUT_DIR` (per-build artifact dir)          | `core/engine` (via `tonic-build` in `build.rs`) |
+| Rust        | cargo `OUT_DIR` (per-build artifact dir)          | `engines/engine` (via `tonic-build` in `build.rs`) |
 
 Rust generation is lazy: it runs at `cargo build`/`cargo test` time
-via `core/engine/build.rs` rather than during `just proto-generate`.
+via `engines/engine/build.rs` rather than during `just proto-generate`.
 
 ## Conventions
 

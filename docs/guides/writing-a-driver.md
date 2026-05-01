@@ -26,9 +26,9 @@ language-native identifiers.
 
 ## Step 2 — Generate or import the protocol types
 
-Run `buf generate` (configured by the upcoming `proto/buf.gen.yaml`)
-to produce typed bindings for your language. As of `v1alpha1` the
-toolchain produces:
+Run `buf generate` (configured by `proto/buf.gen.yaml`) to produce
+typed bindings for your language. As of `v1alpha1` the toolchain
+produces:
 
 - `spectre/driver/v1alpha1/driver_pb.ts`, `*_grpc_pb.ts` (TypeScript)
 - `spectre/driver/v1alpha1/driver_pb2.py`,
@@ -36,10 +36,16 @@ toolchain produces:
 - `spectre/driver/v1alpha1.go.pb` (Go)
 - `spectre::driver::v1alpha1` (Rust, via tonic-build)
 
-If your language is not yet supported by `buf generate`, you can
-implement the JSON-RPC transport (see Step 4) and skip code
-generation; the JSON encoding of the messages follows the
-[canonical mapping](https://protobuf.dev/programming-guides/json/).
+> **Forward-looking note (ADR-0027).** Phase R6.6 introduced
+> `sdks/<lang>/driver/v<version>/` as the future home for
+> per-language Driver Protocol bindings. Once the first SDK
+> migration lands, new adapters in a supported language will
+> consume `sdks/<lang>/driver/v1alpha1/` instead of running
+> `buf generate` per Dockerfile. The pattern in this guide is
+> the pre-SDK contract; it remains valid for adapters built
+> against R6.6 and earlier. See
+> [ADR-0027](../adr/0027-sdk-strategy.md) for the migration
+> trajectory.
 
 ## Step 3 — Implement the six RPCs
 
@@ -87,19 +93,24 @@ driver.on('Navigate', async (req) => {
 
 // ... Query, Extract, Screenshot, Close ...
 
-driver.listen({ transport: 'grpc', socket: process.argv[2] });
+driver.listen({ transport: 'grpc', address: process.env.SPECTRE_PUPPETEER_LISTEN_ADDRESS ?? '0.0.0.0:9094' });
 ```
 
-## Step 4 — Choose a transport
+## Step 4 — Run as a TCP gRPC service
 
-The two officially supported transports are:
+Adapters run as long-running gRPC services that bind a TCP
+listener and expose the `Driver` service plus
+`grpc.health.v1.Health`. The engine dials a configured `host:port`
+endpoint per adapter; service discovery is environment-driven (see
+[ADR-0021](../adr/0021-service-discovery.md) §5). The transport
+decision is recorded in
+[ADR-0022](../adr/0022-tcp-grpc-transport.md); UDS and JSON-RPC
+fallbacks considered in earlier ADRs were retired in Phase R2.
 
-- **gRPC** over a Unix domain socket (local) or TCP/TLS (remote).
-  Use this if your language has solid gRPC tooling.
-- **JSON-RPC over stdio** for languages where gRPC is awkward.
-
-Declare the transport in your `driver.yaml` (Step 5). The engine
-selects the first match.
+Your driver does not need to expose a CLI flag for the listener
+address; convention is to read it from an environment variable
+(`SPECTRE_<DRIVER>_LISTEN_ADDRESS`, falling back to a per-driver
+default port — see the three reference adapters for the pattern).
 
 ## Step 5 — Write the driver manifest
 
@@ -111,12 +122,9 @@ name: puppeteer
 version: 0.1.0
 protocol_version: spectre.driver.v1alpha1
 
-transports:
-  - kind: grpc-uds
-    command: ["node", "dist/index.js"]
-  # alternative:
-  # - kind: jsonrpc-stdio
-  #   command: ["node", "dist/json-rpc.js"]
+transport:
+  kind: grpc-tcp
+  default_listen_port: 9094
 
 capabilities:
   - navigation

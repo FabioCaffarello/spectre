@@ -41,20 +41,20 @@ jobs:
               - 'proto/**'
               - '.github/workflows/ci.yml'
             rust:
-              - 'core/engine/**'
+              - 'engines/engine/**'
               - '.github/workflows/ci.yml'
             go:
-              # core/control-plane has its own `operator` job (the
+              # operators/control-plane has its own `operator` job (the
               # kubebuilder Makefile owns lint/test via envtest);
               # only adapters/curl-impersonate remains in this matrix.
               - 'adapters/curl-impersonate/**'
               - '.github/workflows/ci.yml'
             operator:
-              # core/control-plane is a kubebuilder v4 operator whose
+              # operators/control-plane is a kubebuilder v4 operator whose
               # tests need envtest binaries (apiserver + etcd +
               # kubectl). The dedicated job below drives `make test`
               # and `make build`. See ADR-0019.
-              - 'core/control-plane/**'
+              - 'operators/control-plane/**'
               - '.github/workflows/ci.yml'
             typescript:
               - 'adapters/playwright/**'
@@ -79,15 +79,15 @@ jobs:
             # corresponding output to skip unchanged targets while
             # still listing them in the run UI.
             image_engine:
-              - 'core/engine/**'
-              - 'core/engine/.dockerignore'
+              - 'engines/engine/**'
+              - 'engines/engine/.dockerignore'
               - 'proto/**'
               - 'docker-bake.hcl'
               - 'build/docker/**'
               - '.github/workflows/ci.yml'
             image_control_plane:
-              - 'core/control-plane/**'
-              - 'core/control-plane/.dockerignore'
+              - 'operators/control-plane/**'
+              - 'operators/control-plane/.dockerignore'
               - 'proto/**'
               - 'docker-bake.hcl'
               - 'build/docker/**'
@@ -118,15 +118,16 @@ jobs:
             # Compose YAML, bake, build pins, kind config, sample CRs
             # / CRDs, or the workflow itself.
             full_stack:
-              - 'core/**'
+              - 'engines/**'
+              - 'operators/**'
               - 'adapters/**'
               - 'proto/**'
               - 'docker-compose.yml'
               - 'docker-bake.hcl'
               - 'build/docker/**'
               - 'build/kind/**'
-              - 'core/control-plane/config/samples/**'
-              - 'core/control-plane/config/crd/**'
+              - 'operators/control-plane/config/samples/**'
+              - 'operators/control-plane/config/crd/**'
               - '.github/workflows/ci.yml'
             # Publish dry-run gate (R6.5.3). Triggers on anything
             # that affects the publish path — any Dockerfile, the
@@ -138,7 +139,8 @@ jobs:
             # the only consumer; the actual publish runs via
             # `.github/workflows/publish.yml` workflow_dispatch.
             publish_dry_run:
-              - 'core/**/Dockerfile'
+              - 'engines/**/Dockerfile'
+              - 'operators/**/Dockerfile'
               - 'adapters/**/Dockerfile'
               - 'docker-bake.hcl'
               - 'build/docker/**'
@@ -177,12 +179,19 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: core/engine
+        working-directory: engines/engine
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # rdkafka-sys vendors librdkafka and compiles it via cmake. Its
+      # CMakeLists includes <curl/curl.h> regardless of the
+      # `-DWITH_CURL=0` flag the crate's build script passes, so the
+      # runner needs libcurl headers on PATH for the C build to
+      # succeed.
+      - name: Install librdkafka build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
       # tonic-build invokes prost-build, which requires a protoc
       # binary on PATH. The Rust build script (`build.rs`) runs as
       # part of every cargo invocation below, so protoc must be
@@ -192,7 +201,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: core/engine
+          workspaces: engines/engine
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-features
@@ -228,8 +237,9 @@ jobs:
           # `stable` picks up newer toolchains whose modules can
           # contain build-constrained source that golangci-lint's
           # bundled type-checker (built against an older Go) cannot
-          # parse.
-          go-version: "1.24"
+          # parse. The curl-impersonate adapter's go.mod requires
+          # Go 1.25 (matches the control-plane operator's track).
+          go-version: "1.25"
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -307,6 +317,26 @@ jobs:
     defaults:
       run:
         working-directory: ${{ matrix.package }}
+    # All three adapters (Playwright, SeleniumBase, curl-impersonate)
+    # ping Redis at startup as a health check (Redis session
+    # externalization landed in 1479e3a / 4077d81). The conformance
+    # suite launches each adapter as a subprocess and dials it over
+    # gRPC; without a reachable Redis the adapters exit before
+    # reporting health, surfacing as 56 `HarnessFailure: driver
+    # subprocess exited before reporting health` errors. Pinned to
+    # `redis:7-alpine` for parity with `docker-compose.yml`. The
+    # service applies to both matrix entries; the seleniumbase entry
+    # ignores it.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
@@ -406,7 +436,8 @@ jobs:
       - if: matrix.package == 'tools/conformance'
         uses: actions/setup-go@v6
         with:
-          go-version: "1.24"
+          # Match the curl-impersonate adapter's go.mod (1.25).
+          go-version: "1.25"
       - if: matrix.package == 'tools/conformance'
         name: Build curl-impersonate adapter
         working-directory: ${{ github.workspace }}/adapters/curl-impersonate
@@ -426,6 +457,10 @@ jobs:
       - if: matrix.package == 'tools/conformance'
         id: curl-imp-pin
         name: Resolve curl-impersonate pin (conformance)
+        # Override the job-level `defaults.run.working-directory:
+        # ${{ matrix.package }}` so the relative pin-file path
+        # resolves at the repo root, not inside `tools/conformance/`.
+        working-directory: ${{ github.workspace }}
         run: |
           read -r version sha256 < <(grep -v '^#' adapters/curl-impersonate/.curl-impersonate-version | head -n 1)
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -453,71 +488,6 @@ jobs:
         run: echo "/opt/curl-impersonate" >> "$GITHUB_PATH"
       - run: uv run pytest
 
-  engine-integration:
-    name: Engine integration (rust + playwright)
-    needs: changes
-    # Run when either the engine or the Playwright adapter changes.
-    # Kept separate from the fast `rust` job: this one builds the
-    # Playwright adapter and installs Chromium, which the unit-test
-    # job has no business doing. See ADR-0012 §"Bad, because" on the
-    # gating choice.
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.typescript == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 9
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: adapters/playwright/pnpm-lock.yaml
-      - uses: bufbuild/buf-setup-action@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: core/engine
-      - name: Generate protocol bindings
-        run: |
-          cd proto && buf generate
-          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
-      - name: Build Playwright adapter
-        working-directory: adapters/playwright
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm build
-      - name: Resolve Playwright version
-        id: pw-version
-        working-directory: adapters/playwright
-        run: |
-          version=$(node -p "require('playwright/package.json').version")
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-      - name: Cache Playwright browsers
-        id: pw-cache
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
-      - if: steps.pw-cache.outputs.cache-hit != 'true'
-        name: Install Chromium with system deps
-        working-directory: adapters/playwright
-        run: pnpm exec playwright install --with-deps chromium
-      - if: steps.pw-cache.outputs.cache-hit == 'true'
-        name: Install Chromium system deps (browser already cached)
-        working-directory: adapters/playwright
-        run: pnpm exec playwright install-deps chromium
-      - name: Run engine integration test
-        working-directory: core/engine
-        env:
-          PLAYWRIGHT_AVAILABLE: "1"
-        run: cargo test --test integration -- --ignored --nocapture
-
   operator:
     name: Operator (control-plane envtest + build)
     needs: changes
@@ -525,15 +495,28 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: core/control-plane
+        working-directory: operators/control-plane
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           # Match the toolchain kubebuilder v4 scaffolds in go.mod.
-          # The control-plane is on its own track; the curl-impersonate
-          # adapter remains pinned to 1.24 in the `go` matrix above.
+          # The control-plane is on its own track.
           go-version: "1.25"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Generate the protocol bindings before `make test` /
+      # `make build`. The control-plane resolves
+      # `github.com/FabioCaffarello/spectre/proto/gen/go` via a local
+      # `replace` directive (see ADR-0007); without this step
+      # `controller-gen` (invoked by `make manifests`, transitively
+      # `make test`) fails resolving the import.
+      - name: Generate protocol bindings
+        working-directory: ${{ github.workspace }}
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
       # The kubebuilder Makefile vendors its own controller-gen,
       # kustomize, setup-envtest and golangci-lint into bin/, then
       # `make test` downloads apiserver/etcd/kubectl via setup-envtest.
@@ -543,8 +526,8 @@ jobs:
       - name: Cache kubebuilder tool chain
         uses: actions/cache@v5
         with:
-          path: core/control-plane/bin
-          key: kubebuilder-bin-${{ runner.os }}-${{ hashFiles('core/control-plane/go.sum') }}
+          path: operators/control-plane/bin
+          key: kubebuilder-bin-${{ runner.os }}-${{ hashFiles('operators/control-plane/go.sum') }}
       - name: Run tests
         run: make test
       - name: Build
@@ -620,7 +603,9 @@ jobs:
           docker buildx bake --load ${{ matrix.target }}
       - name: Smoke ${{ matrix.target }}
         if: matrix.changed == 'true'
-        run: just ${{ matrix.smoke_recipe }} TAG=ci
+        # `TAG` is the recipe's first positional parameter (default
+        # `dev`); pass `ci` as the value, not the literal `TAG=ci`.
+        run: just ${{ matrix.smoke_recipe }} ci
       - name: Report image size
         if: matrix.changed == 'true'
         run: docker images "spectre-${{ matrix.target }}:ci" --format '{{.Repository}}:{{.Tag}}\t{{.Size}}'
@@ -649,6 +634,18 @@ jobs:
           # Match the toolchain kubebuilder v4 scaffolds in go.mod;
           # `make install` invokes controller-gen.
           go-version: "1.25"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Generate the protocol bindings before `make install`
+      # (which transitively runs `make manifests` →
+      # `controller-gen`). The control-plane resolves
+      # `github.com/FabioCaffarello/spectre/proto/gen/go` via a
+      # local `replace` directive (see ADR-0007).
+      - name: Generate protocol bindings
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
       # Build the five images at TAG=dev so docker-compose.yml's
       # `image: spectre-<name>:dev` references resolve without
       # re-tagging. Local-flow byte-for-byte parity (just images).
@@ -714,21 +711,39 @@ jobs:
           '
           docker compose ps
       - name: Apply v1alpha2 CRDs to kind
-        working-directory: core/control-plane
+        working-directory: operators/control-plane
         run: make install
-      - name: Apply hello-hackernews sample ScrapeJob
-        run: kubectl apply -f core/control-plane/config/samples/spectre_v1alpha2_scrapejob_hello-hackernews.yaml
-      - name: Wait for ScrapeJob phase=Completed
+      - name: Apply hello-hackernews-endpoint sample ScrapeJob
+        # The hello-hackernews.yaml sample uses
+        # `engineRef.service.name=spectre-engine, namespace=spectre-system,
+        # port=8090`, which the operator resolves to
+        # `spectre-engine.spectre-system.svc.cluster.local:8090` — a
+        # K8s Service that only exists when the engine runs in-cluster
+        # (Helm path, R7.1). The CI full-stack test runs the engine
+        # as a Compose service alongside the operator, so we use the
+        # endpoint-form sample which dials `engine:8090` directly via
+        # Compose's DNS (the same flow `compose up` exercises locally).
+        run: kubectl apply -f operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_endpoint.yaml
+      - name: Wait for ScrapeJob phase=Completed (or Failed)
         run: |
-          # Hello-hackernews finishes in <60s locally; 5 minutes
-          # absorbs CI cold-start image pulls and slow runners.
+          # The endpoint-form sample's resource is named
+          # `hello-hackernews-endpoint`. Locally the job finishes in
+          # well under a minute; 5 minutes absorbs CI cold-start image
+          # pulls and slow runners. Fail-fast on terminal Failed so the
+          # job surfaces a real diagnosis instead of a 5-min timeout
+          # the next reader has to debug.
           timeout 300 bash -c '
-            until [ "$(kubectl get scrapejob hello-hackernews -o jsonpath={.status.phase} 2>/dev/null)" = "Completed" ]; do
-              kubectl get scrapejob hello-hackernews 2>/dev/null || true
+            while :; do
+              phase=$(kubectl get scrapejob hello-hackernews-endpoint -o jsonpath={.status.phase} 2>/dev/null)
+              kubectl get scrapejob hello-hackernews-endpoint 2>/dev/null || true
+              case "$phase" in
+                Completed) exit 0 ;;
+                Failed)    echo "ScrapeJob terminal Failed"; exit 1 ;;
+              esac
               sleep 5
             done
           '
-          kubectl describe scrapejob hello-hackernews
+          kubectl describe scrapejob hello-hackernews-endpoint
       - name: Operator logs (always)
         if: always()
         run: docker compose logs control-plane | tail -200 || true
@@ -760,7 +775,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.publish_dry_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Multi-arch (linux/amd64 + linux/arm64) builds for control-plane
+    # and playwright go through QEMU emulation on the runner; the
+    # 30-min budget proved too tight (the bake step alone consumed
+    # the full window). 45 min absorbs the playwright Chromium
+    # rebuild on a cold cache without leaving large headroom.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-qemu-action@v3
@@ -787,7 +807,7 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, operator, engine-integration, images, full-stack, publish-dry-run]
+    needs: [changes, proto, rust, go, typescript, python, operator, images, full-stack, publish-dry-run]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -798,7 +818,6 @@ jobs:
           echo "typescript:           ${{ needs.typescript.result }}"
           echo "python:               ${{ needs.python.result }}"
           echo "operator:             ${{ needs.operator.result }}"
-          echo "engine-integration:   ${{ needs.engine-integration.result }}"
           echo "images:               ${{ needs.images.result }}"
           echo "full-stack:           ${{ needs.full-stack.result }}"
           echo "publish-dry-run:      ${{ needs.publish-dry-run.result }}"

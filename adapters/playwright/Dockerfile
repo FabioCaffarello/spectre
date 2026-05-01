@@ -44,7 +44,7 @@
 
 ARG NODE_VERSION=20
 ARG BUF_VERSION=1.55.1
-ARG PLAYWRIGHT_VERSION=1.49.0
+ARG PLAYWRIGHT_VERSION=1.59.1
 
 # ---------------------------------------------------------------------------
 # Stage 1 — builder: Node + pnpm + buf, regenerate proto, tsc, prune

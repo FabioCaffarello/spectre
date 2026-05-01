@@ -17,7 +17,7 @@ shares it across in-flight `RunJob` requests as
 reference-counted and thread-safe, so per-job producer creation
 would be wasteful overhead.
 
-Startup sequence (`core/engine/src/bin/spectre.rs`):
+Startup sequence (`engines/engine/src/bin/spectre.rs`):
 
 1. Parse the listen port from `SPECTRE_ENGINE_PORT`.
 2. Dial Postgres via `Database::from_env`. **Required** —

@@ -220,7 +220,7 @@ proto-breaking:
 # Generate language bindings (gitignored). Writes Go to proto/gen/go,
 # Python to proto/gen/python, and TypeScript to
 # adapters/playwright/src/proto/. See ADR-0007 for rationale; Rust
-# bindings are produced lazily by core/engine/build.rs at cargo
+# bindings are produced lazily by engines/engine/build.rs at cargo
 # invocation time and are not materialised by this recipe.
 #
 # Two invocations: the default template generates Go + Python + TS
@@ -234,29 +234,29 @@ proto-generate: proto-bootstrap
     bash tools/codegen/post-generate.sh
 
 # ---------------------------------------------------------------------------
-# Rust engine (core/engine)
+# Rust engine (engines/engine)
 # ---------------------------------------------------------------------------
 
 engine-bootstrap: proto-generate
-    cd core/engine && cargo fetch
+    cd engines/engine && cargo fetch
 
 engine-fmt:
-    cd core/engine && cargo fmt --all
+    cd engines/engine && cargo fmt --all
 
 engine-lint:
-    cd core/engine && cargo fmt --all -- --check
-    cd core/engine && cargo clippy --all-targets --all-features -- -D warnings
+    cd engines/engine && cargo fmt --all -- --check
+    cd engines/engine && cargo clippy --all-targets --all-features -- -D warnings
 
 engine-test:
-    cd core/engine && cargo test --all-features
+    cd engines/engine && cargo test --all-features
 
 engine-build:
-    cd core/engine && cargo build --release
+    cd engines/engine && cargo build --release
 
 # Run the engine integration test. Requires the Playwright adapter
 # build and Chromium; the test is `#[ignore]` by default. See ADR-0012.
 engine-integration-test: pw-build pw-install-browsers
-    cd core/engine && PLAYWRIGHT_AVAILABLE=1 cargo test --test integration -- --ignored --nocapture
+    cd engines/engine && PLAYWRIGHT_AVAILABLE=1 cargo test --test integration -- --ignored --nocapture
 
 # Run the engine's database integration tests. Requires a Postgres
 # reachable at SPECTRE_POSTGRES_URL (the same env var the engine
@@ -264,7 +264,7 @@ engine-integration-test: pw-build pw-install-browsers
 # `just compose-up` (R4.2). Tests are `#[ignore]` by default so
 # `just engine-test` stays DB-free.
 engine-db-test:
-    cd core/engine && SQLX_OFFLINE=true cargo test --test db_integration -- --ignored --nocapture
+    cd engines/engine && SQLX_OFFLINE=true cargo test --test db_integration -- --ignored --nocapture
 
 # Run the engine's Kafka producer integration tests. Requires a
 # Kafka broker reachable at SPECTRE_KAFKA_BROKERS (the same env
@@ -272,7 +272,7 @@ engine-db-test:
 # one up via `just compose-up` (R4.4). Tests are `#[ignore]` by
 # default so `just engine-test` stays broker-free.
 engine-kafka-test:
-    cd core/engine && cargo test --test kafka_integration -- --ignored --nocapture
+    cd engines/engine && cargo test --test kafka_integration -- --ignored --nocapture
 
 # Run the engine's S3 uploader integration tests. Requires an
 # S3-compatible endpoint reachable at SPECTRE_S3_ENDPOINT (the
@@ -280,25 +280,25 @@ engine-kafka-test:
 # Bring up MinIO via `just compose-up` (R5.1). Tests are
 # `#[ignore]` by default so `just engine-test` stays MinIO-free.
 engine-s3-test:
-    cd core/engine && cargo test --test s3_integration -- --ignored --nocapture
+    cd engines/engine && cargo test --test s3_integration -- --ignored --nocapture
 
 # Run the engine's webhook client integration tests. No external
 # dependency — the test server runs in-process via axum. ADR-0024
 # §4. Tests run unconditionally as part of `just engine-test`;
 # this recipe gives them a discoverable surface.
 engine-webhook-test:
-    cd core/engine && cargo test --test webhook_integration -- --nocapture
+    cd engines/engine && cargo test --test webhook_integration -- --nocapture
 
 # ---------------------------------------------------------------------------
-# spectre engine binary (core/engine/src/bin/spectre.rs)
+# spectre engine binary (engines/engine/src/bin/spectre.rs)
 # ---------------------------------------------------------------------------
 # The binary is the gRPC service entry point — no subcommands. R2.3
 # retired the CLI surface ADR-0013 introduced (`run`, `validate`,
 # standalone `version`); ADR-0020 §3 records the supersession.
 
-# Build the release `spectre` binary at core/engine/target/release/spectre.
+# Build the release `spectre` binary at engines/engine/target/release/spectre.
 spectre-build:
-    cd core/engine && cargo build --release --bin spectre
+    cd engines/engine && cargo build --release --bin spectre
 
 # Run the native engine binary as a gRPC service. Debugging escape
 # hatch — the canonical local-dev path post-R6.2 is the Compose
@@ -315,7 +315,7 @@ spectre-build:
 # defaults — the Compose stack's host-port mappings. SIGTERM/Ctrl-C
 # drains in-flight RPCs and exits 0.
 engine-run-native *ARGS='': spectre-build
-    core/engine/target/release/spectre {{ARGS}}
+    engines/engine/target/release/spectre {{ARGS}}
 
 # gRPC health-probe the running engine on its default port. Requires
 # `grpc_health_probe` on PATH (https://github.com/grpc-ecosystem/grpc-health-probe).
@@ -324,9 +324,9 @@ engine-grpc-test PORT='8090':
     grpc_health_probe -addr=127.0.0.1:{{PORT}}
 
 # ---------------------------------------------------------------------------
-# Go control plane / Kubernetes operator (core/control-plane)
+# Go control plane / Kubernetes operator (operators/control-plane)
 # ---------------------------------------------------------------------------
-# core/control-plane is a kubebuilder v4 scaffold; the cp-* aggregates
+# operators/control-plane is a kubebuilder v4 scaffold; the cp-* aggregates
 # wrap the kubebuilder Makefile so top-level just
 # bootstrap/fmt/lint/test/build keep working; the op-* aliases below
 # are the discoverable surface for operator-specific workflows
@@ -336,11 +336,11 @@ engine-grpc-test PORT='8090':
 # engine over gRPC (R3.1), so cp-bootstrap drops the proto-generate
 # dependency the placeholder carried.
 cp-bootstrap:
-    cd core/control-plane && go mod download
+    cd operators/control-plane && go mod download
 
 cp-fmt:
-    cd core/control-plane && gofmt -l -w .
-    cd core/control-plane && goimports -l -w .
+    cd operators/control-plane && gofmt -l -w .
+    cd operators/control-plane && goimports -l -w .
 
 # Use vanilla golangci-lint rather than the kubebuilder Makefile's
 # custom-gcl path: we have no plugins to add, and the custom build
@@ -352,17 +352,17 @@ cp-fmt:
 # their host hit this; CI's setup-go installs the pinned version
 # directly.
 cp-lint:
-    cd core/control-plane && GOTOOLCHAIN=go1.25.3 go vet ./...
-    cd core/control-plane && GOTOOLCHAIN=go1.25.3 golangci-lint run
+    cd operators/control-plane && GOTOOLCHAIN=go1.25.3 go vet ./...
+    cd operators/control-plane && GOTOOLCHAIN=go1.25.3 golangci-lint run
 
 # Defer to the kubebuilder Makefile so envtest binaries are downloaded
 # and KUBEBUILDER_ASSETS is set automatically.
 cp-test:
-    cd core/control-plane && make test
+    cd operators/control-plane && make test
 
 # Defer to the kubebuilder Makefile; produces bin/manager.
 cp-build:
-    cd core/control-plane && make build
+    cd operators/control-plane && make build
 
 # Operator development: discoverable aliases over the kubebuilder
 # Makefile targets. op-test and op-build mirror cp-test and cp-build.
@@ -458,11 +458,11 @@ kind-status:
 # CRDs into a cluster. Targets `build/kind/kubeconfig` so
 # re-running outside of the `kind-up` flow still works.
 crds-install:
-    cd core/control-plane && \
+    cd operators/control-plane && \
         KUBECONFIG=$(realpath ../../build/kind/kubeconfig) make install
 
 crds-uninstall:
-    cd core/control-plane && \
+    cd operators/control-plane && \
         KUBECONFIG=$(realpath ../../build/kind/kubeconfig) make uninstall
 
 # Deprecated R6.2 names. R6.3 renames `op-install-crds` →
@@ -772,8 +772,8 @@ devcontainer-bootstrap:
 
 # Remove build artifacts, language caches, and generated protocol code.
 clean:
-    rm -rf core/engine/target
-    rm -rf core/control-plane/bin adapters/curl-impersonate/bin
+    rm -rf engines/engine/target
+    rm -rf operators/control-plane/bin adapters/curl-impersonate/bin
     rm -rf adapters/playwright/{node_modules,dist}
     rm -rf adapters/seleniumbase/{.venv,dist} adapters/seleniumbase/**/__pycache__
     rm -rf tools/conformance/{.venv,dist} tools/conformance/**/__pycache__

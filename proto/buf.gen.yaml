@@ -13,7 +13,7 @@
 #   ../adapters/...   -> repo:adapters/playwright/src/proto/
 #
 # Rust generation does NOT happen here. The Rust engine generates its
-# tonic + prost types in `core/engine/build.rs` at cargo build time;
+# tonic + prost types in `engines/engine/build.rs` at cargo build time;
 # the schema input is the same `proto/spectre/driver/v1alpha1/`
 # tree.
 
