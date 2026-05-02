@@ -839,7 +839,14 @@ jobs:
           version: '3.13.0'
 
       - name: Verify chart CRD matches operator source
-        run: just chart-check-crd-sync
+        # Inlined `just chart-check-crd-sync` body so the job
+        # doesn't need extractions/setup-just. The chart's CRD
+        # is a raw byte-for-byte copy of the operator's
+        # controller-gen source; any drift fails the diff and
+        # the job.
+        run: |
+          diff operators/control-plane/config/crd/bases/spectre.io_scrapejobs.yaml \
+               build/helm/spectre/crds/scrapejob.yaml
 
       - name: helm dependency update
         working-directory: build/helm/spectre
