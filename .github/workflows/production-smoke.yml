@@ -47,6 +47,14 @@ jobs:
     name: Helm install + ScrapeJobs + sink-arrival assertions
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # `environment: ci` is what makes `secrets.DOCKERHUB_TOKEN`
+    # and `vars.DOCKERHUB_USERNAME` resolve at job time. Without
+    # the declaration the docker/login-action step below silently
+    # produces an unauthenticated daemon, which then runs into
+    # Docker Hub's anonymous pull rate limit on the four Bitnami
+    # subchart images and the chart install times out with
+    # ImagePullBackOff. Mirrors publish.yml's pattern.
+    environment: ci
     steps:
       - uses: actions/checkout@v6
 
@@ -64,6 +72,18 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Authenticate to Docker Hub on the runner's daemon so
+      # subsequent pulls (Bitnami subchart images, the
+      # mendhak/http-https-echo digest verification, the bake
+      # base images) bypass the anonymous-pull rate limit.
+      # Pre-loaded via `kind load` further down so the kind
+      # nodes never themselves dial registry-1.docker.io.
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME || 'fabiocaffarello' }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # CI samples must be in sync with source samples. Drift
       # means someone edited a source sample without
@@ -131,12 +151,40 @@ jobs:
       # Load the five spectre-* images into kind. With
       # pullPolicy=Never the chart consumes these copies and
       # never attempts a registry pull.
-      - name: Load images into kind
+      - name: Load spectre images into kind
         run: |
           for img in engine control-plane curl-impersonate playwright seleniumbase; do
             kind load docker-image \
               "docker.io/fabiocaffarello/spectre-${img}:0.1.0-alpha.0" \
               --name spectre-r72
+          done
+
+      # Pre-pull the Bitnami subchart images on the runner's
+      # authenticated daemon and `kind load` them in. Without
+      # this step kind nodes pull anonymously from
+      # registry-1.docker.io and a small cluster install (4
+      # Bitnami images × multiple layers each) reliably trips
+      # Docker Hub's 100/6h rate limit, manifesting as
+      # ImagePullBackOff on postgresql / redis / kafka /
+      # minio and a downstream `helm install --wait` timeout.
+      # The image refs are fixed by the chart's
+      # `Chart.lock`-pinned subchart versions; bumping the
+      # Chart.yaml dependency block requires updating this
+      # list in lockstep (acceptable: subchart bumps already
+      # require an ADR-0030 amendment per §4).
+      - name: Pre-pull Bitnami subchart images and load into kind
+        run: |
+          BITNAMI_IMAGES=(
+            "docker.io/bitnami/postgresql:17.0.0-debian-12-r0"
+            "docker.io/bitnami/redis:7.2.5-debian-12-r0"
+            "docker.io/bitnami/kafka:3.8.0-debian-12-r0"
+            "docker.io/bitnami/minio:2024.8.3-debian-12-r1"
+          )
+          for img in "${BITNAMI_IMAGES[@]}"; do
+            echo "::group::Pulling $img"
+            docker pull "$img"
+            kind load docker-image "$img" --name spectre-r72
+            echo "::endgroup::"
           done
 
       # Pull the chart's subchart dependencies (Bitnami
