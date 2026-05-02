@@ -9,6 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase R7.1 — Helm chart packaging.** Phase R7 opens with the
+  first production-deployment artifact for Spectre's v1alpha1
+  stack. One new ADR + a complete chart at
+  [`build/helm/spectre/`](build/helm/spectre/) + a CI structural
+  gate.
+  - **[ADR-0030](docs/adr/0030-helm-chart-structure.md) — Helm
+    chart structure.** Eight decisions: chart at
+    `build/helm/spectre/` (out-of-band per ADR-0026 §3.9); single
+    chart with named-template helpers; Bitnami subcharts pinned
+    (postgresql 16.0.0, redis 19.6.0, kafka 30.0.0, minio 14.7.0)
+    with `Chart.lock` committed and bumps requiring ADR
+    amendment; image references default to
+    `docker.io/fabiocaffarello/spectre-<name>:<chart appVersion>`;
+    multi-arch via `nodeSelector: kubernetes.io/arch: amd64` on
+    the three amd64-only services per ADR-0018 §5 R6.5.3 update;
+    Kubernetes-native `grpc:` probes for engine + 3 adapters
+    (1.27+ stable per ADR-0025 §3 forward commitment); HTTP
+    probes for the control-plane operator; CRD shipped via Helm 3
+    `crds/` directory with the documented upgrade caveat; chart
+    `version` + `appVersion` pinned to the repository's `VERSION`.
+  - **Chart contents.** Five service templates (engine,
+    control-plane + RBAC, three adapters), shared `_helpers.tpl`,
+    NOTES.txt with a sample ScrapeJob heredoc, `values.yaml`
+    (~325 lines, fully commented), `values.schema.json` (JSON
+    Schema draft-07 validating overrides at install time),
+    `crds/scrapejob.yaml` (byte-for-byte copy of the operator's
+    controller-gen source).
+  - **First real Docker Hub publish.** R6.5.3 wired
+    `publish.yml` as `workflow_dispatch` only; R7.1 dispatched
+    it for the first time, producing
+    `fabiocaffarello/spectre-<name>:0.1.0-alpha.0` for all five
+    images. Closes the R6.5.3 deferred-trigger gap.
+  - **CI helm-lint job.** Runs on every PR that touches
+    `build/helm/**` or the operator's CRD source. Runs `helm
+    dependency update`, `helm lint --strict`, `helm template` +
+    `kubeval`, and the `chart-check-crd-sync` invariant against
+    `operators/control-plane/config/crd/bases/`. (`helm install
+    --dry-run` is deliberately omitted; Helm 3.13's dry-run
+    still probes the apiserver and CI has no cluster — local
+    smoke goes through `just chart-install-smoke`.)
+  - **Justfile recipes.** `chart-sync-crds`,
+    `chart-check-crd-sync`, `chart-deps`, `chart-lint`,
+    `chart-install-smoke`. `just check` extends to gate the CRD
+    drift invariant.
+  - **Documentation.** New `docs/architecture/helm-chart.md`
+    (~250 lines) — Compose-to-Helm correspondence table,
+    multi-arch table, probe policy, CRD lifecycle, CI
+    integration, out-of-scope list. Top-level `README.md` gains
+    a "Deploying to Kubernetes" section.
+    `docs/architecture/releases.md` gains a "R7.1 — Helm chart
+    as a release artifact" section.
+
+### Fixed
+
+- **Latent R6.5.3 publish-workflow gap.**
+  `.github/workflows/publish.yml` now declares `environment: ci`
+  so `secrets.DOCKERHUB_TOKEN` resolves at job time. The token +
+  matching `DOCKERHUB_USERNAME` live in the `ci` environment
+  (the same one CI's image-matrix and full-stack jobs draw
+  from); without the declaration the first real dispatch failed
+  with `Password required`. R6.5.3 shipped the workflow without
+  the line and went unnoticed because no one had triggered it
+  before R7.1.
+
+### Removed
+
+- **Deprecated R6.2 justfile aliases.** `op-install-crds` and
+  `op-uninstall-crds` removed per the inline "Removed in R7.1"
+  commitment and ADR-0025 §6's R6.3 update one-cycle deprecation
+  window. Use `crds-install` / `crds-uninstall`.
+
+### Added (continued — Phase R6.6)
+
 - **Phase R6.6 — Platform Maturation: four ADRs + repository
   restructure.** Phase R6.6 inserts a structural-maturation phase
   between R6.5 (closed at R6.5.4) and the originally-planned R7.1

@@ -130,6 +130,28 @@ supported — see
 [docs/architecture/releases.md](docs/architecture/releases.md)
 for the operator runbook.
 
+## Deploying to Kubernetes
+
+R7.1 ships a Helm chart at
+[`build/helm/spectre/`](build/helm/spectre/) that installs the
+v1alpha1 stack — engine, three driver adapters, control-plane
+operator, and stateful dependencies (Postgres, Redis, Kafka,
+MinIO) — into any conformant Kubernetes 1.27+ cluster:
+
+```bash
+helm dependency update build/helm/spectre/
+helm install spectre build/helm/spectre/ \
+    --create-namespace --namespace spectre
+kubectl -n spectre rollout status deployment --all --timeout=300s
+```
+
+A vanilla install pulls
+`docker.io/fabiocaffarello/spectre-<name>:<chart appVersion>`
+for each service. The structural decisions are recorded in
+[ADR-0030](docs/adr/0030-helm-chart-structure.md); the operator
+runbook lives at
+[docs/architecture/helm-chart.md](docs/architecture/helm-chart.md).
+
 R2.3 retired the standalone `spectre run` / `validate` CLI; the
 `spectre` binary is now the engine's gRPC service entry point
 (ADR-0020 §3 supersedes ADR-0013). Job execution flows from a

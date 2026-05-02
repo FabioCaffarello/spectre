@@ -59,17 +59,18 @@ narrative-closing documentation pass (R8.1).
 Phase R7 ships v1alpha1 in production-installable shape. Two
 phases are committed; details land in their per-phase prompts.
 
-- **R7.1 — Helm chart packaging.** A `build/helm/spectre/` chart
-  (or equivalent — final location is R7.1's call per
-  [ADR-0026](adr/0026-platform-taxonomy.md) §3.9 since Helm
-  artifacts are out-of-band) installs the engine + three
+- **[x] R7.1 — Helm chart packaging.** *(complete 2026-05-02 —
+  see [ADR-0030](adr/0030-helm-chart-structure.md) and
+  [docs/architecture/helm-chart.md](architecture/helm-chart.md).)*
+  Ships [`build/helm/spectre/`](../build/helm/spectre/) (location
+  per ADR-0026 §3.9 — out-of-band) installing the engine + three
   adapters + control plane + stateful dependencies into a
   cluster. Configuration surface mirrors Compose: per-service
-  env vars, Postgres/Redis/Kafka connection strings, sink
+  env vars, Postgres/Redis/Kafka/MinIO connection strings, sink
   targets. The chart consumes the published images from
-  [Docker Hub](architecture/releases.md). Acceptance: a
-  contributor with a fresh cluster can `helm install spectre`
-  and submit a `ScrapeJob` end-to-end.
+  [Docker Hub](architecture/releases.md); R7.1 included the
+  first real publish at `0.1.0-alpha.0`. Structural CI gate
+  (`helm-lint`) added; production smoke deferred to R7.2.
 - **R7.2 — Production smoke.** A scheduled CI job installs the
   Helm chart into a kind cluster, runs the three reference
   ScrapeJobs to `Completed`, and asserts row events arrive at

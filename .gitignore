@@ -62,6 +62,11 @@ build/
 !/build/docker/**
 !/build/kind/
 !/build/kind/**
+# /build/helm/ (R7.1, ADR-0030) — Helm chart for the v1alpha1
+# stack. The chart's own .gitignore excludes the auto-populated
+# charts/ subchart cache.
+!/build/helm/
+!/build/helm/**
 # `tools/build/` (R6.5.1) hosts the version-coherence script that
 # enforces build/docker/versions.env <-> Dockerfile ARG defaults.
 # Source-controlled; carved out from the unanchored `build/` rule

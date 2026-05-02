@@ -1,0 +1,226 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Spectre Helm chart values",
+  "description": "Validates the chart's value surface at install time. See ADR-0030 §3 for structural rationale.",
+  "type": "object",
+  "required": [
+    "image",
+    "engine",
+    "controlPlane",
+    "playwrightAdapter",
+    "seleniumbaseAdapter",
+    "curlImpersonateAdapter"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["registry", "pullPolicy"],
+      "additionalProperties": false,
+      "properties": {
+        "registry": { "type": "string", "minLength": 1 },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
+        "pullSecrets": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "engine":               { "$ref": "#/definitions/grpcService" },
+    "playwrightAdapter":    { "$ref": "#/definitions/grpcService" },
+    "seleniumbaseAdapter":  { "$ref": "#/definitions/grpcService" },
+    "curlImpersonateAdapter": { "$ref": "#/definitions/grpcService" },
+    "controlPlane":         { "$ref": "#/definitions/operatorService" },
+    "postgresql": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "kafka": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "minio": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    }
+  },
+  "definitions": {
+    "grpcService": {
+      "type": "object",
+      "required": ["enabled", "replicas", "image", "service", "probes"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled":  { "type": "boolean" },
+        "replicas": { "type": "integer", "minimum": 0 },
+        "image":    { "$ref": "#/definitions/serviceImage" },
+        "service":  { "$ref": "#/definitions/service" },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "resources":    { "$ref": "#/definitions/resources" },
+        "probes":       { "$ref": "#/definitions/grpcProbes" },
+        "extraEnv":     { "$ref": "#/definitions/extraEnv" },
+        "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "podLabels":      { "type": "object", "additionalProperties": { "type": "string" } },
+        "affinity":       { "type": "object", "additionalProperties": true },
+        "tolerations":    { "type": "array",  "items": { "type": "object" } }
+      }
+    },
+    "operatorService": {
+      "type": "object",
+      "required": ["enabled", "replicas", "image", "service", "probes", "serviceAccount"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled":  { "type": "boolean" },
+        "replicas": { "type": "integer", "minimum": 0 },
+        "image":    { "$ref": "#/definitions/serviceImage" },
+        "service":  { "$ref": "#/definitions/service" },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "resources":    { "$ref": "#/definitions/resources" },
+        "probes":       { "$ref": "#/definitions/httpProbes" },
+        "serviceAccount": {
+          "type": "object",
+          "required": ["create"],
+          "additionalProperties": false,
+          "properties": {
+            "create": { "type": "boolean" },
+            "name":   { "type": "string" }
+          }
+        },
+        "extraEnv":     { "$ref": "#/definitions/extraEnv" },
+        "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "podLabels":      { "type": "object", "additionalProperties": { "type": "string" } },
+        "affinity":       { "type": "object", "additionalProperties": true },
+        "tolerations":    { "type": "array",  "items": { "type": "object" } }
+      }
+    },
+    "serviceImage": {
+      "type": "object",
+      "required": ["repository"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag":        { "type": "string" }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": ["type", "port"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": { "$ref": "#/definitions/resourceMap" },
+        "limits":   { "$ref": "#/definitions/resourceMap" }
+      }
+    },
+    "resourceMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu":    { "type": ["string", "number"] },
+        "memory": { "type": "string" }
+      }
+    },
+    "grpcProbes": {
+      "type": "object",
+      "required": ["readiness", "liveness"],
+      "additionalProperties": false,
+      "properties": {
+        "readiness": { "$ref": "#/definitions/probe" },
+        "liveness":  { "$ref": "#/definitions/probe" }
+      }
+    },
+    "httpProbes": {
+      "type": "object",
+      "required": ["readiness", "liveness"],
+      "additionalProperties": false,
+      "properties": {
+        "readiness": { "$ref": "#/definitions/probe" },
+        "liveness":  { "$ref": "#/definitions/probe" }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "grpc": {
+          "type": "object",
+          "required": ["port"],
+          "additionalProperties": false,
+          "properties": {
+            "port":    { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "service": { "type": "string" }
+          }
+        },
+        "httpGet": {
+          "type": "object",
+          "required": ["path", "port"],
+          "additionalProperties": false,
+          "properties": {
+            "path":   { "type": "string", "minLength": 1 },
+            "port":   { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "scheme": { "type": "string", "enum": ["HTTP", "HTTPS"] }
+          }
+        },
+        "tcpSocket": {
+          "type": "object",
+          "required": ["port"],
+          "additionalProperties": false,
+          "properties": {
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        },
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds":       { "type": "integer", "minimum": 1 },
+        "timeoutSeconds":      { "type": "integer", "minimum": 1 },
+        "successThreshold":    { "type": "integer", "minimum": 1 },
+        "failureThreshold":    { "type": "integer", "minimum": 1 }
+      },
+      "oneOf": [
+        { "required": ["grpc"] },
+        { "required": ["httpGet"] },
+        { "required": ["tcpSocket"] }
+      ]
+    },
+    "extraEnv": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": true,
+        "properties": {
+          "name":  { "type": "string", "minLength": 1 },
+          "value": { "type": "string" },
+          "valueFrom": { "type": "object", "additionalProperties": true }
+        }
+      }
+    }
+  }
+}

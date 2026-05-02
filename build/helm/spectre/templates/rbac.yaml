@@ -1,0 +1,86 @@
+{{- if .Values.controlPlane.enabled }}
+{{- if .Values.controlPlane.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "spectre.controlPlaneServiceAccountName" . }}
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+---
+{{- end }}
+# manager-role — operator's authority over ScrapeJob CRs.
+# Translated from operators/control-plane/config/rbac/role.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "spectre.fullname" . }}-manager
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+rules:
+  - apiGroups: [spectre.io]
+    resources: [scrapejobs]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [spectre.io]
+    resources: [scrapejobs/finalizers]
+    verbs: [update]
+  - apiGroups: [spectre.io]
+    resources: [scrapejobs/status]
+    verbs: [get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "spectre.fullname" . }}-manager
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "spectre.fullname" . }}-manager
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "spectre.controlPlaneServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# leader-election Role — controller-runtime needs configmaps + leases
+# in the deployment namespace to elect a leader across replicas.
+# Translated from operators/control-plane/config/rbac/leader_election_role.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "spectre.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "spectre.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "spectre.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "spectre.controlPlaneServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

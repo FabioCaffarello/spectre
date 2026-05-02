@@ -235,6 +235,32 @@ two ready images; the three single-arch images build
 unchanged. Build artefacts live in BuildKit's local cache and
 are discarded with the runner.
 
+## R7.1 — Helm chart as a release artifact
+
+R7.1 added the Helm chart at `build/helm/spectre/` (ADR-0030)
+as a release artifact alongside the published images. The
+chart's `appVersion` tracks the repository's `VERSION` file,
+so a release cadence bumps both in the same commit. The chart's
+default image references resolve to
+`docker.io/fabiocaffarello/spectre-<name>:<chart appVersion>`,
+making the publish flow described above the prerequisite for
+any chart consumer running the defaults.
+
+R7.1 included the **first real publish** (`0.1.0-alpha.0`) of
+all five images, exercising the publish workflow end-to-end and
+confirming the manifest list shape recorded in the Multi-arch
+status table above.
+
+The chart's structural CI gate (`helm-lint` job) runs on every
+PR that touches `build/helm/**` or the operator's CRD source.
+Production smoke (Helm install in CI + sample ScrapeJobs to
+`Completed`) lands in R7.2; today the gate is structural only.
+See [helm-chart.md](helm-chart.md) for the chart-level details.
+
+OCI-registry chart publish
+(`oci://docker.io/fabiocaffarello/charts/spectre`) is deferred
+post-refactor; consumers install from a cloned repo.
+
 ## Forward references
 
 - **R6.5.4** deduplicates Dockerfile codegen via a shared base

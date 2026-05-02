@@ -1,0 +1,338 @@
+# Spectre Helm chart — default values
+#
+# Every key in this file is documented by values.schema.json
+# (JSON Schema draft-07; validated by Helm at install time).
+#
+# Override patterns:
+#   helm install spectre build/helm/spectre/ -f my-values.yaml
+#   helm install spectre build/helm/spectre/ --set engine.replicas=2
+#
+# Architectural rationale: ADR-0030.
+
+# ---------------------------------------------------------------
+# Global image configuration
+# ---------------------------------------------------------------
+image:
+  # Docker Hub registry / namespace. The five spectre-* images
+  # live under this namespace. Override for private registries.
+  # See ADR-0030 §5 for override patterns.
+  registry: docker.io/fabiocaffarello
+
+  # Pull policy. `IfNotPresent` is the default; use `Never` for
+  # local-built images (kind / minikube); use `Always` for
+  # development against rolling tags.
+  pullPolicy: IfNotPresent
+
+  # Pull secrets. Empty default; populate for private
+  # registries. Each entry is a Kubernetes Secret name.
+  pullSecrets: []
+
+# ---------------------------------------------------------------
+# Engine — the v1alpha1 scraping engine
+# (see docs/architecture/engine.md)
+# ---------------------------------------------------------------
+engine:
+  enabled: true
+  replicas: 1
+
+  image:
+    # Image name (combined with global image.registry).
+    repository: spectre-engine
+    # Tag (combined with global image.pullPolicy). Empty
+    # falls through to .Chart.AppVersion.
+    tag: ""
+
+  service:
+    type: ClusterIP
+    port: 8090
+
+  # Multi-arch posture per ADR-0030 §6.1. Engine is amd64-only
+  # at v1alpha1 (musl static binary; aarch64-musl cross-compile
+  # is the canonical unblock per ADR-0018 §5 R6.5.3 update).
+  # Delete this block when the unblock lands.
+  nodeSelector:
+    kubernetes.io/arch: amd64
+
+  # Resource hints. v1alpha1 defaults; override for production
+  # sizing.
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  # Probe configuration. Kubernetes-native gRPC probe (1.27+
+  # stable) — no in-image grpc_health_probe binary needed.
+  # See ADR-0030 §7.
+  probes:
+    readiness:
+      grpc:
+        port: 8090
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 3
+    liveness:
+      grpc:
+        port: 8090
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 5
+
+  # Engine-specific environment overrides. The chart sets
+  # SPECTRE_POSTGRES_URL, SPECTRE_KAFKA_BROKERS,
+  # SPECTRE_REDIS_URL, SPECTRE_S3_ENDPOINT automatically from
+  # the stateful subcharts' service names. Override to point at
+  # external instances.
+  extraEnv: []
+
+  # Pod-level customisation. All empty by default.
+  podAnnotations: {}
+  podLabels: {}
+  affinity: {}
+  tolerations: []
+
+# ---------------------------------------------------------------
+# Control plane (operator)
+# (see docs/architecture/control-plane.md)
+# ---------------------------------------------------------------
+controlPlane:
+  enabled: true
+  replicas: 1
+
+  image:
+    repository: spectre-control-plane
+    tag: ""
+
+  service:
+    type: ClusterIP
+    port: 8081
+
+  # Multi-arch posture per ADR-0030 §6.1. Control plane is
+  # multi-arch (linux/amd64 + linux/arm64) as of R6.5.3 publish.
+  # No nodeSelector — Kubernetes scheduler picks any node.
+  nodeSelector: {}
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # HTTP probes against controller-runtime's healthz/readyz
+  # endpoints. See ADR-0030 §7.2.
+  probes:
+    readiness:
+      httpGet:
+        path: /readyz
+        port: 8081
+      initialDelaySeconds: 5
+    liveness:
+      httpGet:
+        path: /healthz
+        port: 8081
+      initialDelaySeconds: 15
+
+  # ServiceAccount + RBAC are managed by the chart automatically
+  # from operators/control-plane/config/rbac/. Override the SA
+  # name only if integrating with an external IRSA / Workload
+  # Identity setup.
+  serviceAccount:
+    create: true
+    name: ""
+
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  affinity: {}
+  tolerations: []
+
+# ---------------------------------------------------------------
+# Playwright adapter
+# ---------------------------------------------------------------
+playwrightAdapter:
+  enabled: true
+  replicas: 1
+
+  image:
+    repository: spectre-playwright
+    tag: ""
+
+  service:
+    type: ClusterIP
+    port: 8091
+
+  # Multi-arch posture per ADR-0030 §6.1. Playwright is
+  # multi-arch (linux/amd64 + linux/arm64) as of R6.5.3 publish.
+  nodeSelector: {}
+
+  # Playwright needs more resources due to Chromium runtime.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+  probes:
+    readiness:
+      grpc:
+        port: 8091
+      initialDelaySeconds: 15
+      periodSeconds: 10
+    liveness:
+      grpc:
+        port: 8091
+      initialDelaySeconds: 60
+
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  affinity: {}
+  tolerations: []
+
+# ---------------------------------------------------------------
+# SeleniumBase adapter
+# ---------------------------------------------------------------
+seleniumbaseAdapter:
+  enabled: true
+  replicas: 1
+
+  image:
+    repository: spectre-seleniumbase
+    tag: ""
+
+  service:
+    type: ClusterIP
+    port: 8092
+
+  # Multi-arch posture per ADR-0030 §6.1. SeleniumBase is
+  # amd64-only at v1alpha1 (Google Chrome stable for Linux is
+  # amd64-only). Unblock options per ADR-0018 §5 R6.5.3 update:
+  # switch to Chromium, or wait for upstream Chrome arm64.
+  # Delete this block when the unblock lands.
+  nodeSelector:
+    kubernetes.io/arch: amd64
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+  probes:
+    readiness:
+      grpc:
+        port: 8092
+      initialDelaySeconds: 15
+      periodSeconds: 10
+    liveness:
+      grpc:
+        port: 8092
+      initialDelaySeconds: 60
+
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  affinity: {}
+  tolerations: []
+
+# ---------------------------------------------------------------
+# curl-impersonate adapter
+# ---------------------------------------------------------------
+curlImpersonateAdapter:
+  enabled: true
+  replicas: 1
+
+  image:
+    repository: spectre-curl-impersonate
+    tag: ""
+
+  service:
+    type: ClusterIP
+    port: 8093
+
+  # Multi-arch posture per ADR-0030 §6.1. curl-impersonate is
+  # amd64-only at v1alpha1 (runtime base
+  # lwthiker/curl-impersonate:0.6-chrome is amd64-only on
+  # Docker Hub). Unblock options per ADR-0018 §5 R6.5.3 update:
+  # (a) wait upstream multi-arch, (b) fork the upstream image,
+  # (c) cross-compile from source. Delete this block when the
+  # unblock lands.
+  nodeSelector:
+    kubernetes.io/arch: amd64
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  probes:
+    readiness:
+      grpc:
+        port: 8093
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    liveness:
+      grpc:
+        port: 8093
+      initialDelaySeconds: 15
+
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  affinity: {}
+  tolerations: []
+
+# ---------------------------------------------------------------
+# Stateful dependencies — Bitnami subcharts
+# Each can be disabled to use an external instance. ADR-0030 §4.
+# ---------------------------------------------------------------
+
+# PostgreSQL — engine state + operator state
+postgresql:
+  enabled: true
+  auth:
+    username: spectre
+    password: spectre_chart_default_password
+    database: spectre
+  primary:
+    persistence:
+      size: 8Gi
+
+# Redis — session store + cache
+redis:
+  enabled: true
+  auth:
+    enabled: false
+  master:
+    persistence:
+      size: 2Gi
+
+# Kafka — output sink
+kafka:
+  enabled: true
+  controller:
+    replicaCount: 1
+  listeners:
+    client:
+      protocol: PLAINTEXT
+
+# MinIO — S3-compatible storage for output sink
+minio:
+  enabled: true
+  auth:
+    rootUser: spectre
+    rootPassword: spectre_chart_default_password
+  defaultBuckets: spectre-outputs
+  persistence:
+    size: 10Gi

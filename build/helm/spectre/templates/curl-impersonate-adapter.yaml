@@ -1,0 +1,84 @@
+{{- if .Values.curlImpersonateAdapter.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "spectre.fullname" . }}-curl-impersonate-adapter
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: curl-impersonate-adapter
+spec:
+  replicas: {{ .Values.curlImpersonateAdapter.replicas }}
+  selector:
+    matchLabels:
+      {{- include "spectre.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: curl-impersonate-adapter
+  template:
+    metadata:
+      {{- with .Values.curlImpersonateAdapter.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "spectre.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: curl-impersonate-adapter
+        {{- with .Values.curlImpersonateAdapter.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.curlImpersonateAdapter.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.curlImpersonateAdapter.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.curlImpersonateAdapter.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: curl-impersonate-adapter
+          image: {{ include "spectre.image" (dict "service" .Values.curlImpersonateAdapter "context" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.curlImpersonateAdapter.service.port }}
+              protocol: TCP
+          env:
+            - name: SPECTRE_ADAPTER_GRPC_PORT
+              value: {{ .Values.curlImpersonateAdapter.service.port | quote }}
+            {{- with .Values.curlImpersonateAdapter.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            {{- toYaml .Values.curlImpersonateAdapter.probes.readiness | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.curlImpersonateAdapter.probes.liveness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.curlImpersonateAdapter.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "spectre.fullname" . }}-curl-impersonate-adapter
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: curl-impersonate-adapter
+spec:
+  type: {{ .Values.curlImpersonateAdapter.service.type }}
+  ports:
+    - port: {{ .Values.curlImpersonateAdapter.service.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "spectre.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: curl-impersonate-adapter
+{{- end }}

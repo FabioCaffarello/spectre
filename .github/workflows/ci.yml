@@ -31,6 +31,7 @@ jobs:
       image_seleniumbase: ${{ steps.filter.outputs.image_seleniumbase }}
       full_stack: ${{ steps.filter.outputs.full_stack }}
       publish_dry_run: ${{ steps.filter.outputs.publish_dry_run }}
+      helm: ${{ steps.filter.outputs.helm }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -145,6 +146,15 @@ jobs:
               - 'docker-bake.hcl'
               - 'build/docker/**'
               - '.github/workflows/publish.yml'
+              - '.github/workflows/ci.yml'
+            # Helm chart structural gate (R7.1, ADR-0030).
+            # Triggers on any chart-source change plus the
+            # operator's CRD source (chart-check-crd-sync gates
+            # against drift between the chart's crds/ copy and
+            # the controller-gen-generated source).
+            helm:
+              - 'build/helm/**'
+              - 'operators/control-plane/config/crd/bases/**'
               - '.github/workflows/ci.yml'
 
   proto:
@@ -806,10 +816,74 @@ jobs:
             --set playwright.platform=linux/amd64 \
             --set playwright.platform=linux/arm64
 
+  # Helm chart structural gate (R7.1, ADR-0030).
+  #
+  # Validates that the chart at build/helm/spectre/ lints clean,
+  # renders to valid Kubernetes manifests, dry-run-installs, and
+  # has a CRD copy in sync with the operator's source of truth.
+  # Production smoke (Helm install + sample ScrapeJobs to
+  # `Completed` against a real cluster) is R7.2's territory; this
+  # job is structural validation only.
+  helm-lint:
+    name: Helm chart (lint + template + dry-run)
+    needs: changes
+    if: needs.changes.outputs.helm == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.13.0'
+
+      - name: Verify chart CRD matches operator source
+        # Inlined `just chart-check-crd-sync` body so the job
+        # doesn't need extractions/setup-just. The chart's CRD
+        # is a raw byte-for-byte copy of the operator's
+        # controller-gen source; any drift fails the diff and
+        # the job.
+        run: |
+          diff operators/control-plane/config/crd/bases/spectre.io_scrapejobs.yaml \
+               build/helm/spectre/crds/scrapejob.yaml
+
+      - name: helm dependency update
+        working-directory: build/helm/spectre
+        run: helm dependency update
+
+      - name: helm lint --strict
+        working-directory: build/helm/spectre
+        run: helm lint --strict .
+
+      - name: helm template (render check)
+        working-directory: build/helm/spectre
+        run: helm template spectre . > /tmp/rendered.yaml
+
+      - name: kubeval rendered manifests
+        # Validate the rendered docs against the bundled
+        # Kubernetes JSON schemas. v0.16.1 supports k8s 1.27+
+        # which is the chart's documented minimum.
+        run: |
+          curl -fsSL https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz \
+            | tar xz -C /tmp
+          /tmp/kubeval --ignore-missing-schemas /tmp/rendered.yaml
+
+      # `helm install --dry-run` is intentionally NOT in this
+      # gate. Even with `--dry-run=client` (Helm 3.13+), the
+      # install path attempts an apiserver round-trip for some
+      # admission validations and CI's runner has no cluster.
+      # The combination above (lint --strict, template, kubeval)
+      # covers the structural validation R7.1's gate is meant to
+      # provide; real-cluster smoke is R7.2's territory. The
+      # local `chart-install-smoke` justfile recipe still
+      # exercises a true `helm install` against a kind cluster
+      # for maintainer-side verification.
+
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, proto, rust, go, typescript, python, operator, images, full-stack, publish-dry-run]
+    needs: [changes, proto, rust, go, typescript, python, operator, images, full-stack, publish-dry-run, helm-lint]
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -823,6 +897,7 @@ jobs:
           echo "images:               ${{ needs.images.result }}"
           echo "full-stack:           ${{ needs.full-stack.result }}"
           echo "publish-dry-run:      ${{ needs.publish-dry-run.result }}"
+          echo "helm-lint:            ${{ needs.helm-lint.result }}"
       - name: Fail if any required job failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1
