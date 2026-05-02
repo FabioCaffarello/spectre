@@ -32,6 +32,14 @@ jobs:
     name: Build + push to Docker Hub
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # DOCKERHUB_TOKEN + DOCKERHUB_USERNAME live in the `ci`
+    # environment (the same one CI's image-matrix and full-stack
+    # jobs draw from). Declaring `environment: ci` is what makes
+    # `secrets.DOCKERHUB_TOKEN` resolve here. R6.5.3 shipped this
+    # workflow without the declaration; the gap surfaced when
+    # R7.1 dispatched the first real publish (login failed with
+    # "Password required"). Closing it as part of R7.1.
+    environment: ci
     steps:
       - uses: actions/checkout@v6
 
