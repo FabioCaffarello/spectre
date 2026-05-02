@@ -1,0 +1,51 @@
+apiVersion: v2
+name: spectre
+description: |
+  Spectre — distributed web scraping platform with pluggable
+  driver adapters (Playwright, SeleniumBase, curl-impersonate).
+  Installs the engine, three driver adapters, the control plane
+  operator, and stateful dependencies (Postgres, Redis, Kafka,
+  MinIO).
+
+type: application
+
+# Chart version + app version both pinned to VERSION file at
+# the repo root. Bumping the project version bumps both. See
+# ADR-0030 §2 (decision 8).
+version: 0.1.0-alpha.0
+appVersion: 0.1.0-alpha.0
+
+# Stateful service subcharts. Pinned to specific Bitnami /
+# Apache versions; bumps require ADR-0030 amendment per §4.
+dependencies:
+  - name: postgresql
+    version: 16.0.0
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: 19.6.0
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  - name: kafka
+    version: 30.0.0
+    repository: https://charts.bitnami.com/bitnami
+    condition: kafka.enabled
+  - name: minio
+    version: 14.7.0
+    repository: https://charts.bitnami.com/bitnami
+    condition: minio.enabled
+
+home: https://github.com/FabioCaffarello/spectre
+sources:
+  - https://github.com/FabioCaffarello/spectre
+
+keywords:
+  - scraping
+  - web-scraping
+  - playwright
+  - seleniumbase
+  - kubernetes-operator
+
+maintainers:
+  - name: Fabio Caffarello
+    url: https://github.com/FabioCaffarello
