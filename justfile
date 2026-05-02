@@ -490,11 +490,11 @@ curl-imp-fmt:
 
 # GOTOOLCHAIN is pinned to match cp-lint for the same reason (see
 # the cp-lint comment): go's auto-toolchain resolution must not bump
-# to a newer Go than golangci-lint v2.8.0 (built with Go 1.25.5) can
-# parse.
+# to a newer Go than the project intends. The curl-impersonate adapter
+# moved to Go 1.26 alongside the operator (controller-runtime 0.24).
 curl-imp-lint:
-    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.25.3 go vet ./...
-    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.25.3 golangci-lint run
+    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.26.0 go vet ./...
+    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.26.0 golangci-lint run
 
 curl-imp-test:
     cd adapters/curl-impersonate && go test ./...

@@ -237,10 +237,9 @@ jobs:
           # `stable` picks up newer toolchains whose modules can
           # contain build-constrained source that golangci-lint's
           # bundled type-checker (built against an older Go) cannot
-          # parse. The curl-impersonate adapter's go.mod requires
-          # Go 1.25; the operator track moved to Go 1.26 with
-          # controller-runtime 0.24.
-          go-version: "1.25"
+          # parse. Both Go modules (operator + curl-impersonate) are
+          # on Go 1.26 as of the controller-runtime 0.24 bump.
+          go-version: "1.26"
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -437,8 +436,8 @@ jobs:
       - if: matrix.package == 'tools/conformance'
         uses: actions/setup-go@v6
         with:
-          # Match the curl-impersonate adapter's go.mod (1.25).
-          go-version: "1.25"
+          # Match the curl-impersonate adapter's go.mod (1.26).
+          go-version: "1.26"
       - if: matrix.package == 'tools/conformance'
         name: Build curl-impersonate adapter
         working-directory: ${{ github.workspace }}/adapters/curl-impersonate
