@@ -8,9 +8,9 @@ architectural commitment is recorded permanently in
 [ADR-0020](adr/0020-microservices-architecture-supersession.md);
 this document tracks execution.
 
-Last updated: 2026-04-30
-Current phase: **R6.6 — Platform Maturation (CLOSES on merge of this PR, 2026-04-30; ADRs 0026–0029 accepted; restructure enacted; fossil sweep + doc refresh complete)**
-Next PR: **R7.1 — Helm chart (opens Phase R7)**
+Last updated: 2026-05-02
+Current phase: **R7.1 — Helm chart packaging (CLOSES on merge of this PR, 2026-05-02; ADR-0030 accepted; build/helm/spectre/ ships; first real Docker Hub publish at `0.1.0-alpha.0`; helm-lint CI gate green)**
+Next PR: **R7.2 — Production smoke (Helm-installed cluster)**
 
 ## Phases
 
@@ -52,19 +52,20 @@ ADR-0020 §5 R6.6 sub-row)*
 
 - [x] **R6.6 — Platform Maturation: ADRs 0026–0029 + repository restructure + fossil sweep + doc refresh** *(complete on merge of this PR, 2026-04-30 — closes Phase R6.6)*
 
-- [ ] **R7.1 — Helm chart packaging** *(next; opens Phase R7)*
-- [ ] R7.2 — Production smoke (Helm-installed cluster)
+- [x] **R7.1 — Helm chart packaging** *(complete on merge of this PR, 2026-05-02 — opens Phase R7; ADR-0030; first real Docker Hub publish)*
+- [ ] **R7.2 — Production smoke (Helm-installed cluster)** *(next)*
 - [ ] R8.1 — Documentation refresh + narrative closing
 
-## Current PR checklist (R6.6)
+## Current PR checklist (R7.1)
 
-The R6.6 PR is structured as **eight commit clusters** (A → B →
-C → D → E → F → H + final validation G). One PR, large by
-design. Each cluster is a focused commit; CI passes at every
-commit boundary; the maintainer can pause review at any
-cluster. ADRs 0026–0029 are the foundation; the restructure
-they prescribe enacts the platform taxonomy ahead of R7.1's
-production posture.
+The R7.1 PR is structured as **eight commit clusters** (A → B →
+C → D → E → F → G → H). One PR per ADR-0020 §5; each cluster is
+focused enough to review independently; CI passes at every
+commit boundary. ADR-0030 is the structural commitment;
+build/helm/spectre/ is the artifact; the helm-lint CI gate
+guards future drift.
+
+**R6.6 PR checklist (historical, completed 2026-04-30):**
 
 - [x] Step 1 — Inventory and confirm: R6.5.4 merge confirmed
   (`1aca726 Merge pull request #71`). Eight Section 4
@@ -127,38 +128,86 @@ production posture.
   `just images-smoke`, `just check-versions`,
   `just conf-test`, eleven-service Compose stack with sample
   ScrapeJob reaching `Completed`).
+- [x] Step 11 — Open the PR.
+
+**R7.1 PR checklist (current, in flight 2026-05-02):**
+
+- [x] Step 1 — Inventory and confirm. R6.6 merge confirmed
+  (`ea278ff Merge pull request #72`); helm 3.19 present;
+  `gh workflow run publish.yml` dispatched as part of R7.1
+  development with `tag=0.1.0-alpha.0 multi_arch=true`. Two
+  pre-condition gaps surfaced and were addressed: (a)
+  `publish.yml` missing `environment: ci` declaration so
+  `secrets.DOCKERHUB_TOKEN` resolved empty (fixed in this
+  PR's first commit); (b) Dependabot's controller-runtime
+  0.24.0 bump (#75) merged immediately before with go.mod →
+  Go 1.26 but no toolchain bump and an incomplete go.sum,
+  red-lining `main` — addressed by the separate hotfix
+  PR #81 (`fix(versions): bump GO_VERSION 1.25 → 1.26 for
+  operator track` + `go mod tidy` reconciliation). R7.1's
+  feat branch was rebased onto green main once #81 merged.
+- [x] Step 2 — Cluster A: ADR-0030 (~600 lines, 10
+  sections); docs/adr/README.md index updated.
+- [x] Step 3 — Cluster B: chart skeleton (Chart.yaml,
+  Chart.lock, .helmignore, .gitignore) + Bitnami subchart
+  pinning (postgresql 16.0.0, redis 19.6.0, kafka 30.0.0,
+  minio 14.7.0); root .gitignore extended to carve out
+  /build/helm/.
+- [x] Step 4 — Cluster C: values.yaml (~325 lines, fully
+  commented) + values.schema.json (JSON Schema draft-07,
+  ~225 lines).
+- [x] Step 5 — Cluster D: seven templates — _helpers.tpl
+  (named templates), engine.yaml, control-plane.yaml,
+  rbac.yaml, three adapter templates, NOTES.txt.
+- [x] Step 6 — Cluster E: chart's crds/scrapejob.yaml is a
+  byte-for-byte copy of the operator's source CRD.
+- [x] Step 7 — Cluster F: build/helm/spectre/README.md
+  (~150 lines), docs/architecture/helm-chart.md (~250
+  lines), top-level README "Deploying to Kubernetes"
+  section, docs/architecture/releases.md "R7.1 Helm chart
+  as a release artifact" section.
+- [x] Step 8 — Cluster G: CI helm-lint job + 5 justfile
+  recipes (chart-sync-crds, chart-check-crd-sync,
+  chart-deps, chart-lint, chart-install-smoke); `just check`
+  extends to gate chart-CRD drift; deprecated R6.2 aliases
+  (`op-install-crds`, `op-uninstall-crds`) removed per the
+  one-cycle deprecation commitment.
+- [x] Step 9 — Cluster H: this section + audit row +
+  ADR-0020 §5/§6 + roadmap §2 + CHANGELOG.
+- [ ] Step 10 — Final verification (kind smoke).
 - [ ] Step 11 — Open the PR.
 
 ## Surfaced decisions
 
-No open architectural questions awaiting maintainer input. The
-eight decisions for R6.6 (single PR with eight commit clusters;
-ADR-0026 §4 enacted exhaustively; accepted ADRs 0001–0025
-immutable + breadcrumb in `docs/adr/README.md`; fossil sweep
-unconditional; master strategy + audit + status doc kept
-through R8.1; ADR-0007 amended in place per ADR-0027 §2's
-preservation stance; path-based dependency rule enforcement
-deferred per ADR-0026 §9) are settled by Section 4 of the
-phase prompt.
+No open architectural questions awaiting maintainer input.
+ADR-0030 §2's eight decisions are settled.
 
 One pre-existing-issue note carried over from R6.3 / R6.5: the
 Playwright runtime image pinned in `build/docker/versions.env`
-(`v1.49.0`) is out-of-step with the npm `playwright` dep
-(`1.59.1`). R7.x or a separate maintenance PR picks up the
-sync; R6.6 doesn't bump pins (path-only refactor).
+(`v1.49.0`) was out-of-step with the npm `playwright` dep
+(`1.59.1`); resolved by `4a435ac` between R6.6 and R7.1. The
+post-R7.1 follow-up backlog now includes:
 
-Two reservations clarified by R6.6 ahead of R7.1:
+- `.devcontainer/Dockerfile`'s `ARG GO_VERSION=1.25.3` —
+  unchanged when R7.1 bumped versions.env; rebuild only
+  picks it up; deferred to a small hygiene PR.
+- `operators/control-plane/Makefile`'s
+  `GOLANGCI_LINT_VERSION ?= v2.8.0` — works for the
+  current operator source under Go 1.26 but should bump
+  alongside any future code that exercises 1.26-only
+  syntax.
 
-- **ADR-0026 §1 reassignment.** ADR-0025 §10's implicit
-  reservation of "ADR-0026 for Helm" was never authoritative;
-  ADR-0026 §1 explicitly notes that the reservation was
-  implicit and now goes to the Platform taxonomy. R7.1's
-  Helm chart will pick up the next available ADR number when
-  it lands.
-- **`build/helm/spectre/` as the chart's home.** ADR-0026
-  §3.9 doesn't reserve a `helm/` category because Helm
-  artifacts are out-of-band; R7.1 makes the final location
-  call against the Compose-equivalence criterion.
+Resolved by R7.1 itself:
+
+- **The Helm chart's ADR number.** R6.6 deferred this to
+  R7.1; ADR-0030 was assigned (the next free number after
+  ADR-0029).
+- **`build/helm/spectre/` as the chart's home.** ADR-0030
+  §3.1 makes the location call (no new top-level category
+  needed; out-of-band per ADR-0026 §3.9). The directory
+  name is `spectre/` (not `chart/`) so future per-infra-
+  service chart fragments per ADR-0028 §6 land as siblings
+  under `build/helm/`.
 
 ## Known issues
 
