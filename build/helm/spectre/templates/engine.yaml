@@ -1,0 +1,85 @@
+{{- if .Values.engine.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "spectre.fullname" . }}-engine
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: engine
+spec:
+  replicas: {{ .Values.engine.replicas }}
+  selector:
+    matchLabels:
+      {{- include "spectre.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: engine
+  template:
+    metadata:
+      {{- with .Values.engine.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "spectre.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: engine
+        {{- with .Values.engine.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.engine.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.engine.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.engine.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: engine
+          image: {{ include "spectre.image" (dict "service" .Values.engine "context" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.engine.service.port }}
+              protocol: TCP
+          env:
+            - name: SPECTRE_ENGINE_PORT
+              value: {{ .Values.engine.service.port | quote }}
+            {{- include "spectre.commonEnv" . | nindent 12 }}
+            {{- with .Values.engine.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            {{- toYaml .Values.engine.probes.readiness | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.engine.probes.liveness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.engine.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "spectre.fullname" . }}-engine
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: engine
+spec:
+  type: {{ .Values.engine.service.type }}
+  ports:
+    - port: {{ .Values.engine.service.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "spectre.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: engine
+{{- end }}
