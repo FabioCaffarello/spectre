@@ -41,8 +41,9 @@ build: engine-build cp-build curl-imp-build pw-build
 check-versions:
     @bash tools/build/check-versions-coherent.sh
 
-# Lint + test + version-coherence (CI-equivalent local run)
-check: check-versions lint test
+# Lint + test + version-coherence + chart CRD-sync invariant
+# (CI-equivalent local run)
+check: check-versions chart-check-crd-sync lint test
 
 # ---------------------------------------------------------------------------
 # Compose stack (R6.2 + R6.3 — see ADR-0025; ADR-0023 §9)
@@ -465,17 +466,60 @@ crds-uninstall:
     cd operators/control-plane && \
         KUBECONFIG=$(realpath ../../build/kind/kubeconfig) make uninstall
 
-# Deprecated R6.2 names. R6.3 renames `op-install-crds` →
-# `crds-install` and `op-uninstall-crds` → `crds-uninstall`; the old
-# names remain as one-cycle aliases for muscle memory. Removed in
-# R7.1.
-op-install-crds:
-    @echo 'note: `op-install-crds` is deprecated; use `crds-install` (removed in R7.1)' >&2
-    @just crds-install
+# ---------------------------------------------------------------------------
+# Helm chart (R7.1 — see ADR-0030, build/helm/spectre/)
+# ---------------------------------------------------------------------------
+# Five recipes:
+#   chart-sync-crds          — copy operator CRD source → chart crds/
+#   chart-check-crd-sync     — invariant: chart's copy matches source
+#   chart-deps               — `helm dependency update`
+#   chart-lint               — full local equivalent of CI's helm-lint job
+#   chart-install-smoke      — manual smoke install into a kind cluster
+#                              (R7.1 verification step; R7.2 will
+#                              automate the full flow)
 
-op-uninstall-crds:
-    @echo 'note: `op-uninstall-crds` is deprecated; use `crds-uninstall` (removed in R7.1)' >&2
-    @just crds-uninstall
+# Sync the v1alpha2 ScrapeJob CRD from the operator's
+# controller-gen-generated source to the Helm chart's crds/
+# directory. Run after any change to the CRD's Go struct
+# annotations.
+chart-sync-crds:
+    cp operators/control-plane/config/crd/bases/spectre.io_scrapejobs.yaml \
+       build/helm/spectre/crds/scrapejob.yaml
+
+# Invariant: the chart's copy of the CRD matches the operator's
+# source byte-for-byte. CI's helm-lint job runs this; a PR that
+# touches the CRD but forgets to resync the chart fails fast.
+chart-check-crd-sync:
+    diff operators/control-plane/config/crd/bases/spectre.io_scrapejobs.yaml \
+         build/helm/spectre/crds/scrapejob.yaml
+
+# `helm dependency update` from the chart root. Pulls the four
+# Bitnami subcharts (postgresql, redis, kafka, minio) into
+# build/helm/spectre/charts/ as gzip tarballs (gitignored).
+chart-deps:
+    cd build/helm/spectre && helm dependency update
+
+# Lint + render check + dry-run check — local equivalent of CI's
+# helm-lint job. Depends on chart-deps so the subcharts are
+# available before lint runs.
+chart-lint: chart-deps
+    cd build/helm/spectre && helm lint --strict .
+    cd build/helm/spectre && helm template spectre . > /tmp/spectre-rendered.yaml
+    cd build/helm/spectre && helm install spectre . --dry-run --debug \
+        --set image.pullPolicy=Never > /tmp/spectre-dry-run.yaml
+
+# Manual smoke install into a local kind cluster (R7.1 acceptance
+# step #26). Targets the kind cluster managed by `kind-up`. R7.2
+# will automate the full smoke flow (Helm install + sample
+# ScrapeJob → Completed) in CI.
+chart-install-smoke: chart-deps
+    helm install spectre build/helm/spectre/ \
+        --kubeconfig $(realpath build/kind/kubeconfig) \
+        --create-namespace \
+        --namespace spectre \
+        --set image.pullPolicy=IfNotPresent
+    kubectl --kubeconfig $(realpath build/kind/kubeconfig) \
+        -n spectre rollout status deployment --timeout=300s --all
 
 # ---------------------------------------------------------------------------
 # Go curl-impersonate adapter (adapters/curl-impersonate)
