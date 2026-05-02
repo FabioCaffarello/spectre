@@ -870,10 +870,13 @@ jobs:
           /tmp/kubeval --ignore-missing-schemas /tmp/rendered.yaml
 
       - name: helm install --dry-run
+        # `--dry-run=client` skips the cluster-side validation
+        # so the job runs without an apiserver — CI's helm-lint
+        # is structural-only (R7.2 adds real-cluster smoke).
         working-directory: build/helm/spectre
         run: |
           helm install spectre . \
-              --dry-run \
+              --dry-run=client \
               --debug \
               --set image.pullPolicy=Never \
               > /tmp/dry-run.yaml
