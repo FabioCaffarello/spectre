@@ -52,6 +52,7 @@ A decision moves through three states:
 | 0027  | [Multi-language SDK strategy](0027-sdk-strategy.md)                  | accepted (Phase R6.6 — evolves ADR-0007 §2/§3) |
 | 0028  | [Ancillary infra services catalog](0028-ancillary-infra-services-catalog.md) | accepted (Phase R6.6 — 5 named slots) |
 | 0029  | [Data platform and lake DSLs](0029-data-platform-and-lake-dsls.md)   | accepted (Phase R6.6 — closes phase prologue; restructure PR follows) |
+| 0030  | [Helm chart structure (R7.1)](0030-helm-chart-structure.md)          | accepted (Phase R7.1 — production posture for v1alpha1) |
 
 ## A note on directory paths in older ADRs
 
