@@ -1,0 +1,84 @@
+{{- if .Values.seleniumbaseAdapter.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "spectre.fullname" . }}-seleniumbase-adapter
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seleniumbase-adapter
+spec:
+  replicas: {{ .Values.seleniumbaseAdapter.replicas }}
+  selector:
+    matchLabels:
+      {{- include "spectre.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: seleniumbase-adapter
+  template:
+    metadata:
+      {{- with .Values.seleniumbaseAdapter.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "spectre.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: seleniumbase-adapter
+        {{- with .Values.seleniumbaseAdapter.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.seleniumbaseAdapter.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.seleniumbaseAdapter.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.seleniumbaseAdapter.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: seleniumbase-adapter
+          image: {{ include "spectre.image" (dict "service" .Values.seleniumbaseAdapter "context" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.seleniumbaseAdapter.service.port }}
+              protocol: TCP
+          env:
+            - name: SPECTRE_ADAPTER_GRPC_PORT
+              value: {{ .Values.seleniumbaseAdapter.service.port | quote }}
+            {{- with .Values.seleniumbaseAdapter.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            {{- toYaml .Values.seleniumbaseAdapter.probes.readiness | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.seleniumbaseAdapter.probes.liveness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.seleniumbaseAdapter.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "spectre.fullname" . }}-seleniumbase-adapter
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seleniumbase-adapter
+spec:
+  type: {{ .Values.seleniumbaseAdapter.service.type }}
+  ports:
+    - port: {{ .Values.seleniumbaseAdapter.service.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "spectre.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: seleniumbase-adapter
+{{- end }}
