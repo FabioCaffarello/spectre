@@ -202,10 +202,18 @@ every PR that touches:
 - `.github/workflows/ci.yml`
 
 The job runs `helm dependency update`, `helm lint --strict`,
-`helm template` + `kubeval`, and `helm install --dry-run`
-against the default values set. It is structural validation
-only — production smoke (Helm install + sample ScrapeJobs to
-`Completed` against a real cluster) is R7.2.
+and `helm template` + `kubeval` against the default values
+set. It is structural validation only — production smoke
+(Helm install + sample ScrapeJobs to `Completed` against a
+real cluster) is R7.2.
+
+(`helm install --dry-run` is deliberately omitted: even with
+`--dry-run=client` Helm 3.13's install path still probes the
+configured kubeconfig's apiserver for admission validations,
+and CI's runner has no cluster. Maintainer-side verification
+that `helm install` works end-to-end goes through the
+`just chart-install-smoke` recipe against a local kind
+cluster.)
 
 ## §10 — Out of scope for R7.1
 

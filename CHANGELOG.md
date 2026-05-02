@@ -44,10 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **CI helm-lint job.** Runs on every PR that touches
     `build/helm/**` or the operator's CRD source. Runs `helm
     dependency update`, `helm lint --strict`, `helm template` +
-    `kubeval`, and `helm install --dry-run`. The
-    `chart-check-crd-sync` invariant prevents drift between the
-    chart's CRD copy and
-    `operators/control-plane/config/crd/bases/`.
+    `kubeval`, and the `chart-check-crd-sync` invariant against
+    `operators/control-plane/config/crd/bases/`. (`helm install
+    --dry-run` is deliberately omitted; Helm 3.13's dry-run
+    still probes the apiserver and CI has no cluster — local
+    smoke goes through `just chart-install-smoke`.)
   - **Justfile recipes.** `chart-sync-crds`,
     `chart-check-crd-sync`, `chart-deps`, `chart-lint`,
     `chart-install-smoke`. `just check` extends to gate the CRD
