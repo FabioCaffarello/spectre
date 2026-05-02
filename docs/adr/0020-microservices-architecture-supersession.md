@@ -96,7 +96,11 @@ architecture; ADR-0024 settles output sinks; ADR-0025 settles
 the Compose layout; ADR-0030 settles the Helm chart structure
 (R7.1). ADR-0026 was reassigned by Phase R6.6 to platform
 taxonomy; the Helm chart picked up the next free number when
-R7.1 landed.
+R7.1 landed. R7.2 closed Phase R7 with a production-smoke CI
+gate that installed the chart into a kind cluster, ran three
+reference ScrapeJobs to `Completed`, and asserted row events
+arrived at the kafka, s3, and webhook sinks — no new ADR
+(ADR-0030 §9 already deferred R7.2's territory).
 This ADR commits to the architectural direction; subsequent ADRs
 fill in the specifics.
 
@@ -327,7 +331,7 @@ ADRs so the audit trail evolves alongside the code.
 | R6    | 3      | Per-service Dockerfiles + Compose stack + Devcontainer | +ADR-0025. Retires PR16-PR18 bundled-image pattern.           |
 | R6.5  | 4      | Quality & hardening (sub-phase insertion: stale-references sweep + R6.1 leftovers, CI hardening, Docker Hub registry wiring + multi-arch, shared codegen base) | None. Hygiene work; addresses drift accumulated across the long refactor. |
 | R6.6  | 1      | Platform Maturation (taxonomy + restructure)     | +ADR-0026, +ADR-0027, +ADR-0028, +ADR-0029. ADR-0007 §2/§3 evolved (frontmatter status + in-place notes). ADR-0013 superseded refresh (frontmatter + §1 R3.1 note). `core/` dissolved → `engines/`, `operators/`. Living audit table edited per established R6.5.1 precedent. |
-| R7    | 1 (R7.1 done) | Helm chart + production smoke                    | +ADR-0030.                                                          |
+| R7    | 0 (closed) | Helm chart + production smoke                    | +ADR-0030.                                                          |
 | R8    | 1      | Documentation refresh + narrative closing        | None (docs only).                                                   |
 
 The driver protocol v1alpha1 directory at

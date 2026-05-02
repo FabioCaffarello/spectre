@@ -9,8 +9,8 @@ architectural commitment is recorded permanently in
 this document tracks execution.
 
 Last updated: 2026-05-02
-Current phase: **R7.1 — Helm chart packaging (CLOSES on merge of this PR, 2026-05-02; ADR-0030 accepted; build/helm/spectre/ ships; first real Docker Hub publish at `0.1.0-alpha.0`; helm-lint CI gate green)**
-Next PR: **R7.2 — Production smoke (Helm-installed cluster)**
+Current phase: **R7.2 — Production smoke (CLOSES on merge of this PR, 2026-05-02; production-smoke CI gate ships; Phase R7 CLOSED — no new ADR; ADR-0030 §9 already deferred R7.2's territory)**
+Next PR: **R8.1 — Documentation refresh + narrative closing (refactor's final PR)**
 
 ## Phases
 
@@ -52,9 +52,9 @@ ADR-0020 §5 R6.6 sub-row)*
 
 - [x] **R6.6 — Platform Maturation: ADRs 0026–0029 + repository restructure + fossil sweep + doc refresh** *(complete on merge of this PR, 2026-04-30 — closes Phase R6.6)*
 
-- [x] **R7.1 — Helm chart packaging** *(complete on merge of this PR, 2026-05-02 — opens Phase R7; ADR-0030; first real Docker Hub publish)*
-- [ ] **R7.2 — Production smoke (Helm-installed cluster)** *(next)*
-- [ ] R8.1 — Documentation refresh + narrative closing
+- [x] **R7.1 — Helm chart packaging** *(merged 2026-05-02, PR #82 — opened Phase R7; ADR-0030; first real Docker Hub publish)*
+- [x] **R7.2 — Production smoke (Helm-installed cluster)** *(complete on merge of this PR, 2026-05-02 — closes Phase R7; production-smoke CI gate; no new ADR)*
+- [ ] R8.1 — Documentation refresh + narrative closing *(next — refactor's final PR)*
 
 ## Current PR checklist (R7.1)
 
@@ -175,6 +175,63 @@ guards future drift.
 - [x] Step 9 — Cluster H: this section + audit row +
   ADR-0020 §5/§6 + roadmap §2 + CHANGELOG.
 - [ ] Step 10 — Final verification (kind smoke).
+- [ ] Step 11 — Open the PR.
+
+**R7.2 PR checklist (current, in flight 2026-05-02):**
+
+- [x] Step 1 — Inventory and confirm. R7.1 merge confirmed
+  (`f8923a1 feat(deploy): Helm chart for v1alpha1 stack`).
+  Eight Section 4 decisions settled (three triggers in one
+  workflow file; build images on the runner; in-cluster
+  MinIO + Kafka; `mendhak/http-https-echo:31` for mock
+  receiver; three sinks playwright-driver only; no new ADR;
+  workflow standalone; ADR-0020 §5 third post-R6.6 audit-
+  table edit). Receiver image digest resolved
+  (`sha256:0fefe04350131d7bb28355e3bf037062643e45f4a8a32f23679529e1b09d8ce4`);
+  Bitnami pod naming verified via `helm template`
+  (`spectre-kafka-controller-0`, `spectre-minio` Deployment,
+  `spectre-postgresql-0`, `spectre-redis-master-0`).
+- [x] Step 2 — Cluster A: mock webhook receiver
+  (`build/helm/test/mock-webhook-receiver.yaml`,
+  digest-pinned).
+- [x] Step 3 — Cluster B: CI values overrides
+  (`build/helm/test/values-ci.yaml` — pullPolicy=Never,
+  ephemeral storage, redis standalone,
+  `defaultBuckets: spectre-rows`).
+- [x] Step 4 — Cluster C: CI samples + sync invariant
+  (`build/helm/test/samples/{kafka,s3,webhook}.yaml`,
+  `tools/test/sync-ci-samples.sh`,
+  `tools/test/check-ci-samples-sync.sh`). s3 endpoint
+  flipped to `spectre-minio.spectre-system...`; webhook URL
+  flipped to in-cluster mock receiver; kafka byte-identical.
+- [x] Step 5 — Cluster D: three sink verifiers
+  (`tools/test/verify-{kafka,s3,webhook}-sink.sh`); all
+  shellcheck-clean; idempotent with bounded internal
+  timeouts.
+- [x] Step 6 — Cluster E:
+  `.github/workflows/production-smoke.yml` (three
+  triggers: workflow_dispatch + path-filtered pull_request +
+  schedule daily 06:00 UTC); actionlint-clean.
+- [x] Step 7 — Cluster F: five justfile recipes
+  (`chart-smoke-sync-samples`, `chart-smoke-check-samples`,
+  `chart-smoke-up`, `chart-smoke-test`, `chart-smoke-down`);
+  `just check` extends to gate the CI sample drift
+  invariant.
+- [x] Step 8 — Cluster G: `docs/architecture/production-smoke.md`
+  (~316 lines); `helm-chart.md §9` split into §9.1/§9.2;
+  chart `README.md` Verification section added.
+- [x] Step 9 — Local lightweight verification: chart-CRD
+  sync invariant green; CI sample sync invariant green;
+  `helm lint --strict` green; `helm template` with CI
+  values renders 2217 lines (6 Deployments, 3 StatefulSets);
+  shellcheck on five test scripts green; actionlint green.
+  Heavy `chart-smoke-up`/`-test` flow defers to CI's amd64
+  runners (Apple Silicon `kind` nodes are arm64 and the
+  chart's `nodeSelector: kubernetes.io/arch: amd64` for
+  three services would leave them Pending — see ADR-0030
+  §6.4).
+- [x] Step 10 — Cluster H: this section + audit row +
+  ADR-0020 §5/§6 + roadmap §2 + CHANGELOG.
 - [ ] Step 11 — Open the PR.
 
 ## Surfaced decisions
