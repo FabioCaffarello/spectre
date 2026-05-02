@@ -1,0 +1,51 @@
+# Sample ScrapeJob with the Kafka output sink (R4.4 — ADR-0023 §3).
+# The reconciler accepts the Kafka variant since R4.4 wired the
+# engine's `rdkafka` producer end-to-end. The job streams JSONL
+# rows to the configured topic; one Kafka message per row,
+# partition-keyed by job UUID so a job's rows land on a single
+# partition in extraction order. Headers carry `job_id`,
+# `row_index`, `driver`, `timestamp` (ADR-0023 §3 R4.4 addendum).
+#
+# Kafka admission gating is engine-side: if the engine binary
+# started without a reachable broker, jobs with this sink fail
+# fast at job-start time with `error_code = "KAFKA_UNAVAILABLE"`.
+# The `KafkaSink.Brokers` field is informational for v1alpha1 — the
+# engine reads `SPECTRE_KAFKA_BROKERS` at startup, not per-job;
+# v1alpha2 may revisit if real deployments need per-job broker
+# selection.
+#
+# Local-dev path: `docker compose up -d` brings up the Apache
+# Kafka KRaft broker on `localhost:9092` and the Redpanda Console
+# UI at `http://localhost:8080`. The engine resolves the broker
+# from `SPECTRE_KAFKA_BROKERS=localhost:9092` (see `.env.example`).
+apiVersion: spectre.io/v1alpha2
+kind: ScrapeJob
+metadata:
+  name: hello-hackernews-kafka
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  jobDSL: |
+    spectre: v1alpha1
+    driver: playwright
+    steps:
+      - navigate: https://news.ycombinator.com
+      - extract:
+          selector: .titleline > a
+          fields:
+            title: textContent
+            url: href
+    output:
+      format: jsonl
+      path: ./stories.jsonl
+  engineRef:
+    service:
+      name: spectre-engine
+      namespace: spectre-system
+      port: 8090
+  outputSink:
+    kafka:
+      brokers:
+        - kafka.spectre-system.svc.cluster.local:9092
+      topic: spectre.rows.default
