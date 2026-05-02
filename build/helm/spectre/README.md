@@ -97,6 +97,25 @@ The full values surface is documented inline in
 
 ---
 
+## Verification
+
+R7.2 ships a production-smoke CI gate that exercises this
+chart against three reference ScrapeJobs (kafka, s3, webhook
+sinks) and asserts row events arrive at each sink boundary.
+The gate runs on every PR that could regress the smoke and
+on a daily cron for drift detection. Local reproduction is
+two commands:
+
+```bash
+just chart-smoke-up    # build images, kind cluster, helm install
+just chart-smoke-test  # apply 3 ScrapeJobs + run 3 sink verifiers
+```
+
+See [`docs/architecture/production-smoke.md`](../../../docs/architecture/production-smoke.md)
+for the full flow and debugging guide.
+
+---
+
 ## Upgrading
 
 ```bash
