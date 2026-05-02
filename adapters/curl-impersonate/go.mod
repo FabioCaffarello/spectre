@@ -1,6 +1,6 @@
 module github.com/FabioCaffarello/spectre/adapters/curl-impersonate
 
-go 1.25.0
+go 1.26.0
 
 // The generated protocol bindings live under proto/gen/go (gitignored,
 // produced by `just proto-generate`). Consume them via a local replace
