@@ -238,7 +238,8 @@ jobs:
           # contain build-constrained source that golangci-lint's
           # bundled type-checker (built against an older Go) cannot
           # parse. The curl-impersonate adapter's go.mod requires
-          # Go 1.25 (matches the control-plane operator's track).
+          # Go 1.25; the operator track moved to Go 1.26 with
+          # controller-runtime 0.24.
           go-version: "1.25"
       - uses: bufbuild/buf-setup-action@v1
         with:
@@ -501,8 +502,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           # Match the toolchain kubebuilder v4 scaffolds in go.mod.
-          # The control-plane is on its own track.
-          go-version: "1.25"
+          # The control-plane is on its own track (bumped to 1.26
+          # with controller-runtime 0.24).
+          go-version: "1.26"
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -632,8 +634,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           # Match the toolchain kubebuilder v4 scaffolds in go.mod;
-          # `make install` invokes controller-gen.
-          go-version: "1.25"
+          # `make install` invokes controller-gen. Bumped to 1.26
+          # with controller-runtime 0.24.
+          go-version: "1.26"
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

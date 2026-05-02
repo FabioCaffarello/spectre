@@ -103,7 +103,7 @@ it backs.
 | Variable | Default | Bake default | Dockerfile ARG defaults | Cadence |
 |----------|---------|--------------|-------------------------|---------|
 | `RUST_VERSION` | `1.88` | `docker-bake.hcl` | `engines/engine/Dockerfile` (no default; bake-injected) | quarterly |
-| `GO_VERSION` | `1.25` | `docker-bake.hcl` | `operators/control-plane/Dockerfile` (no default; bake-injected); `adapters/curl-impersonate/Dockerfile` (default present) | semiannual |
+| `GO_VERSION` | `1.26` | `docker-bake.hcl` | `operators/control-plane/Dockerfile` (no default; bake-injected); `adapters/curl-impersonate/Dockerfile` (default present) | semiannual |
 | `NODE_VERSION` | `20` | `docker-bake.hcl` | `adapters/playwright/Dockerfile` (default present) | yearly LTS |
 | `PYTHON_VERSION` | `3.12` | `docker-bake.hcl` | `adapters/seleniumbase/Dockerfile` (default present) | yearly |
 | `PROTOC_VERSION` | `27.2` | `docker-bake.hcl` | `engines/engine/Dockerfile` (no default; bake-injected) | quarterly |
