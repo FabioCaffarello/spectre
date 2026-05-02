@@ -1,0 +1,58 @@
+Spectre {{ .Chart.AppVersion }} installed as `{{ .Release.Name }}` in namespace `{{ .Release.Namespace }}`.
+
+To watch the operator come up:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deployment --all --timeout=300s
+
+To submit a sample ScrapeJob (Hacker News headlines via the
+Playwright adapter, output to operator stdout):
+
+  cat <<'EOF' | kubectl -n {{ .Release.Namespace }} apply -f -
+  apiVersion: spectre.io/v1alpha2
+  kind: ScrapeJob
+  metadata:
+    name: hello-hackernews
+  spec:
+    jobDSL: |
+      spectre: v1alpha1
+      driver: playwright
+      steps:
+        - navigate: https://news.ycombinator.com
+        - extract:
+            selector: .titleline > a
+            fields:
+              title: textContent
+              url: href
+      output:
+        format: jsonl
+        path: ./stories.jsonl
+    engineRef:
+      service:
+        name: {{ include "spectre.fullname" . }}-engine
+        namespace: {{ .Release.Namespace }}
+        port: {{ .Values.engine.service.port }}
+    outputSink:
+      stdout: {}
+  EOF
+
+Watch the job:
+
+  kubectl -n {{ .Release.Namespace }} get scrapejob hello-hackernews -w
+
+Tail the operator's logs (the stdout sink emits there):
+
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/component=control-plane -f
+
+Documentation: https://github.com/FabioCaffarello/spectre
+
+{{- if or .Values.engine.nodeSelector .Values.seleniumbaseAdapter.nodeSelector .Values.curlImpersonateAdapter.nodeSelector }}
+
+Multi-arch note: three of the five services are amd64-only at
+v1alpha1 and carry `nodeSelector: kubernetes.io/arch: amd64`:
+  - engine
+  - seleniumbase-adapter
+  - curl-impersonate-adapter
+On a heterogeneous cluster they schedule only on amd64 nodes.
+On a pure-arm64 cluster their Pods will be Pending. See
+ADR-0018 §5 R6.5.3 update for unblock paths.
+{{- end }}
