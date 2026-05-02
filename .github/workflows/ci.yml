@@ -869,17 +869,16 @@ jobs:
             | tar xz -C /tmp
           /tmp/kubeval --ignore-missing-schemas /tmp/rendered.yaml
 
-      - name: helm install --dry-run
-        # `--dry-run=client` skips the cluster-side validation
-        # so the job runs without an apiserver — CI's helm-lint
-        # is structural-only (R7.2 adds real-cluster smoke).
-        working-directory: build/helm/spectre
-        run: |
-          helm install spectre . \
-              --dry-run=client \
-              --debug \
-              --set image.pullPolicy=Never \
-              > /tmp/dry-run.yaml
+      # `helm install --dry-run` is intentionally NOT in this
+      # gate. Even with `--dry-run=client` (Helm 3.13+), the
+      # install path attempts an apiserver round-trip for some
+      # admission validations and CI's runner has no cluster.
+      # The combination above (lint --strict, template, kubeval)
+      # covers the structural validation R7.1's gate is meant to
+      # provide; real-cluster smoke is R7.2's territory. The
+      # local `chart-install-smoke` justfile recipe still
+      # exercises a true `helm install` against a kind cluster
+      # for maintainer-side verification.
 
   ci-summary:
     name: CI summary
