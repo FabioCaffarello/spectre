@@ -237,9 +237,9 @@ jobs:
           # `stable` picks up newer toolchains whose modules can
           # contain build-constrained source that golangci-lint's
           # bundled type-checker (built against an older Go) cannot
-          # parse. The curl-impersonate adapter's go.mod requires
-          # Go 1.25 (matches the control-plane operator's track).
-          go-version: "1.25"
+          # parse. Both Go modules (operator + curl-impersonate) are
+          # on Go 1.26 as of the controller-runtime 0.24 bump.
+          go-version: "1.26"
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -436,8 +436,8 @@ jobs:
       - if: matrix.package == 'tools/conformance'
         uses: actions/setup-go@v6
         with:
-          # Match the curl-impersonate adapter's go.mod (1.25).
-          go-version: "1.25"
+          # Match the curl-impersonate adapter's go.mod (1.26).
+          go-version: "1.26"
       - if: matrix.package == 'tools/conformance'
         name: Build curl-impersonate adapter
         working-directory: ${{ github.workspace }}/adapters/curl-impersonate
@@ -501,8 +501,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           # Match the toolchain kubebuilder v4 scaffolds in go.mod.
-          # The control-plane is on its own track.
-          go-version: "1.25"
+          # The control-plane is on its own track (bumped to 1.26
+          # with controller-runtime 0.24).
+          go-version: "1.26"
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -632,8 +633,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           # Match the toolchain kubebuilder v4 scaffolds in go.mod;
-          # `make install` invokes controller-gen.
-          go-version: "1.25"
+          # `make install` invokes controller-gen. Bumped to 1.26
+          # with controller-runtime 0.24.
+          go-version: "1.26"
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

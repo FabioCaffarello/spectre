@@ -55,7 +55,7 @@
 #
 # Usage: docker buildx bake curl-impersonate
 
-ARG GO_VERSION=1.25
+ARG GO_VERSION=1.26
 ARG BUF_VERSION=1.55.1
 ARG CURL_IMPERSONATE_IMAGE=lwthiker/curl-impersonate:0.6-chrome
 

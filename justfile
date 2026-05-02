@@ -347,13 +347,13 @@ cp-fmt:
 # step is fragile on paths containing spaces.
 #
 # GOTOOLCHAIN is pinned to match go.mod so go's auto-toolchain
-# resolution does not bump to a newer Go than golangci-lint v2.8.0
-# (built with Go 1.25) can parse. Contributors with Go 1.26+ on
-# their host hit this; CI's setup-go installs the pinned version
-# directly.
+# resolution does not bump to a newer Go than the project intends.
+# The operator's go.mod requires Go 1.26 (controller-runtime 0.24
+# transitive). Contributors with Go 1.27+ on their host hit this;
+# CI's setup-go installs the pinned version directly.
 cp-lint:
-    cd operators/control-plane && GOTOOLCHAIN=go1.25.3 go vet ./...
-    cd operators/control-plane && GOTOOLCHAIN=go1.25.3 golangci-lint run
+    cd operators/control-plane && GOTOOLCHAIN=go1.26.0 go vet ./...
+    cd operators/control-plane && GOTOOLCHAIN=go1.26.0 golangci-lint run
 
 # Defer to the kubebuilder Makefile so envtest binaries are downloaded
 # and KUBEBUILDER_ASSETS is set automatically.
@@ -490,11 +490,11 @@ curl-imp-fmt:
 
 # GOTOOLCHAIN is pinned to match cp-lint for the same reason (see
 # the cp-lint comment): go's auto-toolchain resolution must not bump
-# to a newer Go than golangci-lint v2.8.0 (built with Go 1.25.5) can
-# parse.
+# to a newer Go than the project intends. The curl-impersonate adapter
+# moved to Go 1.26 alongside the operator (controller-runtime 0.24).
 curl-imp-lint:
-    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.25.3 go vet ./...
-    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.25.3 golangci-lint run
+    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.26.0 go vet ./...
+    cd adapters/curl-impersonate && GOTOOLCHAIN=go1.26.0 golangci-lint run
 
 curl-imp-test:
     cd adapters/curl-impersonate && go test ./...

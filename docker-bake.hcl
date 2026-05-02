@@ -66,7 +66,7 @@ variable "RUST_VERSION" {
 }
 
 variable "GO_VERSION" {
-  default = "1.25"
+  default = "1.26"
 }
 
 variable "NODE_VERSION" {
