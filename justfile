@@ -42,8 +42,8 @@ check-versions:
     @bash tools/build/check-versions-coherent.sh
 
 # Lint + test + version-coherence + chart CRD-sync invariant
-# (CI-equivalent local run)
-check: check-versions chart-check-crd-sync lint test
+# + R7.2 CI-sample drift invariant (CI-equivalent local run)
+check: check-versions chart-check-crd-sync chart-smoke-check-samples lint test
 
 # ---------------------------------------------------------------------------
 # Compose stack (R6.2 + R6.3 — see ADR-0025; ADR-0023 §9)
@@ -509,9 +509,11 @@ chart-lint: chart-deps
         --set image.pullPolicy=Never > /tmp/spectre-dry-run.yaml
 
 # Manual smoke install into a local kind cluster (R7.1 acceptance
-# step #26). Targets the kind cluster managed by `kind-up`. R7.2
-# will automate the full smoke flow (Helm install + sample
-# ScrapeJob → Completed) in CI.
+# step #26). Targets the kind cluster managed by `kind-up`. R7.2's
+# chart-smoke-{up,test,down} recipes (below) automate the full
+# end-to-end flow (Helm install + 3 ScrapeJobs + sink-arrival
+# assertions); this recipe remains for the simpler "does the
+# chart install at all" check.
 chart-install-smoke: chart-deps
     helm install spectre build/helm/spectre/ \
         --kubeconfig $(realpath build/kind/kubeconfig) \
@@ -520,6 +522,81 @@ chart-install-smoke: chart-deps
         --set image.pullPolicy=IfNotPresent
     kubectl --kubeconfig $(realpath build/kind/kubeconfig) \
         -n spectre rollout status deployment --timeout=300s --all
+
+# ---------------------------------------------------------------------------
+# Production smoke (R7.2 — see docs/architecture/production-smoke.md,
+#  build/helm/test/, tools/test/verify-*-sink.sh)
+# ---------------------------------------------------------------------------
+# Five recipes covering the local reproduction of R7.2's CI gate:
+#   chart-smoke-sync-samples  — regenerate CI samples from source
+#   chart-smoke-check-samples — invariant: CI samples in sync (gate)
+#   chart-smoke-up            — kind cluster + chart install
+#   chart-smoke-test          — apply 3 ScrapeJobs + run 3 verifiers
+#   chart-smoke-down          — tear down
+
+# Sync CI test samples from operator source samples. Run after
+# editing any source sample at
+# operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_*.yaml.
+chart-smoke-sync-samples:
+    bash tools/test/sync-ci-samples.sh
+
+# Drift-detection invariant: build/helm/test/samples/ matches
+# the regeneration of the source samples. Wired into `just check`
+# above; production-smoke.yml runs it as a gate before the heavy
+# install path.
+chart-smoke-check-samples:
+    bash tools/test/check-ci-samples-sync.sh
+
+# Local production-smoke setup: kind cluster + image build +
+# chart install + mock receiver. Mirrors the CI workflow up to
+# the install step. Reuses `kind-up`'s spectre-dev cluster (no
+# parallel-job concerns locally).
+chart-smoke-up: chart-deps
+    just kind-up
+    REGISTRY=docker.io/fabiocaffarello TAG=0.1.0-alpha.0 docker buildx bake --load
+    for img in engine control-plane curl-impersonate playwright seleniumbase; do \
+        kind load docker-image \
+            "docker.io/fabiocaffarello/spectre-${img}:0.1.0-alpha.0" \
+            --name spectre-dev ; \
+    done
+    kubectl --kubeconfig $(realpath build/kind/kubeconfig) \
+        apply -f build/helm/test/mock-webhook-receiver.yaml
+    kubectl --kubeconfig $(realpath build/kind/kubeconfig) \
+        -n spectre-system rollout status deployment/mock-webhook-receiver --timeout=60s
+    helm install spectre build/helm/spectre/ \
+        --kubeconfig $(realpath build/kind/kubeconfig) \
+        --namespace spectre-system \
+        --values build/helm/test/values-ci.yaml \
+        --wait --timeout 10m
+
+# Apply the three sink-test ScrapeJobs and run all three sink
+# verifiers. Assumes chart-smoke-up has succeeded. Idempotent —
+# safe to retry while debugging.
+chart-smoke-test:
+    kubectl --kubeconfig $(realpath build/kind/kubeconfig) \
+        -n spectre-system apply -f build/helm/test/samples/kafka.yaml
+    kubectl --kubeconfig $(realpath build/kind/kubeconfig) \
+        -n spectre-system apply -f build/helm/test/samples/s3.yaml
+    kubectl --kubeconfig $(realpath build/kind/kubeconfig) \
+        -n spectre-system apply -f build/helm/test/samples/webhook.yaml
+    @echo "Waiting for ScrapeJobs to complete (max 5min each)..."
+    for sj in hello-hackernews-kafka hello-hackernews-s3 hello-hackernews-webhook; do \
+        timeout 300 bash -c "until [[ \"\$(kubectl --kubeconfig $(realpath build/kind/kubeconfig) -n spectre-system get scrapejob $sj -o jsonpath='{.status.phase}')\" == 'Completed' ]]; do sleep 5; done" ; \
+    done
+    KUBECONFIG=$(realpath build/kind/kubeconfig) bash tools/test/verify-kafka-sink.sh
+    KUBECONFIG=$(realpath build/kind/kubeconfig) bash tools/test/verify-s3-sink.sh
+    KUBECONFIG=$(realpath build/kind/kubeconfig) bash tools/test/verify-webhook-sink.sh
+
+# Tear down the local production-smoke environment. Idempotent.
+chart-smoke-down:
+    helm uninstall spectre \
+        --kubeconfig $(realpath build/kind/kubeconfig) \
+        --namespace spectre-system \
+        || true
+    kubectl --kubeconfig $(realpath build/kind/kubeconfig) \
+        delete -f build/helm/test/mock-webhook-receiver.yaml \
+        --ignore-not-found
+    just kind-down
 
 # ---------------------------------------------------------------------------
 # Go curl-impersonate adapter (adapters/curl-impersonate)

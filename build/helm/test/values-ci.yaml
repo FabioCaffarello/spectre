@@ -1,0 +1,160 @@
+# CI-specific values for R7.2's production-smoke gate.
+#
+# Goal: minimise footprint on the GitHub Actions runner without
+# changing the semantics R7.2 verifies. Image refs, adapter
+# behaviour, sink integration, operator reconciliation — all
+# unchanged from chart defaults. Only resource sizing,
+# persistence, and replication topology are dialled down.
+#
+# Image policy: R7.2's workflow builds the five spectre-* images
+# on the runner via bake with `REGISTRY=docker.io/fabiocaffarello
+# TAG=0.1.0-alpha.0`, yielding refs that match the chart's
+# defaults (`docker.io/fabiocaffarello/spectre-<name>:0.1.0-alpha.0`).
+# `kind load docker-image` preserves the exact ref; with
+# `pullPolicy=Never` kubelet uses the loaded copies and never
+# attempts a registry pull. The Bitnami subcharts pull from
+# Docker Hub.
+#
+# The chart's helper template `spectre.commonEnv` (see
+# build/helm/spectre/templates/_helpers.tpl) wires
+# SPECTRE_KAFKA_BROKERS, SPECTRE_S3_ENDPOINT,
+# SPECTRE_POSTGRES_URL, SPECTRE_REDIS_URL, and
+# SPECTRE_S3_BUCKET from each subchart's release-name-prefixed
+# service. With `release=spectre, namespace=spectre-system` the
+# engine resolves:
+#   kafka:    spectre-kafka:9092
+#   minio:    http://spectre-minio:9000
+#   postgres: postgres://...@spectre-postgresql:5432/spectre
+#   redis:    redis://spectre-redis-master:6379
+#   bucket:   spectre-rows  (from minio.defaultBuckets below)
+#
+# The s3 sample at build/helm/test/samples/s3.yaml uses bucket
+# `spectre-rows`; this file overrides the chart's default
+# `spectre-outputs` so the bucket exists at provision time.
+
+# ---------------------------------------------------------------
+# Global image policy — load images via `kind load`, never pull.
+# Registry + repository defaults from values.yaml (chart) match
+# the bake-produced refs; the only override is pullPolicy.
+# ---------------------------------------------------------------
+image:
+  registry: docker.io/fabiocaffarello
+  pullPolicy: Never
+  pullSecrets: []
+
+# ---------------------------------------------------------------
+# Spectre services — dial resources down for CI runner.
+# ---------------------------------------------------------------
+engine:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+controlPlane:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+playwrightAdapter:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+seleniumbaseAdapter:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+curlImpersonateAdapter:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ---------------------------------------------------------------
+# Stateful subcharts — ephemeral persistence; minimum topology.
+# Production deployments tune these; CI does not need durability.
+# ---------------------------------------------------------------
+postgresql:
+  primary:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+redis:
+  # Standalone (master-only, zero replicas) — chart default ships
+  # 3 replicas which are unnecessary for CI. R7.2's verifiers do
+  # not exercise Redis directly; the engine and adapters use it
+  # as a session cache only.
+  architecture: standalone
+  master:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
+kafka:
+  controller:
+    replicaCount: 1
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  # KRaft single-controller (Bitnami kafka 30.0.0 default mode).
+  # Production would deploy 3+ controllers; for CI smoke the
+  # single-controller topology exercises produce + consume
+  # without quorum overhead.
+
+minio:
+  mode: standalone
+  persistence:
+    enabled: false
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  # Override the chart's default `spectre-outputs` to match the
+  # bucket the s3 sample writes to. `defaultBuckets` is a
+  # comma-separated list consumed by Bitnami's standalone-mode
+  # MinIO startup script — the bucket exists before the engine's
+  # first PutObject.
+  defaultBuckets: spectre-rows

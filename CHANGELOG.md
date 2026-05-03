@@ -9,6 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase R7.2 — Production smoke (closes Phase R7).** The
+  v1alpha1 production-posture phase closes with a CI gate that
+  exercises R7.1's chart end-to-end through three sink
+  integrations against a real Kubernetes cluster. Pure CI /
+  verification PR — no source touched, no chart restructure,
+  no new ADR (ADR-0030 §9 already deferred R7.2's territory).
+  - **Mock webhook receiver.**
+    `build/helm/test/mock-webhook-receiver.yaml`: single-Pod
+    Deployment + ClusterIP Service running
+    `mendhak/http-https-echo:31`, pinned to its multi-arch
+    manifest list digest. The receiver logs every received
+    HTTP request to stdout; `verify-webhook-sink.sh` greps the
+    pod logs for the engine's expected POST shape.
+  - **CI values overrides.** `build/helm/test/values-ci.yaml`:
+    `pullPolicy=Never` (kind-loaded images at
+    `docker.io/fabiocaffarello/spectre-*:0.1.0-alpha.0`);
+    ephemeral persistence; redis architecture=standalone;
+    kafka single-controller; `minio.defaultBuckets=spectre-rows`
+    to match the s3 sample's bucket. Resource sizing dialled
+    down for the GitHub Actions runner without changing the
+    semantics R7.2 verifies.
+  - **CI samples + drift-detection invariant.** Three CI
+    samples at `build/helm/test/samples/{kafka,s3,webhook}.yaml`
+    derived from the source samples at
+    `operators/control-plane/config/samples/spectre_v1alpha2_scrapejob_*.yaml`
+    via `tools/test/sync-ci-samples.sh`. kafka byte-identical
+    (KafkaSink.Brokers informational); s3 endpoint flipped to
+    the chart-installed MinIO service; webhook URL flipped to
+    the in-cluster mock receiver. `tools/test/check-ci-samples-sync.sh`
+    is the drift-detection invariant — fails fast in CI before
+    the heavy install path.
+  - **Sink verification scripts.** Three idempotent verifiers
+    at `tools/test/verify-{kafka,s3,webhook}-sink.sh`. kafka:
+    `kubectl exec` + `kafka-console-consumer.sh --max-messages 1`
+    against `spectre.rows.default`; assert JSON with `title` +
+    `url`. s3: `kubectl exec` + `mc ls --recursive scrapes/`;
+    assert ≥1 non-empty `.jsonl` object. webhook: `kubectl logs`
+    the mock receiver; assert ≥1 POST with engine's expected
+    ADR-0024 §4 header schema and a JSONL body. All three:
+    bounded assertions (no exact counts/keys/offsets); 60s
+    internal timeouts; shellcheck-clean.
+  - **Production-smoke CI workflow.**
+    `.github/workflows/production-smoke.yml`: standalone
+    workflow file with three triggers (`workflow_dispatch`,
+    `pull_request` paths-filtered to changes that could
+    plausibly regress the smoke, `schedule` daily 06:00 UTC for
+    drift detection). Pipeline: setup → sample sync invariant
+    → digest pin verify (warning-only) → buf generate → bake
+    build → kind cluster `spectre-r72` → kind load images →
+    helm dep update → deploy mock receiver → helm install with
+    values-ci.yaml → apply 3 ScrapeJobs → wait `Completed`
+    (5min each) → 3 sink verifiers → always-run debug logs.
+    Not folded into `ci.yml` — different trigger semantics keep
+    `ci-summary` clean.
+  - **Justfile recipes.** Five recipes:
+    `chart-smoke-sync-samples`, `chart-smoke-check-samples`,
+    `chart-smoke-up`, `chart-smoke-test`, `chart-smoke-down`.
+    `just check` extends to gate the CI sample drift invariant
+    alongside the existing chart-CRD sync invariant.
+  - **Documentation.** New
+    `docs/architecture/production-smoke.md` (~316 lines)
+    covering purpose, architecture, trigger model, CI/source
+    sample relationship + drift invariant, mock receiver
+    rationale + digest pinning, per-sink verification
+    mechanisms, debugging guide, local reproduction, and
+    intentional out-of-scope items. `docs/architecture/helm-chart.md`
+    §9 split into §9.1 (helm-lint) + §9.2
+    (production-smoke). Chart `README.md` Verification section
+    added.
+
+  After R7.2 merges, **Phase R7 closes**; R8.1 (documentation
+  refresh + narrative closing) is the refactor's final PR.
+
 - **Phase R7.1 — Helm chart packaging.** Phase R7 opens with the
   first production-deployment artifact for Spectre's v1alpha1
   stack. One new ADR + a complete chart at

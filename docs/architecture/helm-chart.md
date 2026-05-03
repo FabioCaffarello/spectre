@@ -193,7 +193,12 @@ to resync the chart fails fast.
 
 ## §9 — CI integration
 
-The `helm-lint` job in `.github/workflows/ci.yml` (R7.1) runs on
+The chart is exercised by two CI gates with complementary
+surfaces.
+
+### §9.1 — `helm-lint` (R7.1, `ci.yml`)
+
+The `helm-lint` job in `.github/workflows/ci.yml` runs on
 every PR that touches:
 
 - `build/helm/**`
@@ -203,9 +208,8 @@ every PR that touches:
 
 The job runs `helm dependency update`, `helm lint --strict`,
 and `helm template` + `kubeval` against the default values
-set. It is structural validation only — production smoke
-(Helm install + sample ScrapeJobs to `Completed` against a
-real cluster) is R7.2.
+set. It is **structural** validation only — fast, runs on
+every relevant PR.
 
 (`helm install --dry-run` is deliberately omitted: even with
 `--dry-run=client` Helm 3.13's install path still probes the
@@ -214,6 +218,36 @@ and CI's runner has no cluster. Maintainer-side verification
 that `helm install` works end-to-end goes through the
 `just chart-install-smoke` recipe against a local kind
 cluster.)
+
+### §9.2 — `production-smoke` (R7.2, standalone workflow)
+
+The `production-smoke` workflow at
+`.github/workflows/production-smoke.yml` installs the chart
+into a real kind cluster, applies three reference ScrapeJobs
+(kafka, s3, webhook sinks), and asserts row events arrive at
+each sink. End-to-end correctness through the sink boundary.
+
+Three triggers: `workflow_dispatch` (manual),
+`pull_request` (paths-filtered to source + chart + test
+fixtures + the workflow itself), and a daily 06:00 UTC
+`schedule` for drift detection.
+
+Standalone file (not part of `ci.yml`) because the three
+triggers have different semantics from `ci.yml`'s per-PR
+aggregation; keeping them separate avoids cluttering
+`ci-summary` with R7.2's slow gate.
+
+Local reproduction:
+
+```bash
+just chart-smoke-up
+just chart-smoke-test
+just chart-smoke-down
+```
+
+See [docs/architecture/production-smoke.md](production-smoke.md)
+for the full flow, debugging guide, and list of what the
+gate intentionally does and doesn't assert.
 
 ## §10 — Out of scope for R7.1
 

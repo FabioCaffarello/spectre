@@ -1,0 +1,296 @@
+# Production smoke gate (R7.2 — phase R7 closing PR).
+#
+# Installs build/helm/spectre/ into a kind cluster, applies
+# the three reference ScrapeJobs (kafka, s3, webhook sinks),
+# and asserts row events arrive at each sink via
+# tools/test/verify-{kafka,s3,webhook}-sink.sh. End-to-end
+# correctness through the sink boundary — distinct from
+# ci.yml's `full-stack` job (operator-engine-adapter wiring,
+# Compose-based) and `helm-lint` job (chart structural
+# validation only).
+#
+# Triggers:
+#   - workflow_dispatch: manual run anytime.
+#   - pull_request:      runs when the PR could plausibly
+#     regress the smoke (chart, source, CRDs, samples,
+#     workflow itself).
+#   - schedule:          daily 06:00 UTC. Drift detection
+#     for subchart auto-bumps, base-image refreshes, and
+#     anything else that changes outside per-PR diffs.
+#
+# Refs: ADR-0030 §9 (production smoke deferred from R7.1);
+# ADR-0024 (sink contracts the verifiers assert);
+# build/helm/test/values-ci.yaml; tools/test/verify-*-sink.sh.
+
+name: Production smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'build/helm/**'
+      - 'engines/engine/**'
+      - 'operators/control-plane/**'
+      - 'adapters/**'
+      - 'proto/**'
+      - 'tools/test/**'
+      - '.github/workflows/production-smoke.yml'
+  schedule:
+    # 06:00 UTC daily. Drift detection cron.
+    - cron: '0 6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  production-smoke:
+    name: Helm install + ScrapeJobs + sink-arrival assertions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # `environment: ci` is what makes `secrets.DOCKERHUB_TOKEN`
+    # and `vars.DOCKERHUB_USERNAME` resolve at job time. Without
+    # the declaration the docker/login-action step below silently
+    # produces an unauthenticated daemon, which then runs into
+    # Docker Hub's anonymous pull rate limit on the four Bitnami
+    # subchart images and the chart install times out with
+    # ImagePullBackOff. Mirrors publish.yml's pattern.
+    environment: ci
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.13.0'
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: extractions/setup-just@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Authenticate to Docker Hub on the runner's daemon so
+      # subsequent pulls (Bitnami subchart images, the
+      # mendhak/http-https-echo digest verification, the bake
+      # base images) bypass the anonymous-pull rate limit.
+      # Pre-loaded via `kind load` further down so the kind
+      # nodes never themselves dial registry-1.docker.io.
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME || 'fabiocaffarello' }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # CI samples must be in sync with source samples. Drift
+      # means someone edited a source sample without
+      # regenerating; fail fast before the heavy install.
+      - name: Verify CI samples are in sync with source
+        run: bash tools/test/check-ci-samples-sync.sh
+
+      # Verify the mock-webhook-receiver image digest pin is
+      # still valid. If mendhak republished :31, surface a
+      # warning to the maintainer (the pinned digest still
+      # pulls; supply-chain hygiene anchor).
+      - name: Verify mock-webhook-receiver digest pin
+        run: |
+          PINNED=$(grep -oE 'sha256:[a-f0-9]{64}' build/helm/test/mock-webhook-receiver.yaml | head -1)
+          if [[ -z "$PINNED" ]]; then
+            echo "ERROR: no digest pin found in mock-webhook-receiver.yaml" >&2
+            exit 1
+          fi
+          ACTUAL=$(docker buildx imagetools inspect docker.io/mendhak/http-https-echo:31 \
+                    --format '{{json .Manifest}}' 2>/dev/null \
+                    | jq -r '.digest')
+          if [[ "$PINNED" != "$ACTUAL" ]]; then
+            echo "WARNING: mendhak/http-https-echo:31 has been republished." >&2
+            echo "  Pinned : $PINNED" >&2
+            echo "  Actual : $ACTUAL" >&2
+            echo "  Update build/helm/test/mock-webhook-receiver.yaml or investigate." >&2
+            # Do not fail the run; the pinned digest still
+            # pulls because Docker Hub preserves digests.
+          fi
+
+      # Generate proto bindings (mirrors full-stack pattern).
+      - name: Generate protocol bindings
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
+
+      # Build the five spectre-* images on the runner. R7.2
+      # tests current main branch state, not whatever was
+      # last published. Refs match the chart defaults
+      # (`docker.io/fabiocaffarello/spectre-*:0.1.0-alpha.0`)
+      # so values-ci.yaml only overrides pullPolicy.
+      - name: Build images via bake
+        env:
+          REGISTRY: docker.io/fabiocaffarello
+          TAG: 0.1.0-alpha.0
+          VCS_REF: ${{ github.sha }}
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
+        run: |
+          set -a
+          source build/docker/versions.env
+          set +a
+          docker buildx bake --load
+
+      # Bring up the kind cluster. `cluster_name: spectre-r72`
+      # avoids collision with a parallel-running full-stack
+      # job's `spectre-ci` cluster on the same daemon.
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: spectre-r72
+          config: build/kind/cluster.yaml
+
+      - name: Sanity-check kind cluster
+        run: kubectl get nodes -o wide
+
+      # Load the five spectre-* images into kind. With
+      # pullPolicy=Never the chart consumes these copies and
+      # never attempts a registry pull.
+      - name: Load spectre images into kind
+        run: |
+          for img in engine control-plane curl-impersonate playwright seleniumbase; do
+            kind load docker-image \
+              "docker.io/fabiocaffarello/spectre-${img}:0.1.0-alpha.0" \
+              --name spectre-r72
+          done
+
+      # Pre-pull the Bitnami subchart images and load them
+      # into kind. Two reasons:
+      #
+      # (1) Without this step kind nodes pull anonymously from
+      #     registry-1.docker.io and a small install (4
+      #     Bitnami images × multiple layers each) reliably
+      #     trips Docker Hub's 100/6h rate limit on shared
+      #     runner IPs, manifesting as ImagePullBackOff and a
+      #     downstream `helm install --wait` timeout.
+      #
+      # (2) Bitnami's August 2025 distribution change yanked
+      #     the chart's pinned image tags from
+      #     `docker.io/bitnami/*` and moved them to
+      #     `docker.io/bitnamilegacy/*`. The Chart.lock-pinned
+      #     subchart versions still reference the original
+      #     `bitnami/*` paths, so the chart's render expects
+      #     image refs that no longer exist upstream. The
+      #     workaround: pull from `bitnamilegacy/*`, retag to
+      #     `bitnami/*` on the runner's daemon, then
+      #     `kind load`. Kind nodes find the retagged image
+      #     locally (Bitnami sets pullPolicy: IfNotPresent)
+      #     and never themselves dial registry-1.docker.io.
+      #
+      # The image list is fixed by the chart's Chart.lock-pinned
+      # subchart versions; bumping the Chart.yaml dependency
+      # block requires updating this list in lockstep
+      # (acceptable: subchart bumps already require an
+      # ADR-0030 amendment per §4). Chart-side fix for the
+      # bitnami → bitnamilegacy migration is tracked separately
+      # — R7.2's gate works around it.
+      - name: Pre-pull Bitnami subchart images (via bitnamilegacy) and load into kind
+        run: |
+          BITNAMI_IMAGES=(
+            "postgresql:17.0.0-debian-12-r0"
+            "redis:7.2.5-debian-12-r0"
+            "kafka:3.8.0-debian-12-r0"
+            "minio:2024.8.3-debian-12-r1"
+          )
+          for img in "${BITNAMI_IMAGES[@]}"; do
+            echo "::group::Pulling and retagging $img"
+            docker pull "docker.io/bitnamilegacy/${img}"
+            docker tag "docker.io/bitnamilegacy/${img}" "docker.io/bitnami/${img}"
+            kind load docker-image "docker.io/bitnami/${img}" --name spectre-r72
+            echo "::endgroup::"
+          done
+
+      # Pull the chart's subchart dependencies (Bitnami
+      # postgresql / redis / kafka / minio).
+      - name: helm dependency update
+        working-directory: build/helm/spectre
+        run: helm dependency update
+
+      # Deploy the mock webhook receiver BEFORE the chart so
+      # the webhook ScrapeJob's URL resolves on first apply.
+      - name: Deploy mock webhook receiver
+        run: |
+          kubectl apply -f build/helm/test/mock-webhook-receiver.yaml
+          kubectl -n spectre-system rollout status deployment/mock-webhook-receiver --timeout=60s
+
+      # Install the chart with CI overrides.
+      - name: helm install
+        run: |
+          helm install spectre build/helm/spectre/ \
+              --namespace spectre-system \
+              --values build/helm/test/values-ci.yaml \
+              --wait \
+              --timeout 10m
+
+      - name: kubectl get all
+        if: always()
+        run: kubectl -n spectre-system get all
+
+      # Apply the three reference ScrapeJobs.
+      - name: Apply reference ScrapeJobs
+        run: |
+          kubectl -n spectre-system apply -f build/helm/test/samples/kafka.yaml
+          kubectl -n spectre-system apply -f build/helm/test/samples/s3.yaml
+          kubectl -n spectre-system apply -f build/helm/test/samples/webhook.yaml
+
+      # Wait for each ScrapeJob to reach status.phase=Completed.
+      # 5-min ceiling per job; 15-min total worst case.
+      - name: Wait for ScrapeJobs to complete
+        run: |
+          for sj in hello-hackernews-kafka hello-hackernews-s3 hello-hackernews-webhook; do
+            echo "Waiting for ScrapeJob/$sj to reach Completed..."
+            timeout 300 bash -c "
+              until [[ \"\$(kubectl -n spectre-system get scrapejob $sj -o jsonpath='{.status.phase}' 2>/dev/null)\" == 'Completed' ]]; do
+                kubectl -n spectre-system get scrapejob $sj -o yaml | tail -20 || true
+                sleep 5
+              done
+            " || {
+              echo "ERROR: ScrapeJob/$sj did not reach Completed" >&2
+              kubectl -n spectre-system describe scrapejob "$sj" >&2
+              exit 1
+            }
+            echo "✓ ScrapeJob/$sj reached Completed"
+          done
+
+      # Sink-arrival assertions. Each script is idempotent +
+      # has its own internal timeout.
+      - name: Verify kafka sink
+        run: bash tools/test/verify-kafka-sink.sh spectre-system spectre
+
+      - name: Verify s3 sink
+        run: bash tools/test/verify-s3-sink.sh spectre-system spectre
+
+      - name: Verify webhook sink
+        run: bash tools/test/verify-webhook-sink.sh spectre-system
+
+      # Always-run debug steps capture state for failure
+      # investigation. helm/kind-action handles cluster
+      # teardown automatically when the job ends.
+      - name: Debug — operator logs
+        if: always()
+        run: kubectl -n spectre-system logs -l app.kubernetes.io/component=control-plane --tail=200 || true
+
+      - name: Debug — engine logs
+        if: always()
+        run: kubectl -n spectre-system logs -l app.kubernetes.io/component=engine --tail=200 || true
+
+      - name: Debug — adapter logs
+        if: always()
+        run: |
+          for c in playwright seleniumbase curl-impersonate; do
+            echo "=== adapter: $c ==="
+            kubectl -n spectre-system logs -l "app.kubernetes.io/component=${c}-adapter" --tail=100 || true
+          done
+
+      - name: Debug — webhook receiver logs
+        if: always()
+        run: kubectl -n spectre-system logs deployment/mock-webhook-receiver --tail=100 || true
+
+      - name: Debug — all ScrapeJobs
+        if: always()
+        run: kubectl -n spectre-system get scrapejobs -o yaml || true

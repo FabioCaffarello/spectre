@@ -10,11 +10,13 @@ when". Per-phase execution is tracked in
 [`refactoring-status.md`](refactoring-status.md); the historical
 audit lives in [`refactor-audit.md`](refactor-audit.md).
 
-> **Last updated:** 2026-04-30 (Phase R6.6 close — Platform
-> Maturation. Four ADRs (0026–0029) accepted; the repository
-> restructure is enacted; fossil documents from the bootstrap
-> era removed; architecture overview rewritten. R7.1 — Helm
-> chart packaging — opens next.)
+> **Last updated:** 2026-05-02 (Phase R7 close — production
+> posture. R7.1 shipped the Helm chart packaging at
+> `build/helm/spectre/` (ADR-0030); R7.2 shipped the
+> production-smoke CI gate that installs the chart into a
+> kind cluster and asserts row events arrive at the three
+> sinks (kafka, s3, webhook). R8.1 — documentation refresh
+> + narrative closing — is the refactor's final PR.)
 
 ## §1 — Where we are (post-R6.6)
 
@@ -71,11 +73,19 @@ phases are committed; details land in their per-phase prompts.
   [Docker Hub](architecture/releases.md); R7.1 included the
   first real publish at `0.1.0-alpha.0`. Structural CI gate
   (`helm-lint`) added; production smoke deferred to R7.2.
-- **R7.2 — Production smoke.** A scheduled CI job installs the
-  Helm chart into a kind cluster, runs the three reference
-  ScrapeJobs to `Completed`, and asserts row events arrive at
-  each sink (Kafka, S3 / MinIO, webhook). The end-to-end signal
-  that R7.1's chart matches Compose semantics.
+- **[x] R7.2 — Production smoke.** *(complete 2026-05-02 — see
+  [docs/architecture/production-smoke.md](architecture/production-smoke.md)
+  and `.github/workflows/production-smoke.yml`.)* New
+  standalone workflow on three triggers (manual,
+  paths-filtered PR, daily 06:00 UTC cron) installs
+  [`build/helm/spectre/`](../build/helm/spectre/) into a kind
+  cluster, applies the three reference ScrapeJobs (kafka, s3,
+  webhook sinks) to `Completed`, and asserts row events arrive
+  at each sink boundary. Mock webhook receiver
+  (`mendhak/http-https-echo:31`, digest-pinned), CI value
+  overrides, CI sample drift invariant, three idempotent sink
+  verifiers, five justfile recipes for local reproduction.
+  **Phase R7 closes with this PR.**
 
 Three multi-arch unblocks are tracked outside the phase
 sequencing — each has a per-image trigger documented in

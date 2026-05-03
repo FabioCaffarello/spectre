@@ -55,6 +55,7 @@ spec:
             - name: SPECTRE_ENGINE_PORT
               value: {{ .Values.engine.service.port | quote }}
             {{- include "spectre.commonEnv" . | nindent 12 }}
+            {{- include "spectre.adapterEndpoints" . | nindent 12 }}
             {{- with .Values.engine.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
