@@ -188,42 +188,26 @@ exist yet.
 
 ## Project status
 
-> **Microservices refactor in progress.** Spectre is undergoing
-> an architectural refactor toward a fully microservices topology
-> (engine, control plane, and each adapter as standalone services
-> backed by PostgreSQL, Kafka, and Redis). See
-> [ADR-0020](docs/adr/0020-microservices-architecture-supersession.md)
-> for the architectural commitment and
-> [`docs/refactoring-status.md`](docs/refactoring-status.md) for
-> live progress. The pre-refactor architecture below continues to
-> function for existing examples; new contributions should align
-> with the post-refactor direction.
+> **v1alpha1 refactor complete.** The microservices refactor
+> (R1 → R8.1, completed 2026-05-03) closed; Spectre's v1alpha1
+> stack runs as the topology committed in
+> [ADR-0020](docs/adr/0020-microservices-architecture-supersession.md):
+> engine + three adapters + control-plane operator + stateful
+> services (Postgres, Redis, Kafka, MinIO), all connected over
+> gRPC/TCP, deployable via Compose locally and Helm in
+> Kubernetes. Status is "v1alpha1 production posture: complete;
+> v1alpha2 growth: not started" — the platform is feature-complete
+> against the v1alpha1 surface but the protocol remains marked
+> alpha and will evolve. For per-release detail see
+> [CHANGELOG.md](CHANGELOG.md); for per-PR refactor history see
+> the frozen [`docs/refactor-audit.md`](docs/refactor-audit.md);
+> for architectural commitments that bind v1alpha2 contributors
+> see [CONTRIBUTING.md](CONTRIBUTING.md)'s "Architectural
+> commitments" section.
 
-**Phases 1 and 2 — complete.** The engine parses the DSL, plans
-against driver capabilities, and runs `spectre run` against the
-Playwright (PR8), SeleniumBase (PR10), and curl-impersonate (PR12)
-adapters. The cross-driver equivalence demo in
-[examples/](examples/README.md) shows one CLI executing one protocol
-against three runtimes in three languages.
-
-**Phase 2.5 — in progress.** PR13 added the
-[Devcontainer](docs/architecture/development-environment.md) and a
-distroless engine image. Per-adapter Dockerfiles and a Compose stack
-are deferred (PR15.5+).
-
-**Phase 3 — in progress.** PR14 began the control plane with a
-kubebuilder v4 operator scaffold, the `ScrapeJob` Custom Resource
-Definition, and a state-machine reconciler. PR15 wired
-`SubprocessRunner` so the reconciler shells out to the spectre
-engine binary the operator image bundles, captures JSONL on stdout,
-and reports `RowsExtracted`. Adapter bundling and the in-cluster
-smoke test against `hello-hackernews` are PR16 work. See
-[docs/architecture/control-plane.md](docs/architecture/control-plane.md)
-for the user-facing guide and
-[ADR-0019](docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md)
-for the design decisions.
-
-See the full [roadmap](docs/roadmap.md) for Phases 3–5.
+See the [roadmap](docs/roadmap.md) for v1alpha2 trajectory across
+the four reserved categories (`sdks/`, `infra-services/`,
+`data-platform/`, `shared-libs/`).
 
 ## Contributing
 

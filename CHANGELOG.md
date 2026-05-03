@@ -413,25 +413,25 @@ post-R6.6 taxonomy.
     behaviour: the conformance harness (ADR-0025 §5), the
     curl-impersonate `os/exec` cgo replacement (ADR-0016 §1),
     and R-series past-tense supersession notes.
-- **Master strategy amendment (R6.6).**
-  [`docs/MASTER_STRATEGY_REFACTOR.md`](docs/MASTER_STRATEGY_REFACTOR.md)
-  §9 gains a `Post-R6.6 amendment` subsection (~30 lines)
-  recording that R6.6 inserted a Platform Maturation phase
-  between R6.5 (closed) and R7.1 (next); criterion #5's ADR set
-  expanded to "0020–0029 plus future production-phase ADRs".
-  The strategy doc is kept through R7.x (R7.1 + R7.2 still need
-  it for context); R8.1 makes the keep-or-delete call.
+- **Master strategy amendment (R6.6).** (Historical reference;
+  the strategy prompt was deleted in R8.1, principles preserved
+  in CONTRIBUTING.md "Architectural commitments".) The
+  then-`docs/MASTER_STRATEGY_REFACTOR.md` §9 gained a
+  `Post-R6.6 amendment` subsection (~30 lines) recording that
+  R6.6 inserted a Platform Maturation phase between R6.5
+  (closed) and R7.1 (next); criterion #5's ADR set expanded to
+  "0020–0029 plus future production-phase ADRs".
 - **Bookkeeping closure (R6.6).**
   [`docs/refactor-audit.md`](docs/refactor-audit.md) gains a
   new "Phase R6.6 — Platform Maturation (CLOSED)" subsection
   with one row that summarises all eight commit clusters and
-  cross-references every relevant ADR.
-  [`docs/refactoring-status.md`](docs/refactoring-status.md)
-  pointers advance to "R6.6 closed; R7.1 next"; the phase list
-  ticks R6.6 in a new "Phase R6.6 — Platform Maturation" block;
-  the per-PR checklist replaces R6.5.4's with R6.6's eleven
-  steps; "Surfaced decisions" refreshed with R6.6's eight
-  decisions and the two pre-R7.1 reservations.
+  cross-references every relevant ADR. (Historical reference;
+  the then-`docs/refactoring-status.md` was deleted in R8.1.)
+  Its pointers advanced to "R6.6 closed; R7.1 next"; the phase
+  list ticked R6.6 in a new "Phase R6.6 — Platform Maturation"
+  block; the per-PR checklist replaced R6.5.4's with R6.6's
+  eleven steps; "Surfaced decisions" refreshed with R6.6's
+  eight decisions and the two pre-R7.1 reservations.
 
 ### Removed
 
@@ -1057,8 +1057,10 @@ post-R6.6 taxonomy.
 - Architectural commitment to a microservices refactor recorded
   in [ADR-0020](docs/adr/0020-microservices-architecture-supersession.md).
   No code changes in this release; subsequent phase PRs (R2–R8)
-  deliver the implementation. Live progress is tracked in
-  [`docs/refactoring-status.md`](docs/refactoring-status.md).
+  delivered the implementation. (Historical reference; the
+  then-`docs/refactoring-status.md` was the live phase tracker
+  and was deleted in R8.1; per-PR detail lives in the now-frozen
+  [`docs/refactor-audit.md`](docs/refactor-audit.md).)
 - [ADR-0023](docs/adr/0023-stateful-services-architecture.md)
   records the stateful-services architecture for Phase R4
   (R4.1, documentation-only). Three services land together:
