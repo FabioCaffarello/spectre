@@ -7,7 +7,147 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.0] - 2026-05-03
+
+This release marks the close of Spectre's microservices refactor
+(R1 → R8.1). The platform delivers v1alpha1 in production-installable
+shape: a polyglot, gRPC-over-TCP, Helm-deployable web scraping stack.
+
+### Refactor narrative
+
+**What v1alpha1 is.** A driver-agnostic web scraping platform built
+around a frozen wire protocol with three reference adapters
+(Playwright, SeleniumBase, curl-impersonate), a Rust execution
+engine, a Go control-plane operator, four output sinks (stdout,
+Kafka, S3, HTTP webhook), three stateful dependencies (PostgreSQL,
+Redis, Kafka), and a Helm chart for production deployment. Local
+development is `docker compose up`; production deployment is
+`helm install`.
+
+**The protocol.** gRPC over TCP per
+[ADR-0001](docs/adr/0001-driver-protocol-as-architectural-primitive.md)
++ [ADR-0022](docs/adr/0022-tcp-grpc-transport.md). The wire contract
+in `proto/spectre/driver/v1alpha1/` was treated as read-only across
+every refactor PR. Capability surface 13 / 12 / 6 (Playwright /
+SeleniumBase / curl-impersonate) is preserved byte-for-byte from
+the project's earliest reference adapters; the conformance test
+`test_<adapter>_initialize::test_capabilities_match_manifest_byte_for_byte`
+gates regressions. ADR-0008's UDS choice was superseded by
+ADR-0022; ADR-0021 settled service discovery; the strict-subset
+chain documented in
+[ADR-0017 §1](docs/adr/0017-curl-impersonate-extraction-strategy.md)
+is the project's most architecturally consequential narrative
+artifact.
+
+**The runtime.** Per-service Dockerfiles for the engine
+(`engines/engine/Dockerfile`), the operator
+(`operators/control-plane/Dockerfile`), and the three adapters
+(`adapters/{playwright,seleniumbase,curl-impersonate}/Dockerfile`)
+build five service images orchestrated by `docker-bake.hcl`. Images
+publish to Docker Hub at
+`docker.io/fabiocaffarello/spectre-<name>:<tag>`; the first real
+publish landed at `0.1.0-alpha.0` in R7.1. Multi-arch posture per
+[ADR-0018 §5 R6.5.3 update](docs/adr/0018-devcontainer-and-engine-image.md):
+`playwright-adapter` and `control-plane` ship `linux/amd64 +
+linux/arm64`; `engine`, `seleniumbase-adapter`, and
+`curl-impersonate-adapter` ship `linux/amd64`-only with documented
+unblock criteria per image.
+
+**The Helm chart.** `build/helm/spectre/` (R7.1, ADR-0030) installs
+the v1alpha1 stack — engine, three adapters, control-plane operator,
+and stateful dependencies (PostgreSQL, Redis, Kafka, MinIO) — into
+any conformant Kubernetes 1.27+ cluster. Bitnami subcharts pinned
+(postgresql 16.0.0 / redis 19.6.0 / kafka 30.0.0 / minio 14.7.0)
+with `Chart.lock` committed; bumps require ADR amendment.
+Kubernetes-native `grpc:` probes for engine + 3 adapters; HTTP probe
+for the operator. CRDs ship under `crds/` with a chart-CRD-sync
+drift invariant gating CI.
+
+**The development environment.** `docker compose up` brings up
+eleven services per
+[ADR-0025](docs/adr/0025-compose-stack.md) (engine + 3 adapters +
+control-plane + Postgres + Redis + Kafka + Redpanda Console +
+MinIO + MinIO Console). The Devcontainer ships with
+Docker-in-Docker enabled per
+[ADR-0018 §3a](docs/adr/0018-devcontainer-and-engine-image.md) so
+the Compose stack and a local `kind` cluster live inside a single
+Reopen-in-Container session (R6.3). Helm-chart development against
+a real Kubernetes cluster works inside the same devcontainer.
+
+**The platform taxonomy.** Eight production-code categories per
+[ADR-0026](docs/adr/0026-platform-taxonomy.md). Four are inhabited
+at v1alpha1: `proto/`, `engines/`, `operators/`, `adapters/`. Four
+are reserved for v1alpha2 growth, each with its governing ADR and
+a placeholder README pointing at it: `infra-services/` per
+[ADR-0028](docs/adr/0028-ancillary-infra-services-catalog.md),
+`sdks/` per
+[ADR-0027](docs/adr/0027-sdk-strategy.md),
+`data-platform/` (with three stage subdirectories `parse/`,
+`transform/`, `aggregate/`) per
+[ADR-0029](docs/adr/0029-data-platform-and-lake-dsls.md), and
+`shared-libs/` per ADR-0026 §3.8's organic-admission contract.
+R6.6 dissolved the pre-refactor `core/` umbrella; `engines/engine/`
+and `operators/control-plane/` are top-level peers of `adapters/`.
+
+**Architectural artifacts.** Thirty ADRs (0001–0030) record every
+non-trivial decision; ADR text is immutable once accepted, with
+in-place evolution notes the only allowed amendment (ADR-0007's
+R6.6 evolution notes, ADR-0018's R6.3 / R6.5.4 updates,
+ADR-0020 §5's living-audit-table). Architecture docs at
+[`docs/architecture/`](docs/architecture/) cover the engine,
+control plane, driver protocol, development environment, container
+images, releases, Helm chart, production smoke, output sinks, and
+each stateful dependency. The frozen
+[`docs/refactor-audit.md`](docs/refactor-audit.md) preserves
+per-PR / per-cluster decision rationale; CHANGELOG entries are the
+user-facing record;
+[CONTRIBUTING.md](CONTRIBUTING.md)'s "Architectural commitments"
+section captures the seven non-negotiable principles for v1alpha2
+contributors.
+
+**What's deferred to v1alpha2.** First SDK migration (engine
+first, adapters second per ADR-0027 §3); first infra-service
+(`proxy-broker` is the high-conviction first slot per ADR-0028);
+first data-platform module (likely a `parse/pdf/` or `parse/xlsx/`
+worker per ADR-0029); first shared-lib admission (organic per
+ADR-0026 §3.8's three-consumer-duplication threshold); multi-arch
+unblocks for the three amd64-only images per
+[ADR-0018 §5 R6.5.3 update](docs/adr/0018-devcontainer-and-engine-image.md);
+Helm chart OCI registry publish (post-refactor). Each lands under
+its own focused PR; none of the v1alpha2 work restructures the
+post-R6.6 taxonomy.
+
 ### Added
+
+- **Phase R8.1 — Documentation refresh + narrative closing
+  (closes the microservices refactor).** Docs-only PR, no source
+  changes, no new ADR (per ADR-0020 §5 R8 row). Nine cohesive
+  clusters: (A) [CONTRIBUTING.md](CONTRIBUTING.md) gains an
+  "Architectural commitments" section preserving the seven
+  non-negotiable principles in plain language for v1alpha2
+  contributors; (B) [`docs/refactor-audit.md`](docs/refactor-audit.md)
+  frozen with a top-of-file FROZEN header (body verbatim);
+  (C) `docs/refactoring-status.md` deleted entirely (operational
+  session-bookkeeping artifact with zero post-refactor archaeology
+  value); (D) CHANGELOG `[Unreleased]` promoted to
+  `[0.1.0-alpha.0] - 2026-05-03` with the narrative summary above
+  + a fresh empty `[Unreleased]` for v1alpha2 work; (E)
+  `docs/MASTER_STRATEGY_REFACTOR.md` deleted entirely (its
+  principles preserved in CONTRIBUTING.md per Cluster A; its
+  phase-decomposition content preserved in ADR-0020 §5); (F)
+  cross-references repaired in `README.md`, `docs/roadmap.md`,
+  and CHANGELOG entries that pointed at the deleted docs;
+  (G) final consistency pass across `docs/architecture/` and
+  `docs/guides/` plus the four placeholder READMEs and the three
+  data-platform stage READMEs; (H) final scan of `README.md`
+  including a v1alpha1-production-ready note; (I) ADR-0020 §5
+  Implementation phases R8 row updated to `0 (closed)`, "ADR
+  status changes" section gains a closing entry recording the
+  refactor's terminal state, and §5/§6 narrative-prose passages
+  rewritten in past tense for R8.1. After R8.1 merges, the
+  microservices refactor (R1 → R8.1) is **done**; v1alpha2 begins
+  next, against the post-R6.6 taxonomy without further structural
+  restructuring.
 
 - **Phase R7.2 — Production smoke (closes Phase R7).** The
   v1alpha1 production-posture phase closes with a CI gate that
