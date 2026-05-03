@@ -77,9 +77,12 @@ Kafka 3.7.1 in KRaft mode plus the Redpanda Console UI at
 `http://localhost:8080`. The engine resolves the broker from
 `SPECTRE_KAFKA_BROKERS=localhost:9092` (see `.env.example`).
 
-**Production deployment.** R7.1 will package a Strimzi-managed
-Apache Kafka deployment. Until then, deploy your own broker and
-point `SPECTRE_KAFKA_BROKERS` at it.
+**Production deployment.** R7.1's Helm chart at
+[`build/helm/spectre/`](../../build/helm/spectre/) packages
+Kafka via the Bitnami `kafka` 30.0.0 subchart per
+[ADR-0030](../adr/0030-helm-chart-structure.md). For external
+brokers, set `kafka.enabled: false` and point
+`SPECTRE_KAFKA_BROKERS` at your bootstrap.
 
 ```yaml
 spec:
@@ -152,11 +155,15 @@ plus a one-shot bucket-bootstrap container that pre-creates
 `SPECTRE_S3_ACCESS_KEY_ID` + `SPECTRE_S3_SECRET_ACCESS_KEY`
 (see `.env.example`).
 
-**Production deployment.** R7.1 will package an S3 endpoint
-configuration. Deploy MinIO yourself or use real AWS S3 / R2 /
-Wasabi. Pre-create the destination bucket via Terraform /
-Crossplane / console; engine-side bucket creation is a v1alpha2
-concern (ADR-0024 §8).
+**Production deployment.** R7.1's Helm chart at
+[`build/helm/spectre/`](../../build/helm/spectre/) packages a
+MinIO subchart (`minio.defaultBuckets=spectre-rows` by default)
+plus the engine's S3 env-var surface per
+[ADR-0030](../adr/0030-helm-chart-structure.md); set
+`minio.enabled: false` to point at real AWS S3 / R2 / Wasabi
+instead. Pre-create the destination bucket via Terraform /
+Crossplane / console for non-MinIO targets; engine-side bucket
+creation is a v1alpha2 concern (ADR-0024 §8).
 
 ```yaml
 spec:
@@ -223,9 +230,13 @@ test (`webhook_integration.rs`) and conformance test
 (`test_webhook_sink.py`) both spin up an in-process HTTP
 server in the test process.
 
-**Production deployment.** R7.1 will deploy whatever receiver
-the operator configures; the engine has no infrastructure
-requirement beyond network reachability.
+**Production deployment.** The webhook sink has no chart-side
+infrastructure requirement beyond network reachability;
+operators configure receivers externally and point
+`spec.outputSink.webhook.url` at them. R7.2's production-smoke
+gate exercises the path against a `mendhak/http-https-echo`
+mock receiver (digest-pinned), proving the engine's POST shape
+end-to-end.
 
 ```yaml
 spec:

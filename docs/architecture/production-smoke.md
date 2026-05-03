@@ -6,9 +6,9 @@ to give future contributors a single place to learn what the
 gate proves, how to read its failures, and how to reproduce
 it locally.
 
-R7.2 closes Phase R7 — the v1alpha1 production-posture phase.
-After R7.2 merges, only R8.1 (documentation refresh +
-narrative closing) remains in the refactor.
+R7.2 closed Phase R7 — the v1alpha1 production-posture phase.
+R8.1 (documentation refresh + narrative closing) closed the
+microservices refactor (R1 → R8.1, 2026-05-03).
 
 ## §1 — Purpose
 

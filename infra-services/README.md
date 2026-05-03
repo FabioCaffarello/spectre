@@ -5,7 +5,8 @@ consume to solve cross-cutting concerns: proxy management, CAPTCHA
 solving, fingerprint rotation, session persistence, and rate-limit
 coordination.
 
-This directory is intentionally empty in Phase R6.6. The category is
+This directory is intentionally empty at v1alpha1 (Phase R6.6
+reservation; refactor closed at R8.1). The category is
 defined by **[ADR-0026 §3.5](../docs/adr/0026-platform-taxonomy.md)**;
 the catalog of named slots and the admission criteria for materialising
 each one live in **[ADR-0028](../docs/adr/0028-ancillary-infra-services-catalog.md)**.

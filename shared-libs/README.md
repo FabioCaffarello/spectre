@@ -4,7 +4,8 @@ Cross-cutting utilities used across modules within a single language.
 Per-language sub-directories; cross-language sharing is impossible by
 construction (different runtimes).
 
-This directory is intentionally empty in Phase R6.6. The category is
+This directory is intentionally empty at v1alpha1 (Phase R6.6
+reservation; refactor closed at R8.1). The category is
 defined by **[ADR-0026 §3.8](../docs/adr/0026-platform-taxonomy.md)**.
 
 Target layout:

@@ -167,7 +167,7 @@ Services:
   on `localhost:9092` (host) and `kafka:9092` (Compose
   network). Single broker, single controller. Auto-creation of
   topics is enabled for dev convenience; production
-  deployments (R7.1) disable it.
+  deployments (R7.1's Helm chart) disable it.
 - **Redpanda Console** (`docker.redpanda.com/redpandadata/console:latest`)
   at <http://localhost:8080>. Web UI for topic browsing,
   consumer-offset inspection, and message preview. Despite
@@ -204,14 +204,22 @@ just conf-test                # 47+ tests including kafka-sink
 
 ## Production deployment
 
-R7.1's Helm chart packages Kafka via Strimzi-managed Apache
-Kafka. ADR-0023 §10 records the design; the highlights:
+R7.1's Helm chart packages Kafka via the Bitnami `kafka` 30.0.0
+subchart pinned in
+[`build/helm/spectre/Chart.yaml`](../../build/helm/spectre/Chart.yaml)
+per [ADR-0030](../adr/0030-helm-chart-structure.md). ADR-0023 §10
+sketched a Strimzi-managed shape; ADR-0030 §4 chose Bitnami for
+parity with the other stateful subcharts (postgresql, redis,
+minio). Highlights:
 
-- StatefulSet, PVC for log directories, `Service` for the
-  bootstrap, `Secret` for SASL credentials when enabled.
+- StatefulSet KRaft topology (single controller in CI; clusters
+  size up via subchart values), PVC for log directories,
+  `Service` for the bootstrap, `Secret` for SASL credentials
+  when enabled.
 - `kafka.enabled: false` accepts an external broker via
   `SPECTRE_KAFKA_BROKERS` resolved from a `valueFrom.secretKeyRef`.
-- Topic provisioning via `KafkaTopic` CRs (Strimzi). Auto-
+- Topic provisioning is admin-driven (Bitnami exposes a
+  `provisioning.topics` array) or external. Auto-
   creation is disabled in production.
 - mTLS / SASL deferred to v1alpha2 — v1alpha1 trusts the Pod
   network per ADR-0022 §6.

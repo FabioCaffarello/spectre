@@ -6,8 +6,8 @@
 > the Compose stack; R6.3 revisits the Devcontainer; R6.5.3 ships
 > Docker Hub publishing (`fabiocaffarello/spectre-<name>`) with
 > multi-arch for control-plane + playwright, three deferrals
-> documented; R7.x adds image signing, SBOMs, and tag-triggered
-> publish auto-trigger.
+> documented. Image signing, SBOMs, and tag-triggered publish
+> auto-trigger are deferred post-refactor (v1alpha2).
 
 This page is the operator's reference for "how is this project
 containerised". It is a *reference*, not an architectural decision
@@ -378,9 +378,11 @@ proto-schema change) rebuilds all five images and runs the gate.
   R6.5.3 update and the Multi-arch status subsection above.
   Operator-facing reference:
   [`docs/architecture/releases.md`](releases.md).
-- **R7.x** will add image signing (`cosign`), SBOMs (`syft`),
-  tag-triggered publish auto-trigger (`v*.*.*`), and the `:edge`
-  rolling tag from main-branch pushes.
+- **Post-refactor (v1alpha2)** will add image signing (`cosign`),
+  SBOMs (`syft`), tag-triggered publish auto-trigger (`v*.*.*`),
+  and the `:edge` rolling tag from main-branch pushes. (R7.x
+  closed without picking these up — its territory was Helm chart
+  packaging + production smoke.)
 
 ## Multi-arch status
 
@@ -412,7 +414,7 @@ narrow future work to the specific blocker per image. ADR-0018
   are deferred — see "Multi-arch status" above.
 - **Registry publishing.** ~~R7.1.~~ R6.5.3 (Docker Hub) — see
   [`releases.md`](releases.md).
-- **Image signing + SBOMs.** R7.x.
+- **Image signing + SBOMs.** Post-refactor.
 - **`HEALTHCHECK` instructions in Dockerfiles.** Healthchecks live
   in Compose / Helm because the bound port is deployment config,
   not image config; `gcr.io/distroless/static` doesn't even have

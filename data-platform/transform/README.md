@@ -4,7 +4,8 @@ Stage L1 → L2 (bronze → silver): clean, conform, deduplicate, and
 join bronze records into silver tables.
 
 Defined by **[ADR-0029 §4.2](../../docs/adr/0029-data-platform-and-lake-dsls.md)**.
-Empty in Phase R6.6.
+Empty at v1alpha1 (Phase R6.6 reservation; refactor closed at
+R8.1).
 
 Scope:
 - Type coercions (string → typed timestamp, string → typed decimal)
