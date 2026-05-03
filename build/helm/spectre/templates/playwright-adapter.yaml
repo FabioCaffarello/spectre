@@ -54,6 +54,7 @@ spec:
           env:
             - name: SPECTRE_ADAPTER_GRPC_PORT
               value: {{ .Values.playwrightAdapter.service.port | quote }}
+            {{- include "spectre.commonEnv" . | nindent 12 }}
             {{- with .Values.playwrightAdapter.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

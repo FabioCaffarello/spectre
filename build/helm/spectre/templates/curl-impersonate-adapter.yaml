@@ -54,6 +54,7 @@ spec:
           env:
             - name: SPECTRE_ADAPTER_GRPC_PORT
               value: {{ .Values.curlImpersonateAdapter.service.port | quote }}
+            {{- include "spectre.commonEnv" . | nindent 12 }}
             {{- with .Values.curlImpersonateAdapter.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
