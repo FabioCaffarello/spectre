@@ -100,9 +100,15 @@ R7.1 landed. R7.2 closed Phase R7 with a production-smoke CI
 gate that installed the chart into a kind cluster, ran three
 reference ScrapeJobs to `Completed`, and asserted row events
 arrived at the kafka, s3, and webhook sinks — no new ADR
-(ADR-0030 §9 already deferred R7.2's territory).
-This ADR commits to the architectural direction; subsequent ADRs
-fill in the specifics.
+(ADR-0030 §9 already deferred R7.2's territory). R8.1 closed
+Phase R8 with a documentation-only PR that retired the
+refactor's stewardship docs (the strategy prompt and status doc
+deleted; the audit doc frozen with a top-of-file FROZEN header)
+and promoted the CHANGELOG `[Unreleased]` section to
+`[0.1.0-alpha.0] - 2026-05-03` — the v1alpha1 refactor
+(R1 → R8.1) closed with that PR.
+This ADR committed the architectural direction; subsequent ADRs
+filled in the specifics.
 
 ## Considered Options
 
@@ -332,7 +338,7 @@ ADRs so the audit trail evolves alongside the code.
 | R6.5  | 4      | Quality & hardening (sub-phase insertion: stale-references sweep + R6.1 leftovers, CI hardening, Docker Hub registry wiring + multi-arch, shared codegen base) | None. Hygiene work; addresses drift accumulated across the long refactor. |
 | R6.6  | 1      | Platform Maturation (taxonomy + restructure)     | +ADR-0026, +ADR-0027, +ADR-0028, +ADR-0029. ADR-0007 §2/§3 evolved (frontmatter status + in-place notes). ADR-0013 superseded refresh (frontmatter + §1 R3.1 note). `core/` dissolved → `engines/`, `operators/`. Living audit table edited per established R6.5.1 precedent. |
 | R7    | 0 (closed) | Helm chart + production smoke                    | +ADR-0030.                                                          |
-| R8    | 1      | Documentation refresh + narrative closing        | None (docs only).                                                   |
+| R8    | 0 (closed) | Documentation refresh + narrative closing        | None (docs only).                                                   |
 
 The driver protocol v1alpha1 directory at
 `proto/spectre/driver/v1alpha1/` is treated as read-only across
@@ -357,8 +363,9 @@ transport layer it dials changes.
   do not depend on which sinks exist.
 - **R7 requires all of R2–R6.** The Helm chart packages
   everything.
-- **R8 is the closing PR** — documentation refresh after the
-  refactored architecture has settled.
+- **R8 was the closing PR** (R8.1, completed 2026-05-03) —
+  documentation refresh after the refactored architecture
+  settled.
 
 ### Phase-level invariants
 
@@ -381,10 +388,10 @@ At every phase boundary, four invariants must hold:
 
 The table records every ADR's pre-refactor status (immediately
 after PR18 merged) and its post-R1.1 status. The post-R1.1
-status reflects the supersession recorded by this ADR's adoption,
-not the implementation work that subsequent phase PRs will
-deliver. Concretely: this ADR records that ADR-0019 §3 is
-superseded; the actual `SubprocessRunner` deletion lands in
+status reflects the supersession recorded by this ADR's
+adoption, not the implementation work that subsequent phase PRs
+delivered. Concretely: this ADR records that ADR-0019 §3 was
+superseded; the actual `SubprocessRunner` deletion landed in
 phase R3.
 
 | ADR    | Title                                                                       | Pre-refactor                              | Post-R1.1                                                            |
@@ -451,6 +458,31 @@ One ADR is retired in full: ADR-0013 (CLI as engine binary). The
 refactor's no-legacy principle and the two-entry-point model
 (operator + Compose) make a third entry point untenable; see §3
 "what about a hybrid that keeps the CLI?" for the full reasoning.
+
+### Refactor closure (R8.1, 2026-05-03)
+
+R8.1 closed the v1alpha1 microservices refactor (R1 → R8.1).
+The refactor delivered as committed: every Implementation
+phases row above is `0` PRs (closed); every commitment recorded
+in §3 (Decision Outcome) is fulfilled; every superseded ADR
+status above is final. ADR-0020's commitments are fulfilled.
+No further status changes are anticipated for the v1alpha1
+refactor; v1alpha2 work proceeds against the post-R6.6
+taxonomy ([ADR-0026](0026-platform-taxonomy.md)) without
+further structural restructuring. The seven non-negotiable
+principles that bound execution are preserved in
+[CONTRIBUTING.md](../../CONTRIBUTING.md)'s "Architectural
+commitments" section; the per-PR / per-cluster historical
+record is preserved in the frozen
+[`docs/refactor-audit.md`](../refactor-audit.md); the release
+narrative is in the CHANGELOG's
+[`[0.1.0-alpha.0]`](../../CHANGELOG.md) entry.
+
+The Implementation phases table above (§5) is the documented
+living-audit-table exception to ADR immutability. R8.1's R8-row
+edit (`1` → `0 (closed)`) is the **fourth and final** post-R6.6
+edit; no further edits are anticipated for the v1alpha1 refactor's
+lifecycle.
 
 ## More Information
 
