@@ -85,6 +85,41 @@ operator, and adapters all reuse it.
 {{- end }}
 
 {{/*
+spectre.adapterEndpoints — engine-only env vars naming the
+in-cluster adapter services. The engine reads these to route
+per-driver RunJob calls (see engines/engine/src/registry.rs):
+
+  SPECTRE_PLAYWRIGHT_ENDPOINT          (driver: playwright)
+  SPECTRE_SELENIUMBASE_ENDPOINT        (driver: seleniumbase)
+  SPECTRE_CURL_IMPERSONATE_ENDPOINT    (driver: curl-impersonate)
+
+In Compose these resolve via Compose DNS to
+`grpc://<adapter-service>:port`. In Kubernetes the chart's
+release-name-prefixed Service objects are what resolve. Each
+env is rendered only when its adapter is enabled; a disabled
+adapter leaves the corresponding env unset and the engine
+treats the driver as unavailable.
+
+Engine-only because adapters do not dial other adapters; not
+folded into spectre.commonEnv (which is included by all five
+service templates).
+*/}}
+{{- define "spectre.adapterEndpoints" -}}
+{{- if .Values.playwrightAdapter.enabled }}
+- name: SPECTRE_PLAYWRIGHT_ENDPOINT
+  value: "grpc://{{ .Release.Name }}-playwright-adapter:{{ .Values.playwrightAdapter.service.port }}"
+{{- end }}
+{{- if .Values.seleniumbaseAdapter.enabled }}
+- name: SPECTRE_SELENIUMBASE_ENDPOINT
+  value: "grpc://{{ .Release.Name }}-seleniumbase-adapter:{{ .Values.seleniumbaseAdapter.service.port }}"
+{{- end }}
+{{- if .Values.curlImpersonateAdapter.enabled }}
+- name: SPECTRE_CURL_IMPERSONATE_ENDPOINT
+  value: "grpc://{{ .Release.Name }}-curl-impersonate-adapter:{{ .Values.curlImpersonateAdapter.service.port }}"
+{{- end }}
+{{- end }}
+
+{{/*
 spectre.commonEnv — env vars shared across the engine + adapters.
 
 Computed from Bitnami subchart service names following the
