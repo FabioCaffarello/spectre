@@ -219,11 +219,17 @@ For everything else, read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - [Architecture overview](docs/architecture/overview.md)
 - [Driver Protocol deep dive](docs/architecture/driver-protocol.md)
-- [Control plane (Phase 3)](docs/architecture/control-plane.md)
+- [Control plane](docs/architecture/control-plane.md)
 - [Development environment (Devcontainer)](docs/architecture/development-environment.md)
+- [Helm chart](docs/architecture/helm-chart.md) +
+  [Production smoke gate](docs/architecture/production-smoke.md)
 - [Writing a driver](docs/guides/writing-a-driver.md)
 - [Architecture Decision Records](docs/adr/README.md)
 - [Roadmap](docs/roadmap.md)
+- [CHANGELOG](CHANGELOG.md) — per-release notes
+- [`docs/refactor-audit.md`](docs/refactor-audit.md) — frozen
+  per-PR / per-cluster historical record of the v1alpha1
+  refactor (R1 → R8.1)
 
 ## License
 
