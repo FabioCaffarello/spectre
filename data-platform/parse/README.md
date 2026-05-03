@@ -4,7 +4,8 @@ Stage L0 → L1 (raw → bronze): extract structured records from the
 raw bytes the engine produced.
 
 Defined by **[ADR-0029 §4.1](../../docs/adr/0029-data-platform-and-lake-dsls.md)**.
-Empty in Phase R6.6.
+Empty at v1alpha1 (Phase R6.6 reservation; refactor closed at
+R8.1).
 
 Scope:
 - File-format parsers (HTML archive, JSON, JSON-Lines, CSV, XLSX, PDF, XML, RSS)

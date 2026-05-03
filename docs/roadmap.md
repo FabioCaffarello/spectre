@@ -6,17 +6,16 @@ prompt forced into existence. The roadmap is organised by
 [platform category](architecture/overview.md#§1--platform-taxonomy)
 rather than by chronological phase: it answers "what comes next
 under each part of the platform" rather than "which PR ships
-when". Per-phase execution is tracked in
-[`refactoring-status.md`](refactoring-status.md); the historical
-audit lives in [`refactor-audit.md`](refactor-audit.md).
+when". Per-PR refactor history lives in the frozen
+[`refactor-audit.md`](refactor-audit.md); per-release detail
+lives in [`../CHANGELOG.md`](../CHANGELOG.md).
 
-> **Last updated:** 2026-05-02 (Phase R7 close — production
-> posture. R7.1 shipped the Helm chart packaging at
-> `build/helm/spectre/` (ADR-0030); R7.2 shipped the
-> production-smoke CI gate that installs the chart into a
-> kind cluster and asserts row events arrive at the three
-> sinks (kafka, s3, webhook). R8.1 — documentation refresh
-> + narrative closing — is the refactor's final PR.)
+> **Last updated:** 2026-05-03 (Phase R8.1 close — refactor
+> closed. R8.1 was the documentation-only PR that retired the
+> refactor's stewardship docs and promoted the CHANGELOG to
+> `[0.1.0-alpha.0]`. The microservices refactor (R1 → R8.1)
+> is **done**; v1alpha2 begins next, against the post-R6.6
+> taxonomy without further structural restructuring.)
 
 ## §1 — Where we are (post-R6.6)
 
@@ -100,26 +99,30 @@ sequencing — each has a per-image trigger documented in
 
 Each unblocks under its own focused PR; none gates R7.1 / R7.2.
 
-## §3 — Documentation refresh (R8.1)
+## §3 — Documentation refresh (R8.1, completed 2026-05-03)
 
-Phase R8.1 closes the refactor's narrative. The targets:
+The refactor's narrative-closing PR. Three stewardship docs
+were retired: the strategy prompt
+(`docs/MASTER_STRATEGY_REFACTOR.md`) deleted entirely with its
+seven non-negotiable principles preserved in
+[`../CONTRIBUTING.md`](../CONTRIBUTING.md) "Architectural
+commitments"; `docs/refactoring-status.md` deleted entirely
+(operational session-bookkeeping artifact);
+[`refactor-audit.md`](refactor-audit.md) frozen in place with a
+top-of-file FROZEN header as historical record. The CHANGELOG
+promoted its Unreleased section to a tagged
+[`[0.1.0-alpha.0]`](../CHANGELOG.md) entry with a narrative
+summary of the refactor (R1 → R8.1). Architecture docs received a
+final consistency pass; every path citation, ADR cross-reference,
+and cross-doc link resolves against post-R7.2 reality. ADR-0020
+§5 R8 row was closed (PR count `1` → `0 (closed)`); the "ADR
+status changes" section gained a closing entry recording the
+refactor's terminal state.
 
-- `docs/MASTER_STRATEGY_REFACTOR.md` — operationally useful
-  through R7.x; R8.1 makes the keep-or-delete call.
-- `docs/refactor-audit.md` and `docs/refactoring-status.md` —
-  same lifecycle. Both retain stewardship value while the
-  refactor has open phases; R8.1 decides whether to retire as
-  historical record, fold the audit into the CHANGELOG, or
-  freeze in place.
-- `CHANGELOG.md` — promote the Unreleased section to a tagged
-  v1alpha1 entry once R7.2 closes.
-- Architecture docs — final consistency pass (every doc cites
-  current paths; every category README is in sync with its
-  governing ADR).
-
-After R8.1 merges, the refactor is **done**. The platform's
-growth into v1alpha2 happens against the post-R6.6 taxonomy
-without further structural restructuring.
+**The refactor is closed.** v1alpha2 growth into the reserved
+categories (`infra-services/`, `sdks/`, `data-platform/`,
+`shared-libs/`) begins against the post-R6.6 taxonomy without
+further structural restructuring.
 
 ## §4 — Beyond v1alpha1: platform trajectory
 

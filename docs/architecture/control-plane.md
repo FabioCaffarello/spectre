@@ -30,7 +30,7 @@ Webhook variants, CEL-validated).
 | Per-service Dockerfiles            | shipped           | R6.1       |
 | Compose stack (app services)       | shipped           | R6.2       |
 | Operator in Compose + DinD/kind    | shipped           | R6.3       |
-| Helm chart                         | not started       | R7.1       |
+| Helm chart                         | shipped           | R7.1       |
 | `ScrapeFleet` / `ScrapeSchedule`   | not started       | post-Phase3|
 
 PR14 shipped the reconciler with a sleep-based stub. PR15–PR18
@@ -93,7 +93,7 @@ R7.1 (ADR-0026).
 | Pre-R6.2 hybrid               | host               | host (`just engine-run`)     | external kind      | retired in R6.2     |
 | R6.2                          | host (`just op-run`)| Compose container            | external kind      | retired in R6.3     |
 | **R6.3** (current)            | Compose container  | Compose container            | in-DinD kind       | **shipped**         |
-| R7.1+ Kubernetes (Helm)       | Pod                | Pod                          | production cluster | not started         |
+| R7.1+ Kubernetes (Helm)       | Pod                | Pod                          | production cluster | **shipped**         |
 
 ## Engine endpoint resolution
 
@@ -439,7 +439,10 @@ These deferrals are intentional and have phase pointers:
 - **Fan-out and scheduling.** `ScrapeFleet` (parallel jobs over a
   parameter list) and `ScrapeSchedule` (cron-like recurrence) are
   post-Phase-3 work. Both build on `ScrapeJob` semantics.
-- **Helm chart.** `helm/spectre-control-plane/` is R7.1 (ADR-0026).
+- **Helm chart.** `build/helm/spectre/` shipped in R7.1 per
+  [ADR-0030](../adr/0030-helm-chart-structure.md); the operator,
+  engine, three adapters, and stateful dependencies install as a
+  single chart.
 - **Observability.** Prometheus metrics, OpenTelemetry traces, and
   structured logs beyond controller-runtime's defaults are
   post-Phase-3 follow-up.
@@ -466,7 +469,12 @@ These deferrals are intentional and have phase pointers:
   ~140 lines of gRPC stream consumption; the bufconn-based
   test suite next to it covers the success / failure /
   cancellation / dial-error / writer-error branches.
-- **For follow-up phases:** R4 adds Postgres / Redis / Kafka per
-  ADR-0023; R5 wires S3 / Webhook output sinks per ADR-0024;
-  R6.2 brings up the Compose stack as the canonical local-dev
-  loop; R7.1 packages everything as a Helm chart per ADR-0026.
+- **For phase context:** R4 added Postgres / Redis / Kafka per
+  [ADR-0023](../adr/0023-stateful-services-architecture.md);
+  R5 wired S3 / Webhook output sinks per
+  [ADR-0024](../adr/0024-output-sinks.md); R6.2 brought up the
+  Compose stack as the canonical local-dev loop per
+  [ADR-0025](../adr/0025-compose-stack.md); R7.1 packaged
+  everything as a Helm chart per
+  [ADR-0030](../adr/0030-helm-chart-structure.md); R7.2 added
+  the production-smoke gate; R8.1 closed the refactor.

@@ -1,14 +1,15 @@
 # Architecture overview
 
 This document is the entry point for understanding how Spectre is
-put together at Phase R6.6-close. It complements the
+put together at the end of the v1alpha1 refactor (R1 → R8.1,
+closed 2026-05-03). It complements the
 [ADRs](../adr/README.md) — which capture *why* each decision was
 made — by describing *what* the resulting system looks like today.
 
 The platform is a set of cooperating services with explicit
 categories, a dependency DAG, and a small set of runtime
-topologies (devcontainer, Compose stack, kind cluster, future
-Helm chart). Older ADRs cite paths under `core/engine/` and
+topologies (devcontainer, Compose stack, kind cluster, Helm
+chart). Older ADRs cite paths under `core/engine/` and
 `core/control-plane/`; Phase R6.6 renamed those to
 `engines/engine/` and `operators/control-plane/`. The breadcrumb
 in [`docs/adr/README.md`](../adr/README.md) records the
@@ -94,7 +95,7 @@ Two protobuf packages, both frozen at `v1alpha1`:
   the operator (`RunJob`, streaming `RunJobResponse` rows); see
   [ADR-0019](../adr/0019-control-plane-architecture-and-scrapejob-crd.md).
 
-Code generation is per-language and per-consumer at R6.6-close
+Code generation is per-language and per-consumer at v1alpha1
 (every consuming Dockerfile re-runs `buf generate`); the
 [shared `buf-base` codegen base image](container-images.md) cuts
 the duplicated apt+npm install down to one layer per
@@ -167,7 +168,7 @@ semantic-equivalence promise rather than a feasibility statement
 
 `infra-services/`, `sdks/`, `data-platform/` (with `parse/` /
 `transform/` / `aggregate/` subdirectories), and `shared-libs/`
-exist as placeholder directories with READMEs at R6.6-close.
+exist as placeholder directories with READMEs at v1alpha1.
 First inhabitants are gated on the admission criteria in their
 governing ADRs.
 
@@ -227,7 +228,9 @@ The three single-arch images carry per-image deferral notes in
 ADR-0018 §5 (R6.5.3 update). Each defers for a specific reason
 (engine's Rust musl cross-compile path; seleniumbase's Chromium
 arm64 availability; curl-impersonate's runtime base on arm64).
-Phase R7.1 (Helm chart) unblocks at least one of them.
+Each unblocks under its own focused PR post-refactor; the
+v1alpha1 Helm chart sets `nodeSelector: kubernetes.io/arch:
+amd64` for the three until then per ADR-0030 §6.4.
 
 The `versions.env` file at `build/docker/versions.env` pins
 every base image and tool version; the
@@ -289,7 +292,7 @@ vars, Postgres / Redis / Kafka connection strings — is identical.
 
 Phase R6.6 reserved four categories with placeholder READMEs.
 Each has a governing ADR and explicit admission criteria; first
-inhabitants land in R7.x or v1alpha2.
+inhabitants land in v1alpha2.
 
 - **`infra-services/`** —
   [ADR-0028](../adr/0028-ancillary-infra-services-catalog.md)

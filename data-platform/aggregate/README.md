@@ -4,7 +4,8 @@ Stage L2 → L3 (silver → gold): pre-compute business-ready aggregates
 from silver tables.
 
 Defined by **[ADR-0029 §4.3](../../docs/adr/0029-data-platform-and-lake-dsls.md)**.
-Empty in Phase R6.6.
+Empty at v1alpha1 (Phase R6.6 reservation; refactor closed at
+R8.1).
 
 Scope:
 - Aggregations (count, sum, avg, percentile) by dimensions

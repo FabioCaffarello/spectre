@@ -2,7 +2,8 @@
 
 Per-language client SDKs for each protocol the platform exposes.
 
-This directory is intentionally empty in Phase R6.6. The category is
+This directory is intentionally empty at v1alpha1 (Phase R6.6
+reservation; refactor closed at R8.1). The category is
 defined by **[ADR-0026 §3.6](../docs/adr/0026-platform-taxonomy.md)**;
 the layout, codegen ownership, versioning, and breaking-change policy
 are defined by **[ADR-0027](../docs/adr/0027-sdk-strategy.md)**.

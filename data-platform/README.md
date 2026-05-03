@@ -3,7 +3,8 @@
 Data lake processing — file parsing, transformation between lake
 layers, and aggregation of business-ready views.
 
-This directory is intentionally empty in Phase R6.6. The category is
+This directory is intentionally empty at v1alpha1 (Phase R6.6
+reservation; refactor closed at R8.1). The category is
 defined by **[ADR-0026 §3.7](../docs/adr/0026-platform-taxonomy.md)**;
 the lake-layer model, stage taxonomy, and DSL governance are defined
 by **[ADR-0029](../docs/adr/0029-data-platform-and-lake-dsls.md)**.

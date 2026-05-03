@@ -920,6 +920,13 @@ schema version is this database running" reads
 - Strimzi (Kafka on Kubernetes): <https://strimzi.io/>
 - Bitnami charts: <https://github.com/bitnami/charts>
 - [`docs/refactor-audit.md`](../refactor-audit.md) — per-PR
-  work plan for R4.2 / R4.3 / R4.4
-- [`docs/refactoring-status.md`](../refactoring-status.md) —
-  live phase tracker
+  work plan for R4.2 / R4.3 / R4.4 (frozen at R8.1; remains
+  the canonical per-PR / per-cluster historical record)
+
+> **R8.1 evolution note (2026-05-03).** The original "References"
+> list above included a fourth bullet pointing to
+> `docs/refactoring-status.md` as the live phase tracker. R8.1
+> deleted that document (operational session-bookkeeping
+> artifact with zero post-refactor archaeology value); the
+> bullet is removed here so the link no longer dangles. The
+> ADR's decision text is unchanged.

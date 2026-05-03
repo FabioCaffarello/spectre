@@ -27,11 +27,12 @@ hand. The chart bundles:
 - ServiceAccount + RBAC for the operator translated from the
   kubebuilder scaffolds.
 
-The chart is the **deployment artifact** for v1alpha1. R7.2 will
-add a CI gate that installs it against a real `kind` cluster
-and submits sample `ScrapeJob`s end-to-end (production smoke).
-R7.1's CI gate is structural only — `helm lint`, `helm template`
-+ `kubeval`, and `helm install --dry-run`.
+The chart is the **deployment artifact** for v1alpha1. R7.2
+added an end-to-end CI gate (`production-smoke`) that installs
+it against a real `kind` cluster and submits sample `ScrapeJob`s
+to `Completed` against three sinks (kafka, s3, webhook); R7.1's
+structural CI gate (`helm lint`, `helm template` + `kubeval`,
+and `helm install --dry-run`) runs alongside.
 
 ## §2 — Structure
 

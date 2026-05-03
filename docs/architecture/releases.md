@@ -15,8 +15,9 @@ the `fabiocaffarello` account, flat namespace. As of R6.5.3:
   `linux/arm64`); three are amd64-only with documented unblock
   criteria.
 - Tag-triggered publish, `:edge` rolling tag, image signing
-  (cosign), and SBOM generation are **deferred** to R7.x or
-  v1alpha2.
+  (cosign), and SBOM generation are **deferred** post-refactor
+  (v1alpha2 work; R7.x closed without picking these up — R7.1
+  shipped the Helm chart and R7.2 the production-smoke gate).
 
 The architectural rationale lives in
 [ADR-0018 §5 R6.5.3 update](../adr/0018-devcontainer-and-engine-image.md);
@@ -50,8 +51,8 @@ reference shape; Docker resolves it to
 | `:ci` | CI matrix `images` job | CI verify-only artefacts |
 | `:ci-dry-run` | CI `publish-dry-run` job | Multi-arch path validation (not pushed) |
 | `:<version>` | `publish.yml` workflow_dispatch | Released artefact (e.g. `:0.1.0-alpha.0`) |
-| `:edge` | (deferred) | Rolling main-branch publish — R7.x |
-| `:latest` | (deferred) | Stable release alias — R7.x |
+| `:edge` | (deferred) | Rolling main-branch publish — post-refactor |
+| `:latest` | (deferred) | Stable release alias — post-refactor |
 
 The `VERSION` file at the repo root is the default release tag.
 At R6.5.3 merge: `VERSION = 0.1.0-alpha.0`.
@@ -124,12 +125,12 @@ Each is non-blocking for v1alpha1 release engineering:
 - **`:latest` from stable releases.** Adds a tag-aliasing step
   to the publish flow.
 - **Image signing (`cosign`).** Adds a `cosign sign` step after
-  the `--push`. R7.x.
+  the `--push`. Post-refactor.
 - **SBOM generation (`syft`).** Adds a syft scan + `--attest`
-  flag. R7.x.
+  flag. Post-refactor.
 - **Registry-side cache (`--cache-to type=registry`).** Build
   performance optimisation for repeated multi-arch publishes.
-  R7.x.
+  Post-refactor.
 - **Multi-arch builds for engine, seleniumbase,
   curl-impersonate.** v1alpha2 per the per-image unblock
   criteria above.
@@ -253,9 +254,11 @@ status table above.
 
 The chart's structural CI gate (`helm-lint` job) runs on every
 PR that touches `build/helm/**` or the operator's CRD source.
-Production smoke (Helm install in CI + sample ScrapeJobs to
-`Completed`) lands in R7.2; today the gate is structural only.
-See [helm-chart.md](helm-chart.md) for the chart-level details.
+R7.2 added an end-to-end production-smoke CI gate that installs
+the chart into a kind cluster and asserts row events arrive at
+the three sinks (kafka, s3, webhook); see
+[production-smoke.md](production-smoke.md). See
+[helm-chart.md](helm-chart.md) for the chart-level details.
 
 OCI-registry chart publish
 (`oci://docker.io/fabiocaffarello/charts/spectre`) is deferred
@@ -266,8 +269,10 @@ post-refactor; consumers install from a cloned repo.
 - **R6.5.4** deduplicates Dockerfile codegen via a shared base
   image stage. Bake's structure is unchanged; the publish flow
   in this document is unaffected.
-- **R7.x** wires auto-trigger (tag-triggered + `:edge`),
-  signing (cosign), and SBOM (syft) once the project has a
-  versioned release cadence.
+- **Post-refactor** wires auto-trigger (tag-triggered +
+  `:edge`), signing (cosign), and SBOM (syft) once the project
+  has a versioned release cadence. (R7.x closed without picking
+  these up — its territory was Helm chart packaging + production
+  smoke.)
 - **v1alpha2** unblocks the three multi-arch deferrals per the
   per-image criteria in the Multi-arch status table.
