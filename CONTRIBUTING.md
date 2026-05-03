@@ -92,6 +92,96 @@ within one week.
 
 ---
 
+## Architectural commitments
+
+The microservices refactor (R1 → R8.1, completed 2026-05-03) was
+guided by seven non-negotiable principles. These commitments outlast
+the refactor and bind v1alpha2 work too. Reading them is reading the
+project's architectural conscience.
+
+### The driver protocol stays frozen
+
+The wire contract between engine and adapters — the gRPC service
+definitions in
+[`proto/spectre/driver/v1alpha1/`](proto/spectre/driver/v1alpha1/) —
+does not change without an explicit ADR amendment to
+[ADR-0001](docs/adr/0001-driver-protocol-as-architectural-primitive.md).
+Capability lists per adapter (Playwright 13, SeleniumBase 12,
+curl-impersonate 6) are preserved byte-for-byte through every PR; the
+conformance test
+`test_<adapter>_initialize::test_capabilities_match_manifest_byte_for_byte`
+catches regressions. The protocol is the project's most distinctive
+asset; touching it conflates concerns and corrupts the audit trail.
+
+### No legacy paths survive
+
+When a PR replaces a code path, the old path is **deleted in the same
+PR**. No "temporary" fallbacks. No `runner.SubprocessRunner` left
+behind once `runner.EngineClientRunner` lands. No UDS fallback once
+TCP is in. No `spectre run` CLI once Compose is canonical. Legacy
+paths during refactor become permanent; each "temporary" fallback
+adds maintenance burden, dilutes the architecture, and undermines
+narrative coherence.
+
+After each PR merges, a grep for the retired pattern returns zero
+hits in source code (allowed in ADRs documenting the retirement, in
+CHANGELOG entries, in
+[`docs/refactor-audit.md`](docs/refactor-audit.md) historical
+entries).
+
+### Capability divergence is preserved exactly
+
+The capability lists declared by each adapter — Playwright 13,
+SeleniumBase 12, curl-impersonate 6 — remain unchanged. The
+`driver.yaml` files, the byte-for-byte conformance assertions, the
+runtime declarations — all identical from the project's beginning.
+The strict-subset chain is the project's most architecturally
+consequential narrative artifact (see
+[ADR-0017 §1](docs/adr/0017-curl-impersonate-extraction-strategy.md)).
+Capability surface changes require an ADR.
+
+### Each PR is independently reviewable
+
+PRs are not bundled. Each one is opened, reviewed, merged before the
+next begins. No "mega-PR" with 50 file changes across all components.
+PR diffs typically fit within 500–2000 lines of substantive change.
+PRs that exceed this should be split into a sequence of smaller,
+individually-merged PRs with their own ADRs and acceptance criteria.
+
+### Compose is the development environment
+
+`docker compose up` brings up the full stack and is the supported
+local development workflow. There is no "run engine standalone" path,
+no "run adapter as subprocess" path, no Devcontainer-without-Compose
+path. Microservices are validated by running the full graph locally;
+allowing alternative dev paths reintroduces the monolithic mental
+model the refactor exists to retire. See
+[ADR-0025](docs/adr/0025-compose-stack.md) and
+[`docs/architecture/development-environment.md`](docs/architecture/development-environment.md).
+
+### ADR supersession is explicit and recorded
+
+When a PR supersedes an existing ADR, the supersession is recorded
+**both** in the new ADR (referencing what it supersedes) and in the
+old ADR (status update pointing to the superseder). Partial
+supersessions are allowed (a section of an old ADR superseded, the
+rest preserved) and documented per the convention established by
+ADR-0008's status field. ADRs 0001–0030 are immutable text once
+accepted; in-place evolution notes (the precedent established by
+ADR-0018's R6.3 / R6.5.4 updates and ADR-0007's R6.6 evolution notes)
+are the only allowed amendments.
+
+### Tests are not weakened
+
+CI gates that catch regressions are preserved through every PR. New
+tests are added when new surfaces emerge (the `helm-lint` gate in
+R7.1, the `production-smoke` gate in R7.2, the version-coherence
+script in R6.5.1). Tests are never weakened to accommodate refactor
+convenience. If a test fails because of a refactor change, the
+refactor is wrong.
+
+---
+
 ## Local development setup
 
 ### Required tooling
