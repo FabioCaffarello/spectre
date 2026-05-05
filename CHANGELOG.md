@@ -14,6 +14,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subsequent v1alpha2 PRs (transformational change / single
   architectural decision / incremental change / doc-only). Opens
   Phase R9 — v1alpha2 architectural foundation.
+- **ADR-0036 — Microservices catalog expansion and canonical
+  service shape** (R9.1, Cluster A): extends ADR-0028's five-slot
+  catalog to fifteen services across all seven platform layers;
+  generalises the admission gate from ADR-0028 §5.2's
+  two-provider rule to six gates A–F (provider abstraction,
+  persistent state, scaling, cross-cutting consumption,
+  evolvability, operational independence); codifies the
+  polyglot SDK matrix (≈35–40 packages at v1alpha2 maturity)
+  with ADR-0027's "first non-trivial consumer" admission gate
+  preserved; defines the canonical service shape (directory
+  structure, Helm chart fragment, Compose block, observability
+  surface, mTLS, per-service CHANGELOG, per-service ADR tree,
+  CI surface auto-extension); selectively supersedes ADR-0028
+  §6's rejections of `secret-broker` and `scheduler` with
+  gate-based reframes; clarifies that `audit-log` is a distinct
+  concern from the rejected log-aggregator pattern. Foundation
+  for every subsequent v1alpha2 ADR and Wave 5+ build PR.
+- **ADR-0037 — Engine as orchestrator of platform services**
+  (R9.1, Cluster B): commits the engine's evolution from
+  monolithic-orchestrator (v1alpha1) to
+  microservices-orchestrator (v1alpha2); enumerates per-service
+  responsibilities staying in the engine vs moving to ADR-0036
+  catalog services; provides the v1alpha2 execution-flow
+  diagram (operator → scheduler → engine → 9+ platform services
+  per step → driver → sinks + cost/audit emission); commits
+  five latency-cost mitigation strategies (batching, per-job
+  caching, async-where-correct, tunable per deployment, service
+  co-location) with the typical ~5 ms / step overhead budget;
+  defines per-service degradation modes (required services
+  fail the job; optional services degrade gracefully) plus
+  circuit-breaker scaffolding; sequences the engine refactor
+  across Waves 5 – 10 incrementally rather than big-bang.
 
 ## [0.1.0-alpha.0] - 2026-05-03
 
