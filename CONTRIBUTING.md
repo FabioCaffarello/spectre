@@ -302,6 +302,25 @@ and [ADR-0019](docs/adr/0019-control-plane-architecture-and-scrapejob-crd.md).
 
 ## Pull request expectations
 
+### v1alpha2 process rigor matrix
+
+*Different v1alpha2 PRs warrant different process rigor. The matrix
+below maps PR scale to documentation overhead so the post-refactor
+velocity matches the work's actual scope.*
+
+| Work scale | Master phase prompt? | New ADR? | Multi-cluster commits? | Acceptance criteria? |
+|------------|----------------------|----------|------------------------|----------------------|
+| Transformational change (e.g., first SDK migration, first infra-service, observability framework, engine orchestrator refactor) | YES — full §1-§12 prompt | YES | YES (5–9 clusters) | YES — exhaustive list |
+| Single architectural decision (e.g., one multi-arch unblock, one image-scan addition) | NO — execution checklist | YES if it warrants | OPTIONAL — single commit OK | YES — focused list |
+| Incremental change without architectural commitment (e.g., chart helper improvement, doc fix, dependency bump) | NO | NO | NO — single commit | OPTIONAL — Conventional Commit + CHANGELOG |
+| Doc-only change | NO | NO | NO | NO |
+
+*The tell for which level applies: ask "would a future contributor
+reading the code in 2 years need an ADR to understand why this
+decision was made?" If yes, ADR. If no, just CHANGELOG entry.*
+
+### Baseline expectations
+
 - **One logical change per PR.** Smaller PRs review faster.
 - **Tests for new behavior.** Bug fixes include a regression test.
   New features include unit tests at minimum.

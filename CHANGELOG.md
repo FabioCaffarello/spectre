@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`CONTRIBUTING.md` "v1alpha2 process rigor matrix"** (R9.0):
+  codifies the differentiated process rigor that governs all
+  subsequent v1alpha2 PRs (transformational change / single
+  architectural decision / incremental change / doc-only). Opens
+  Phase R9 — v1alpha2 architectural foundation.
+
 ## [0.1.0-alpha.0] - 2026-05-03
 
 This release marks the close of Spectre's microservices refactor
