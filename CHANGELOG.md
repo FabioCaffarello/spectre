@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **ADR-0023 §14 amendment in-place** (R9.2): adds MongoDB
+  as a third storage tier alongside Postgres + Redis. The §14
+  amendment uses §14 (next available) since ADR-0023 already
+  has §11 – §13; §1 – §13 + the existing `## More Information`
+  + R8.1 evolution note remain byte-identical. §14 codifies
+  the deployment-shape consequences for ADR-0023's §6
+  (required-vs-optional table extended with a Mongo row) and
+  §8 (library matrix extended with `mongo-go-driver` /
+  `mongodb` Rust crate / `pymongo` / `motor` / `mongodb` npm
+  package); §14.4 commits SCRAM-SHA-256 minimum + X.509
+  cert-based auth via cert-manager. The rigorous backend
+  reasoning lives in ADR-0039. Per master prompt §16, this
+  is the **only permitted in-place edit to ADRs 0001 – 0030
+  in Phase R9**.
+
 ### Added
 
 - **`CONTRIBUTING.md` "v1alpha2 process rigor matrix"** (R9.0):
@@ -46,6 +63,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fail the job; optional services degrade gracefully) plus
   circuit-breaker scaffolding; sequences the engine refactor
   across Waves 5 – 10 incrementally rather than big-bang.
+- **ADR-0039 — MongoDB as third storage tier** (R9.2,
+  Cluster B): rigorous backend specialisation across the
+  ADR-0036 catalog. Codifies the §2 backend selection criteria
+  (data shape; access patterns; consistency; ecosystem maturity;
+  operational concerns) plus the formalised decision rule. §3
+  evaluates each of the 15 catalog services — 7 services
+  adopt Mongo primary (session-store, audit-log,
+  schema-registry, input-broker, enricher, fingerprint-broker
+  corpus, template-service v1beta1); 2 hybrid (driver-router
+  if persisted; fingerprint-broker counters); 4 keep Postgres
+  (captcha-solver, scheduler, cost-tracker, secret-broker);
+  3 keep Redis (proxy-broker, rate-limit-broker,
+  dedup-service). §3.16 matrix matches ADR-0036 §3.9
+  byte-for-byte (master prompt §15.4 invariant). §4 commits
+  six anti-patterns (Mongo as financial store; as hot atomic
+  counter; as generic queue broker — `input-broker` is
+  documented exception; as speculative flexibility; as Postgres
+  replacement; without indexing strategy). §5 commits Level 2
+  (Moderate) adoption; rejects Level 1 (underuses) and Level 3
+  (over-commits lake decision). §6 articulates seven
+  operational costs honestly (chart growth, Compose growth,
+  backup / DR, monitoring, library matrix, indexing
+  discipline, cognitive load). §7 defers ADR-0024 + ADR-0029
+  amendments (Mongo-as-L0-sink, Mongo-as-Bronze-storage) to
+  v1beta1 territory.
 
 ## [0.1.0-alpha.0] - 2026-05-03
 

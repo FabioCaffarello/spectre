@@ -930,3 +930,130 @@ schema version is this database running" reads
 > artifact with zero post-refactor archaeology value); the
 > bullet is removed here so the link no longer dangles. The
 > ADR's decision text is unchanged.
+
+## §14 — Adding MongoDB as a third storage tier (v1alpha2 update)
+
+> **R9.2 evolution note (2026-05-05).** This section is added
+> in-place per the precedent set by [ADR-0018](0018-devcontainer-and-engine-image.md)'s
+> R6.3 / R6.5.3 / R6.5.4 update notes and ADR-0007's R6.6
+> evolution notes. ADR-0023's §1 – §13 remain authoritative for
+> v1alpha1; §14 extends the stateful tier set from {Postgres,
+> Kafka, Redis} to {Postgres, Kafka, Redis, **MongoDB**} for
+> v1alpha2. The rigorous backend selection criteria, the
+> service-by-service evaluation, the anti-pattern catalog, and
+> the operational-cost analysis live in
+> [ADR-0039](0039-mongodb-third-storage-tier.md); this section
+> records the **deployment-shape consequences** for ADR-0023's
+> §6 (required vs optional) and §8 (library choices and
+> pinning) so future readers of those sections find the
+> v1alpha2 update in-line.
+
+### §14.1 — MongoDB as a required tier
+
+ADR-0036's catalog ([§3.4 schema-registry, §3.5 input-broker,
+§3.1 session-store, §3.3 audit-log, §3.4 enricher, §3.1
+fingerprint-broker corpus](0036-microservices-catalog-expansion.md))
+places seven services on MongoDB as primary backend (plus two
+hybrid). The first Mongo-backed services land in **Wave 6**
+(schema-registry + input-broker per ADR-0036 §3.4 and §3.5);
+once Wave 6 closes, MongoDB joins Postgres + Redis as a
+**required** stateful tier. There is no "spectre without
+Mongo" mode beyond Wave 6.
+
+The rationale for moving these services to MongoDB (vs the
+Postgres / Redis tiers ADR-0023 §1 – §13 commits) is the
+"right tool per workload" discipline ADR-0039 §2 codifies —
+heterogeneous nested document shapes (sessions, schemas, URL
+metadata, fingerprint corpora, enrichment outputs) where
+relational + JSONB hybrid loses to first-class document
+storage. ADR-0023's evaluation in §1 – §13 considered MySQL,
+SQLite, CockroachDB, and DynamoDB but did not consider
+MongoDB; ADR-0039 §1 records that gap and §2 – §3 fill it.
+
+### §14.2 — Required vs optional (extending §6)
+
+The §6 table extends to four stateful tiers. The original
+three rows are unchanged; MongoDB is added:
+
+| Service     | Production    | Dev (Compose) | Rationale                                                                                                                                                  |
+|-------------|---------------|---------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Postgres    | REQUIRED      | REQUIRED      | (unchanged from §6 — job state always persisted; no in-memory mode.)                                                                                       |
+| Kafka       | OPTIONAL      | INCLUDED      | (unchanged from §6 + §6 R5.1 update — admission-gated per ADR-0024 §5.)                                                                                    |
+| Redis       | REQUIRED      | REQUIRED      | (unchanged from §6 — session metadata always written; defines §5's restart-invalidation contract.)                                                         |
+| **MongoDB** | **REQUIRED**  | **REQUIRED**  | **Added v1alpha2 (Wave 6). Once schema-registry + input-broker ship, the deployment shape requires Mongo. ADR-0039 §3 records the per-service rationale.** |
+
+The "REQUIRED in dev (Compose)" posture follows the §6 framing
+established for Postgres + Redis: the development environment
+mirrors production, and the alternative ("Compose without
+Mongo, production with Mongo") would reintroduce the
+"deployment-shape ≠ development-shape" pattern that
+[ADR-0025](0025-compose-stack.md) and CONTRIBUTING.md's
+"Architectural commitments" #5 (Compose is the development
+environment) explicitly reject.
+
+### §14.3 — Library matrix expansion (extending §8)
+
+§8's per-language pinning extends with MongoDB drivers when
+their first consumer lands per [ADR-0027 §3.1](0027-sdk-strategy.md)'s
+admission gate. The libraries are the most production-tested,
+maintained option in each ecosystem at the time of v1alpha2
+authoring (2026-05); replacements require a follow-up ADR;
+version bumps are normal-course maintenance per §8's framing.
+
+- **Go** — `mongo-go-driver` (the official MongoDB driver for
+  Go; `go.mongodb.org/mongo-driver`). Selected by default for
+  the Go-hosted catalog services (schema-registry, input-broker,
+  session-store, audit-log per ADR-0036 §3). Rejected:
+  `mgo` (community-maintained; less production-exercised than
+  the official driver since MongoDB Inc. began maintaining the
+  official driver in 2017).
+- **Rust** — `mongodb` crate (the official MongoDB Rust
+  driver). Selected for `fingerprint-broker`'s corpus storage
+  per ADR-0036 §3.1 and for any future Rust consumers of
+  Mongo-backed services. No pure-Rust alternatives are
+  production-exercised at comparable maturity.
+- **Python** — `pymongo` (synchronous; the official driver) or
+  `motor` (async; same maintainer, layered on top of `pymongo`).
+  The choice between the two is per-consumer at materialisation
+  — `pymongo` for short-lived script-shape consumers,
+  `motor` for long-lived async services. Rejected:
+  community-maintained alternatives.
+- **TypeScript** — `mongodb` package (the official Node.js
+  driver from MongoDB Inc.; `mongodb` on npm). Selected for
+  any TypeScript consumers of Mongo-backed services per the
+  same admission gate as the other languages.
+
+Each library is pinned in its respective dependency manifest
+when its first consumer lands (`go.mod`, `Cargo.toml`,
+`pyproject.toml`, `package.json`). Bitnami's `mongodb`
+subchart is pinned in `build/helm/spectre/Chart.yaml` similarly
+to the existing Postgres / Redis / Kafka / MinIO subcharts per
+[ADR-0030](0030-helm-chart-structure.md); subchart bumps
+require an amendment to ADR-0030 in the existing pattern.
+
+### §14.4 — Authentication
+
+MongoDB authentication uses **SCRAM-SHA-256 minimum** at the
+deployment-default. For deployments running cert-manager (per
+the planned ADR-0032 in R9.3), **X.509 certificate-based
+authentication** is the production-grade mode — services
+authenticate to Mongo with the same per-service certificates
+ADR-0032 will provision for service-to-service mTLS.
+
+ADR-0023 §11 – §12 (migration order, configuration via env
+vars) extend forward to Mongo: each Mongo-backed service reads
+its connection URI from a `<SLOT>_MONGO_URL` env var; the URI
+embeds SCRAM credentials in dev / X.509 cert paths in
+production; per-service Mongo databases are created at first
+service startup (idempotent).
+
+### §14.5 — Reference
+
+The full contract for the MongoDB tier — backend selection
+criteria, service-by-service evaluation, anti-pattern catalog,
+three-adoption-level analysis, operational-implications
+breakdown — lives in
+[ADR-0039](0039-mongodb-third-storage-tier.md). This §14
+records only the **deployment-shape consequences** that
+ADR-0023's §6 and §8 readers need to find in-line. ADR-0039
+ratifies; ADR-0023 §14 accommodates.
