@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ADR-0031 — Observability framework** (R9.3, Cluster A):
+  commits the v1alpha2 platform to OpenTelemetry as the
+  cross-cutting framework for metrics + traces + structured
+  logs. §2 commits OTLP as the wire protocol (gRPC primary,
+  HTTP fallback) emitting to a local `opentelemetry-collector`
+  per deployment; Prometheus `/metrics` on a uniform sidecar
+  port 9090 as resilience scrape path; structured JSON logs
+  to stdout (OTel logs SDK adoption deferred to v1beta1
+  pending Rust maturity); first-class correlation IDs
+  (`trace_id`, `span_id`, `request_id`, `job_id`,
+  `tenant_id`) propagated end-to-end via gRPC metadata. §3
+  makes ADR-0036 §5.4's canonical observability surface
+  normative — gRPC reflection, gRPC `Health` per ADR-0030's
+  Kubernetes-native `grpc:` probes, Prometheus `/metrics` on
+  port 9090, OTel SDK per language (`opentelemetry-rust` /
+  `go.opentelemetry.io/otel` / `opentelemetry-python` /
+  `@opentelemetry/api`), nine mandatory log fields. §4
+  commits W3C Trace Context propagation with the §4.2 trace
+  topology (operator → engine → 9+ services → driver → sinks
+  + cost / audit). §5 commits the metrics taxonomy per
+  service category (engine, operator, adapters,
+  infra-services, cross-cutting). §6 makes ADR-0009's
+  `DriverError.Code` the universal failure-categorisation
+  primitive across metric labels, log fields, span
+  attributes, and operator-status surfacing. §7 commits the
+  cost-emission shape ADR-0038 will consume. §8 commits four
+  quality metrics (extraction completeness, schema-validation
+  pass rate, per-(target, driver) success ratio, dedup
+  collision ratio).
+- **ADR-0032 — Service-to-service authentication via mTLS**
+  (R9.3, Cluster B): commits mutual TLS as the
+  service-to-service auth primitive, provisioned via
+  cert-manager. §2 commits cert-manager as the issuance
+  primitive (Issuer choice deferred to deployment-side per
+  §3.1); per-service certificates with CN matching the
+  ADR-0021 service-discovery DNS name + SANs covering
+  cluster-local short forms; 90-day validity with 30-day
+  renewal window; ECDSA P-256 preferred / RSA 2048-bit
+  fallback. §2.4 commits the chart's
+  `cert-manager.enabled` flag (default **`false`**) — the
+  v1alpha1 plaintext posture continues for deployments
+  without cert-manager; flag-on enables mTLS uniformly
+  across all services. §3.4 lands the
+  `_helpers.tpl` certificate template extending ADR-0030's
+  named-template helpers. §4 commits the engine ↔ adapter ↔
+  operator wiring (Wave 3 first auth PR — operator ↔ engine
+  + engine ↔ adapter; Wave 5+ engine ↔ infra-service
+  uniform); per-service authorisation policies are
+  per-service-build PR scope (this ADR commits identity, not
+  policy). §5 commits the operational shape — rotation
+  reload per language; trust bundle via trust-manager;
+  cert-manager.enabled flag-off as DR escape hatch. §7
+  defers webhook authentication (HMAC / bearer / mTLS for
+  receivers) to its own follow-up PR per ADR-0024 §8's
+  existing deferral.
+
 ### Changed
 
 - **ADR-0023 §14 amendment in-place** (R9.2): adds MongoDB
