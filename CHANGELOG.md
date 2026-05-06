@@ -7,8 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase R9 — v1alpha2 architectural foundation (completed 2026-05-06)
+
+Nine sequential PRs (R9.0 → R9.8) crystallising every
+post-refactor architectural commitment into canonical
+artefacts before any v1alpha2 implementation PR opens. R9
+was the **documentation-only phase** that bridged the
+microservices refactor (R1 → R8.1, closed at
+`0.1.0-alpha.0` on 2026-05-03) and the v1alpha2
+implementation trajectory (Wave 1+, beginning after R9.8
+merges).
+
+**Phase R9 outputs**:
+
+- **9 new ADRs accepted**: ADR-0031 (observability) +
+  ADR-0032 (mTLS) + ADR-0033 (input management) + ADR-0034
+  (output schemas) + ADR-0035 (DSL evolution + driver
+  abstraction) + ADR-0036 (15-service catalog + canonical
+  shape) + ADR-0037 (engine as orchestrator) + ADR-0038
+  (cost tracking) + ADR-0039 (MongoDB tier)
+- **1 in-place ADR amendment**: ADR-0023 §14 (the only
+  permitted in-place edit to ADRs 0001 – 0030 in Phase R9
+  per master prompt §16; precedent set by ADR-0018's R6.3 /
+  R6.5.3 / R6.5.4 update notes)
+- **7 new architecture docs** at `docs/architecture/`:
+  `platform-architecture.md` (umbrella) +
+  `service-shape.md` + `dsl-evolution.md` +
+  `storage-tiers.md` + `engine-orchestrator.md` +
+  `observability.md` + `service-catalog.md`
+- **13 architecture-doc forward-reference subsections**:
+  every existing v1alpha1 architecture doc gained a
+  v1alpha2 forward-look pointing to the R9.1 – R9.5
+  artefacts; body content preserved verbatim
+- **Roadmap substantial rewrite**: §4 expanded from 4
+  placeholder subsections to 13 concrete Wave subsections
+  (§4.0 R9 status; §4.1 – §4.10 Waves 1 – 10; §4.11 v1beta1
+  deferrals; §4.12 v1alpha2 ceiling); §5 / §6 / §7 refined;
+  new §9 risks section
+- **CONTRIBUTING.md v1alpha2 process rigor matrix**:
+  governs PR cadence for all subsequent v1alpha2 work
+- **`docs/v1alpha2-audit.md` created**: companion to the
+  frozen `refactor-audit.md`; forward-tracking per-PR
+  detail for v1alpha2 phases
+
+**Source-code changes**: 0. Phase R9 was strictly
+documentation-only per master prompt §15.2.
+
+**What R9 enables**: every subsequent v1alpha2
+implementation PR (Wave 1+) has firm architectural backing.
+The 14 of 15 catalog services that materialise across Waves
+5 – 10 follow ADR-0036's canonical shape; the engine's
+evolution to conductor follows ADR-0037; the three storage
+tiers follow ADR-0023 §14 + ADR-0039; observability follows
+ADR-0031; mTLS follows ADR-0032; per-subsystem contracts
+follow ADR-0033 / 0034 / 0035 / 0038. **Wave 1 (production
+hardening foundation) opens immediately after R9.8 merges**;
+see [`docs/roadmap.md`](docs/roadmap.md) §4.1.
+
+(Per-PR R9.0 – R9.7 entries below preserved verbatim;
+R9.8 entry follows.)
+
+### Added
+
+- **`docs/v1alpha2-audit.md`** (R9.8): companion to the
+  frozen `docs/refactor-audit.md` (R1 → R8.1). Mirrors the
+  refactor-audit pattern but **forward-tracking** — updated
+  per-PR by future v1alpha2 work. Phase R9 high-level table
+  + per-PR detail entries for R9.0 – R9.8 + cumulative
+  counts + pattern guidance for future Phase audits.
+
 ### Changed
 
+- **README.md** (R9.8): "Project status" section updated to
+  acknowledge Phase R9 close + reference v1alpha2-audit.md
+  + the rewritten roadmap §4 Wave plan; "Documentation"
+  list adds `v1alpha2-audit.md`. Body of other README
+  sections preserved verbatim.
 - **`docs/roadmap.md` substantial rewrite** (R9.7): the
   previous §4 ("Beyond v1alpha1: platform trajectory") had
   4 sub-sections (4.1 sdks/ / 4.2 infra-services/ / 4.3
