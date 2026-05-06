@@ -9,6 +9,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **ADR-0033 — Input management subsystem** (R9.4, Cluster A):
+  commits the v1alpha2 platform to a new `ScrapeBatch` CRD
+  + `input-broker` service (slot 12 per ADR-0036) for
+  bulk URL ingestion at scraping volumes (millions of URLs
+  per batch). The CRD declares an input source (oneof:
+  sitemap, file via ConfigMap, API push, Kafka queue,
+  seeded crawl), a scrape DSL template with `${URL}` /
+  `${URL_METADATA.*}` placeholders, batch-level scheduling
+  (maxConcurrentJobs, perDomainRateLimit delegating to
+  rate-limit-broker, retry policy, completion policy). The
+  input-broker owns per-URL lifecycle (seen → queued →
+  in-flight → succeeded / failed → re-queued) with
+  Mongo-backed claim semantics per ADR-0039 §3.12 and
+  per-batch progress aggregation. The operator gains a
+  ScrapeBatch reconciler that spawns child ScrapeJobs over
+  time as URLs become available; child ScrapeJobs are
+  owned by their parent ScrapeBatch via Kubernetes
+  ownerReferences.
+- **ADR-0034 — Output schema and validation framework**
+  (R9.4, Cluster B): commits the v1alpha2 platform to a
+  `schema-registry` service (slot 9 per ADR-0036) and a
+  `schema:` block in the DSL. Schema bodies follow JSON
+  Schema Draft 2020-12; refs follow `<namespace>/<name>/v<version>`
+  with explicit (non-`latest`) versions. Per-row validation
+  runs **engine-side** against a per-job cached schema; the
+  registry's `Validate` RPC exists for non-engine consumers
+  (operator admission, SDK consumers). Three validation
+  modes (STRICT / LENIENT / OFF) and three failure policies
+  (FAIL_ROW / FAIL_JOB / LOG_AND_EMIT) per the DSL block.
+  Schema evolution under `BACKWARD` compatibility (default)
+  with explicit major-version bumps for breaking changes;
+  registration includes a migration document body. Backend
+  is Mongo per ADR-0039 §3.9 — schemas are literally
+  documents; atomic single-document writes prevent
+  conflicting versions.
+- **ADR-0035 — DSL evolution and driver abstraction**
+  (R9.4, Cluster C): commits the v1alpha2 DSL evolution
+  trajectory and surfaces the driver-router
+  service-vs-engine-module decision explicitly. §3 walks
+  the four-version trajectory: v1alpha1 (current; frozen
+  per ADR-0001), v1alpha2 (this ADR's commitment; adds five
+  primitives engine-internally), v1beta1 (sketched —
+  intent-declarative with capability hints), v1
+  (illustrative far-future — fully abstract intent). §4
+  commits the five v1alpha2 primitives (pagination,
+  conditional, multi-step navigation, schema declaration
+  per ADR-0034, transforms with built-in + service-backed
+  + WASM-deferred sets). §5 sketches the routing
+  intelligence concerns. **§6 commits the driver-router
+  decision deferral** — both options (separate service vs
+  engine module) surfaced with full trade-off matrix; the
+  decision surfaces to the maintainer at Wave 10 when
+  v1alpha2 evidence base is sufficient. §7 records the
+  framework v3 D9 commitment that v1alpha2 DSL stays
+  driver-explicit; `driverHint` opt-in lands in v1beta1.
+- **ADR-0038 — Cost tracking and per-job attribution**
+  (R9.4, Cluster D): commits the v1alpha2 platform to a
+  `cost-tracker` service (slot 7 per ADR-0036) for per-job
+  cost ledgers + per-tenant period rollups. Cost emission
+  is asynchronous fire-and-forget per ADR-0037 §4.3 from
+  gate-A services (proxy-broker per-acquire,
+  captcha-solver per-solve) and from the engine
+  (compute-time at job completion); idempotent via the
+  `(job_id, emitter, sequence)` key. Per-job ledger
+  retrievable by `job_id`; the operator surfaces
+  `status.totalCost` on ScrapeJob and ScrapeBatch.
+  Per-tenant rollups compute incrementally at hourly /
+  daily / monthly window boundaries; rollup webhooks fire
+  for downstream invoicing integration. Backend is Postgres
+  per ADR-0039 §3.7 — financial-record shape, ACID
+  matters, anti-pattern §4.1 rejects Mongo here.
+  Invoicing itself (PDF generation, payment processing)
+  remains explicitly out of scope; cost-tracker provides
+  the data, downstream financial systems handle invoicing
+  primitives.
+
 - **ADR-0031 — Observability framework** (R9.3, Cluster A):
   commits the v1alpha2 platform to OpenTelemetry as the
   cross-cutting framework for metrics + traces + structured
