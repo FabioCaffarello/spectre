@@ -188,26 +188,44 @@ exist yet.
 
 ## Project status
 
-> **v1alpha1 refactor complete.** The microservices refactor
-> (R1 → R8.1, completed 2026-05-03) closed; Spectre's v1alpha1
-> stack runs as the topology committed in
-> [ADR-0020](docs/adr/0020-microservices-architecture-supersession.md):
-> engine + three adapters + control-plane operator + stateful
-> services (Postgres, Redis, Kafka, MinIO), all connected over
-> gRPC/TCP, deployable via Compose locally and Helm in
-> Kubernetes. Status is "v1alpha1 production posture: complete;
-> v1alpha2 growth: not started" — the platform is feature-complete
-> against the v1alpha1 surface but the protocol remains marked
-> alpha and will evolve. For per-release detail see
-> [CHANGELOG.md](CHANGELOG.md); for per-PR refactor history see
-> the frozen [`docs/refactor-audit.md`](docs/refactor-audit.md);
-> for architectural commitments that bind v1alpha2 contributors
+> **v1alpha1 refactor complete; v1alpha2 architectural
+> foundation complete; v1alpha2 implementation begins next.**
+> The microservices refactor (R1 → R8.1, completed
+> 2026-05-03) closed at `0.1.0-alpha.0`. Phase R9
+> (v1alpha2 architectural foundation, completed 2026-05-06)
+> shipped 9 sequential documentation-only PRs that
+> crystallised every post-refactor architectural commitment
+> into canonical artefacts: 9 new ADRs (0031 – 0039) + 1
+> in-place ADR amendment (ADR-0023 §14, MongoDB tier) + 7
+> new architecture docs at `docs/architecture/` + 13
+> existing architecture-doc forward-reference subsections +
+> a substantially expanded `docs/roadmap.md` §4 Wave 1 – 12
+> plan + a CONTRIBUTING.md v1alpha2 process rigor matrix +
+> this audit's companion at
+> [`docs/v1alpha2-audit.md`](docs/v1alpha2-audit.md). Status
+> is "v1alpha1 production posture: complete; v1alpha2
+> architectural foundation: complete; v1alpha2 implementation:
+> Wave 1 opens next." The platform is feature-complete against
+> the v1alpha1 surface; the protocol remains marked alpha and
+> will evolve. For per-release detail see
+> [CHANGELOG.md](CHANGELOG.md); for per-PR refactor history
+> see the frozen
+> [`docs/refactor-audit.md`](docs/refactor-audit.md); for
+> per-PR v1alpha2 phase history see
+> [`docs/v1alpha2-audit.md`](docs/v1alpha2-audit.md); for
+> architectural commitments that bind v1alpha2 contributors
 > see [CONTRIBUTING.md](CONTRIBUTING.md)'s "Architectural
 > commitments" section.
 
-See the [roadmap](docs/roadmap.md) for v1alpha2 trajectory across
-the four reserved categories (`sdks/`, `infra-services/`,
-`data-platform/`, `shared-libs/`).
+See the [roadmap](docs/roadmap.md) §4 for the v1alpha2
+trajectory — Waves 1 – 10 with constituent PRs, calendar
+estimates, and per-Wave ADR cross-references. The
+**14-of-15-services catalog** + the 3-tier persistent
+storage architecture (Postgres + Redis + MongoDB; plus
+Kafka for streaming) + the engine's evolution to
+orchestrator pattern + cross-cutting observability and mTLS
+frameworks land across Waves 5 – 10 over a roughly 18 – 30
+month horizon.
 
 ## Contributing
 
@@ -228,8 +246,9 @@ For everything else, read [CONTRIBUTING.md](CONTRIBUTING.md).
 - [Roadmap](docs/roadmap.md)
 - [CHANGELOG](CHANGELOG.md) — per-release notes
 - [`docs/refactor-audit.md`](docs/refactor-audit.md) — frozen
-  per-PR / per-cluster historical record of the v1alpha1
-  refactor (R1 → R8.1)
+  per-PR refactor history (R1 → R8.1)
+- [`docs/v1alpha2-audit.md`](docs/v1alpha2-audit.md) —
+  forward-tracking per-PR v1alpha2 phase history (Phase R9+)
 
 ## License
 
