@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Seven new architecture docs at `docs/architecture/`**
+  (R9.5): operational companions to the R9.1 – R9.4 ADRs.
+  ADRs record decisions ("why"); architecture docs record
+  the shape that follows ("how").
+  - `platform-architecture.md` (Cluster A, 257 lines):
+    umbrella entry-point doc with platform-vs-driver split
+    visual; 15-service catalog overview; three-tier storage
+    overview; execution flow; DSL evolution at-a-glance;
+    v1alpha1 vs v1alpha2 vs v1beta1 surface comparison.
+  - `service-shape.md` (Cluster B, 250 lines): canonical
+    service shape per ADR-0036 §5 in operational form +
+    14-step contributor onboarding checklist for
+    materialising a new service.
+  - `dsl-evolution.md` (Cluster C, 345 lines): full DSL
+    trajectory per ADR-0035 §3 with full per-version YAML
+    examples (v1alpha1 / v1alpha2 / v1beta1 / v1) +
+    per-version migration paths + backwards compatibility
+    commitments.
+  - `storage-tiers.md` (Cluster D, 229 lines): three-tier
+    backend matrix per ADR-0039 in operational form;
+    per-service backend table; decision criteria; six
+    anti-patterns; per-tier operational shape.
+  - `engine-orchestrator.md` (Cluster E, 349 lines): engine
+    v1alpha2 shape per ADR-0037 in operational form;
+    per-step service orchestration ASCII diagram +
+    pseudocode; latency mitigation strategies; degradation
+    modes; per-Wave migration sequence.
+  - `observability.md` (Cluster F, 338 lines): OpenTelemetry
+    + OTLP + Prometheus + structured-logs operational guide
+    per ADR-0031; per-service expectations; trace
+    propagation flow; metrics taxonomy; failure
+    categorisation workflow; quality metrics; debugging
+    workflow examples.
+  - `service-catalog.md` (Cluster G, 289 lines): the
+    15-service catalog with **status per service** (planned
+    / authoring / shipped); per-service entries; how-to-read
+    + ownership / update protocol; reference materials.
 - **ADR-0033 — Input management subsystem** (R9.4, Cluster A):
   commits the v1alpha2 platform to a new `ScrapeBatch` CRD
   + `input-broker` service (slot 12 per ADR-0036) for
