@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`docs/roadmap.md` substantial rewrite** (R9.7): the
+  previous §4 ("Beyond v1alpha1: platform trajectory") had
+  4 sub-sections (4.1 sdks/ / 4.2 infra-services/ / 4.3
+  data-platform/ / 4.4 shared-libs/) at the placeholder
+  level. The rewritten §4 has 13 sub-sections — §4.0 (Phase
+  R9 architectural foundation, in progress); §4.1–§4.10
+  (Waves 1–10 with constituent W#.# items, calendar
+  estimates as conservative ranges, ADR cross-references);
+  §4.11 (v1beta1 territory deferred items); §4.12 (v1alpha2
+  ceiling — what the platform looks like after Wave 10
+  closes). §1 updated to reflect R7.x close + R8.1 close +
+  R9.0 – R9.7 status. §2 marked complete. §5 extended with
+  DSL evolution path (§5.1 — four-version trajectory). §6
+  refined per framework v3/v4 horizon. §7 references the
+  v1alpha2 process rigor matrix from R9.0 + ADR-0036's six
+  gates. New §9 — v1alpha2 risks and mitigations (six risks
+  with per-risk mitigation strategies and acceptance
+  criteria). All 12 ADR cross-references resolve.
 - **v1alpha2 forward-reference subsections in 13 existing
   architecture docs** (R9.6): each of the 13 v1alpha1
   architecture docs at `docs/architecture/` gains a
