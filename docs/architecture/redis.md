@@ -191,3 +191,45 @@ redis-cli GET "session:playwright:<session_id>"
   with the Redis-resident session metadata
 - `tools/conformance/tests/test_session_restart_invalidation.py` —
   the parallel-instances conformance pattern
+
+## v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe
+> v1alpha1's Redis role — adapter session metadata. Phase
+> R9 expands Redis's role to additional catalog services
+> while preserving the canonical Redis use-cases (atomic
+> counters + TTL caches + bloom filters); this subsection
+> clarifies the v1alpha2 surface.*
+
+Redis remains a **required** tier in v1alpha2. Per
+[ADR-0039 §4.2](../adr/0039-mongodb-third-storage-tier.md)'s
+anti-pattern catalog, "Mongo as hot atomic counter store"
+is explicitly forbidden — Redis's atomic primitives +
+sub-millisecond latency win unambiguously over Mongo for
+counter / TTL workloads.
+
+v1alpha2 catalog services that use Redis as primary backend
+per ADR-0036 §3 + ADR-0039 §3:
+
+- **`proxy-broker`** (slot 1) — cooldown table; per-IP ban
+  tracking; per-provider health
+- **`rate-limit-broker`** (slot 4) — per-domain
+  sliding-window counters; robots.txt cache
+- **`dedup-service`** (slot 11) — bloom filter + hash store
+  with TTL
+
+Plus hybrid use:
+
+- **`fingerprint-broker`** (slot 3) — Redis for hot
+  ban-counter tracking (Mongo for the corpus)
+- **`enricher`** (slot 10) — Redis for content-hash cache
+  (Mongo for primary persistence)
+
+The v1alpha1 adapter session-metadata role
+([ADR-0023 §5](../adr/0023-stateful-services-architecture.md))
+carries forward unchanged. The Bitnami subchart pinning per
+ADR-0030 + library matrix per ADR-0023 §8 (`ioredis` /
+`redis-py` / `go-redis/v9`) carries forward.
+
+For the three-tier model overview see
+[`storage-tiers.md`](storage-tiers.md).

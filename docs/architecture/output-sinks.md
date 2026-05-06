@@ -282,3 +282,50 @@ one variant per CR (CEL-enforced at admission).
   guide.
 - `docs/architecture/postgres.md` — `jobs` + `job_rows` schema
   reference.
+
+## v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe
+> v1alpha1's four output sinks (stdout / Kafka / S3 /
+> Webhook). Phase R9 layers schema validation on top of the
+> sink contract while preserving the four-sink set; this
+> subsection clarifies what changes and what does not.*
+
+The four v1alpha1 sinks remain the v1alpha2 set —
+`OutputSink.Stdout`, `OutputSink.Kafka`, `OutputSink.S3`,
+`OutputSink.Webhook` per [ADR-0024](../adr/0024-output-sinks.md).
+The discriminated union, the per-sink failure semantics
+(engine-level admission-gating for Kafka / S3; per-job
+runtime failure for Webhook), and the JSONL row format are
+all preserved.
+
+What v1alpha2 adds, layered **before** sink dispatch:
+
+- **Schema validation** per
+  [ADR-0034](../adr/0034-output-schema-validation.md) —
+  every emitted row validates against the ScrapeJob's
+  declared schema (engine-cached per job; in-process JSON
+  Schema validation). Failed rows drop / fail per the
+  configurable failure policy; sinks ship only validated
+  rows.
+- **Post-extraction enrichment** per
+  [ADR-0036 §3.4](../adr/0036-microservices-catalog-expansion.md)
+  (slot 10, `enricher`) — geocoded coordinates, classified
+  labels, embeddings added pre-emission at Wave 10.
+- **Pre-emit deduplication** per ADR-0036 §3.4 (slot 11,
+  `dedup-service`) — bloom-filter membership check; new
+  rows emit, duplicates drop. Wave 10.
+
+Webhook authentication remains deferred per ADR-0024 §8 +
+[ADR-0032 §7](../adr/0032-service-to-service-mtls.md) — the
+v1alpha2 phase does not commit a specific mechanism (HMAC /
+bearer / mTLS-for-receivers); a follow-up ADR settles when
+real consumer demand surfaces.
+
+v1beta1 may add a Mongo-as-L0-sink option per
+[ADR-0039 §7.1](../adr/0039-mongodb-third-storage-tier.md);
+that is not in v1alpha2 scope.
+
+For the engine's per-row pipeline (validate → enrich →
+dedup → emit), see
+[`engine-orchestrator.md`](engine-orchestrator.md) §2.
