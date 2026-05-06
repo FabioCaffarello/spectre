@@ -150,3 +150,43 @@ has its own pgxmock unit tests for `GetJob` and `CountJobRows`.
 - sqlx: <https://github.com/launchbadge/sqlx>
 - pgx/v5: <https://github.com/jackc/pgx>
 - PostgreSQL 16 docs: <https://www.postgresql.org/docs/16/>
+
+## v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe
+> v1alpha1's Postgres role — engine job state + control
+> plane status reads. Phase R9 expands the platform's
+> stateful tier set to four backends (adding MongoDB);
+> this subsection clarifies Postgres's continuing role.*
+
+Postgres remains a **required** tier in v1alpha2 — the
+discipline is *right tool per workload*, not *replace
+Postgres with Mongo*. Per
+[ADR-0039 §4.5](../adr/0039-mongodb-third-storage-tier.md)'s
+anti-pattern catalog, "Mongo replacing Postgres" is
+explicitly forbidden.
+
+v1alpha2 catalog services that use Postgres as primary
+backend per ADR-0036 §3 + ADR-0039 §3:
+
+- **`captcha-solver`** (slot 2) — financial-record per-job
+  costs; ADR-0039 anti-pattern §4.1 (Mongo as financial
+  store: forbidden)
+- **`scheduler`** (slot 6) — cron-style registry; mature
+  pg_cron ecosystem
+- **`cost-tracker`** (slot 7) — per-job ledger + per-tenant
+  rollups; financial-record ACID matters
+- **`secret-broker`** (slot 13) — encrypted secrets with
+  audit integrity (or HashiCorp Vault as alternative
+  backend per ADR-0036 §3.6)
+
+The v1alpha1 engine's Postgres role (job state) and the
+control plane's Postgres role (status reads) are unchanged.
+The library matrix (`sqlx` for Rust + `pgx/v5` for Go) is
+unchanged. Bitnami subchart pinning per ADR-0030 carries
+forward.
+
+For the three-tier model overview see
+[`storage-tiers.md`](storage-tiers.md); for the per-service
+backend rationale see
+[ADR-0039 §3](../adr/0039-mongodb-third-storage-tier.md).

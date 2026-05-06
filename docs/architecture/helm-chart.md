@@ -267,3 +267,50 @@ deferred:
   curl-impersonate — separate per-image PRs.
 - **Migration scripts for v1alpha2 → vNext CRD upgrade** —
   documented as a future concern in ADR-0030 §8.
+
+## §11 — v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe the
+> R7.1-shipped Helm chart at `build/helm/spectre/` packaging
+> the v1alpha1 stack. Phase R9 commits to extending the
+> chart with per-service fragments + a Mongo subchart; this
+> subsection forwards readers to the v1alpha2 surface.*
+
+The chart's **single-chart-with-named-templates** posture
+per §3 is **preserved** through v1alpha2 — first-party
+services land as **chart fragments** under
+`build/helm/spectre/templates/`, not as subcharts. Each
+new infra-service contributes:
+
+- `templates/<slot>.yaml` + `<slot>-rbac.yaml` +
+  `<slot>-config.yaml` + `<slot>-cert.yaml`
+- A `<slotCamelCase>:` block in `values.yaml` matching the
+  existing `engine:` / `controlPlane:` shape
+
+Per
+[ADR-0036 §5.2](../adr/0036-microservices-catalog-expansion.md)
++ [`service-shape.md` §3](service-shape.md). The
+`_helpers.tpl` named-template helpers extend across
+fragments.
+
+What v1alpha2 adds at the subchart layer:
+
+- **Mongo subchart** — Bitnami `mongodb` pinned per
+  ADR-0023 §14 + ADR-0030's pinning policy. Lands in
+  Wave 6 with the first Mongo-backed services
+  (schema-registry + input-broker).
+- **`cert-manager.enabled` flag** — default-off; flag-on
+  enables service-to-service mTLS uniformly per
+  [ADR-0032 §2.4](../adr/0032-service-to-service-mtls.md).
+  The `_helpers.tpl` certificate template (§3.4 of
+  ADR-0032) materialises in Wave 3.
+- **OpenTelemetry collector subchart reference** —
+  optional; deployments without an existing collector wire
+  one in. Lands in Wave 3 per ADR-0031 §2.2.
+
+The CRD lifecycle per §8 + ADR-0030 §8 extends to
+ScrapeBatch (added in Wave 6 per ADR-0033). The R8.1 CRD
+upgrade procedure carries forward unchanged.
+
+For the operational walkthrough see
+[`platform-architecture.md`](platform-architecture.md).

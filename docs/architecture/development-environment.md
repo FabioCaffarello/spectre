@@ -391,3 +391,51 @@ them.
   in §3 R5.1 addendum.
 - [ADR-0018](../adr/0018-devcontainer-and-engine-image.md) —
   pre-R6.1 devcontainer + engine image; revisited by R6.3 (DinD).
+
+## v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe the
+> v1alpha1 development environment — `docker compose up`
+> brings up 11 services (engine + 3 adapters + control-plane
+> + Postgres + Redis + Kafka + Redpanda Console + MinIO +
+> MinIO Console + minio-bootstrap). Phase R9 commits to
+> expanding the Compose stack as catalog services
+> materialise; this subsection forwards readers to the
+> v1alpha2 surface.*
+
+The Compose stack expands per Wave 5+ build PRs — each new
+infra-service contributes a Compose service block per
+[ADR-0036 §5.3](../adr/0036-microservices-catalog-expansion.md)
++ [`service-shape.md` §3](service-shape.md). Default profile
+assignments per ADR-0036 §6.1:
+
+- **`core`** profile (always-on in `docker compose up`) —
+  proxy-broker, captcha-solver, schema-registry,
+  input-broker, rate-limit-broker, session-store, scheduler,
+  cost-tracker, audit-log, secret-broker
+- **`adapters`** profile (selective experimentation) —
+  fingerprint-broker, dedup-service, enricher,
+  driver-router, template-service
+
+What v1alpha2 adds at the stateful tier:
+
+- **`mongodb`** service block in `core` profile (Wave 6,
+  paired with schema-registry + input-broker per
+  [ADR-0023 §14](../adr/0023-stateful-services-architecture.md)
+  + [ADR-0039](../adr/0039-mongodb-third-storage-tier.md)).
+  Standalone in Compose; replica-set in production Helm.
+- **`opentelemetry-collector`** sidecar (optional;
+  default-on in dev for observability per ADR-0031). Routes
+  OTLP traces + metrics from services to deployment-side
+  backends (Jaeger / Prometheus / etc.).
+
+The Devcontainer + Docker-in-Docker + kind-cluster topology
+per R6.3 carries forward unchanged. The
+"Compose is the development environment" architectural
+commitment per
+[CONTRIBUTING.md](../../CONTRIBUTING.md)'s "Architectural
+commitments" #5 holds — there is no
+`run-engine-standalone` path; the full graph runs locally.
+
+For the umbrella v1alpha2 architectural overview see
+[`platform-architecture.md`](platform-architecture.md).

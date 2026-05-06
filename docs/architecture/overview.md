@@ -386,3 +386,44 @@ Per-category ADR pointers:
 The platform taxonomy ADR ([ADR-0026](../adr/0026-platform-taxonomy.md))
 is the index — every category is governed there, and the
 admission criteria for new categories live in §6.
+
+## §11 — v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe the
+> v1alpha1 platform overview as it existed at refactor close
+> (R8.1, `v0.1.0-alpha.0`). Phase R9 (R9.1 – R9.8) opens the
+> v1alpha2 architectural foundation; this subsection
+> forwards readers to the v1alpha2 surface.*
+
+v1alpha2 expands the platform from 4 inhabited categories
+(today's `proto` + `engines` + `operators` + `adapters`) to
+**all eight production-code categories** ADR-0026 reserves —
+`infra-services/` materialises as 14 services across
+Waves 5 – 10, `sdks/` populates per ADR-0027's admission gate
+as services consume protocols in their language, and
+`data-platform/` evolves per ADR-0029's lake-layer model.
+
+The umbrella v1alpha2 architectural surface lives at
+[`platform-architecture.md`](platform-architecture.md). For
+the operational shape:
+
+- **Service catalog** — [`service-catalog.md`](service-catalog.md)
+  + [ADR-0036](../adr/0036-microservices-catalog-expansion.md)
+- **Canonical service shape** — [`service-shape.md`](service-shape.md)
+- **Engine evolution** — [`engine-orchestrator.md`](engine-orchestrator.md)
+  + [ADR-0037](../adr/0037-engine-as-orchestrator.md)
+- **Storage tiers** (adds MongoDB) —
+  [`storage-tiers.md`](storage-tiers.md) +
+  [ADR-0023 §14](../adr/0023-stateful-services-architecture.md)
+  + [ADR-0039](../adr/0039-mongodb-third-storage-tier.md)
+- **DSL evolution** — [`dsl-evolution.md`](dsl-evolution.md)
+  + [ADR-0035](../adr/0035-dsl-evolution-driver-abstraction.md)
+- **Observability** — [`observability.md`](observability.md)
+  + [ADR-0031](../adr/0031-observability-framework.md)
+- **mTLS** —
+  [ADR-0032](../adr/0032-service-to-service-mtls.md)
+
+The Wave 1 – 12 plan lives in
+[`docs/roadmap.md`](../roadmap.md) §4 (rewritten in R9.7);
+per-PR phase history in
+[`docs/v1alpha2-audit.md`](../v1alpha2-audit.md) (R9.8).

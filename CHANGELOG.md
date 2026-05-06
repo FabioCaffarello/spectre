@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **v1alpha2 forward-reference subsections in 13 existing
+  architecture docs** (R9.6): each of the 13 v1alpha1
+  architecture docs at `docs/architecture/` gains a
+  "v1alpha2 forward-look" subsection at the end pointing to
+  the R9.1 – R9.5 ADRs and new architecture docs. Body
+  content of all 13 existing docs preserved **verbatim**
+  (verified via diff against origin/main — 0 deletions, only
+  additions). The subsections cluster into three groups:
+  Cluster A (overview / engine / control-plane /
+  driver-protocol — core docs), Cluster B (postgres / redis
+  / kafka / output-sinks — stateful + sinks), Cluster C
+  (container-images / helm-chart / production-smoke /
+  releases / development-environment — deployment).
+
 ### Added
 
 - **Seven new architecture docs at `docs/architecture/`**

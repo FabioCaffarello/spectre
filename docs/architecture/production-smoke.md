@@ -314,3 +314,47 @@ R7.2 ships in-cluster verification only. Out of scope:
 - `helm/kind-action`:
   <https://github.com/helm/kind-action>.
 - Bitnami chart conventions: <https://charts.bitnami.com/>.
+
+## §11 — v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe the
+> R7.2-landed production-smoke gate — Helm install + 3
+> ScrapeJobs (one per adapter) → assert sink arrival. Phase
+> R9 commits to extending the gate per service materialisation
+> across Waves 5 – 10; this subsection forwards readers to
+> the v1alpha2 surface.*
+
+The R7.2 production-smoke contract — Helm install into kind
+cluster; deploy ScrapeJob CRs; assert outputs reach
+configured sinks — is **the v1alpha2 contract base**. Each
+Wave 5+ build PR extends the gate per
+[`service-shape.md` §8](service-shape.md) step 14:
+
+- **Wave 5** — proxy-broker + captcha-solver smoke:
+  ScrapeJobs assert proxy lease acquisition + CAPTCHA
+  solve trigger paths; no real provider integrations
+  exercised (vendor-mock fixtures).
+- **Wave 6** — schema-registry + input-broker smoke:
+  ScrapeBatch CR with 100 URLs; assert
+  `status.inputSourceStatus.succeeded` reaches 100;
+  schema-validation per row; per-batch progress aggregation.
+- **Wave 7** — rate-limit-broker + fingerprint-broker
+  smoke; v1alpha2 DSL primitive smoke (pagination,
+  conditional, multi-step navigation, transforms).
+- **Wave 8** — session-store + secret-broker + scheduler
+  smoke. mTLS smoke when `cert-manager.enabled: true` per
+  [ADR-0032 §8](../adr/0032-service-to-service-mtls.md).
+- **Wave 9** — cost-tracker + audit-log smoke; per-job
+  cost ledger + per-tenant rollup compute exercised;
+  ScrapeBatch `status.totalCost` aggregation verified.
+- **Wave 10** — dedup-service + enricher + driver-router
+  smoke per ADR-0035 §6's resolved decision.
+
+The smoke-cluster topology grows across Waves; the
+underlying R7.2 mechanisms (kind-action; chart install;
+sample-sync drift gate) are unchanged. The
+`production-smoke.yml` workflow auto-extends per
+[`service-shape.md` §5](service-shape.md).
+
+ADR-0034 §9 + ADR-0033 §10 + ADR-0038 §10 codify the
+per-Wave acceptance criteria the smoke gate enforces.

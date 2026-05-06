@@ -236,3 +236,43 @@ minio). Highlights:
   <https://kafka.apache.org/documentation/#kraft>
 - Redpanda Console:
   <https://docs.redpanda.com/current/manage/console/>
+
+## v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe
+> v1alpha1's Kafka role — engine output streaming. Phase R9
+> extends Kafka usage to a v1alpha2 input source variant
+> while preserving v1alpha1 streaming semantics; this
+> subsection clarifies what changes and what does not.*
+
+Kafka remains an **optional, admission-gated** tier per
+[ADR-0023 §6](../adr/0023-stateful-services-architecture.md)
++ §6 R5.1 update — engine startup logs WARN if unreachable;
+ScrapeJobs targeting a Kafka sink fail at admission with
+`KAFKA_UNAVAILABLE`. v1alpha2 changes nothing about that
+posture.
+
+What v1alpha2 adds: a **`queue` input source variant** for
+the new ScrapeBatch CRD per
+[ADR-0033 §5.4](../adr/0033-input-management-subsystem.md).
+The input-broker subscribes to a Kafka topic and ingests
+URLs from each message; the consumer group is per-batch
+(deterministic from the ScrapeBatch's name + a fixed
+prefix); at-least-once semantics. Same Kafka cluster as the
+output-streaming role; no separate Kafka deployment.
+
+The output-streaming role
+([ADR-0024 §3](../adr/0024-output-sinks.md)) carries forward
+unchanged — engine emits rows to user-configured topics per
+the existing `OutputSink.Kafka` contract. The schema-registry
+per ADR-0034 validates rows pre-emission; sinks ship
+already-validated rows.
+
+v1beta1 may add a Mongo-as-L0-sink option per
+[ADR-0024 §8 deferral](../adr/0024-output-sinks.md) +
+[ADR-0039 §7.1](../adr/0039-mongodb-third-storage-tier.md);
+that is not in v1alpha2 scope.
+
+For the three-tier model overview see
+[`storage-tiers.md`](storage-tiers.md) (Kafka is
+streaming, not in the persistent-storage matrix).
