@@ -135,3 +135,41 @@ serve any `RunJob`; the registry is the same in every pod.
   — DSL parser, planner, and executor pipeline.
 - [`proto/spectre/engine/v1alpha1/engine.proto`](../../proto/spectre/engine/v1alpha1/engine.proto)
   — the wire contract.
+
+## v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe the
+> v1alpha1 engine — a thick monolithic orchestrator that
+> handles DSL parsing, plan generation, driver gRPC calls,
+> per-job state, output sink dispatch, and JSONL row
+> emission in-process. Phase R9 commits the engine's
+> v1alpha2 evolution; this subsection forwards readers to
+> the new shape.*
+
+The v1alpha2 engine becomes a **conductor of platform
+services** rather than a god object. DSL parsing, plan
+generation, per-job state, sink dispatch, and the
+unchanged Driver Protocol gRPC client stay in the engine;
+13 v1alpha1 responsibilities (proxy acquisition, CAPTCHA
+solving, fingerprint rotation, rate limiting, session
+persistence, schema validation, post-extraction
+enrichment, dedup, cost emission, audit, credential
+acquisition, URL queue, driver routing) move to catalog
+services per [ADR-0036](../adr/0036-microservices-catalog-expansion.md)
+across Waves 5 – 10.
+
+The engine evolution + per-step orchestration sequence +
+five latency mitigation strategies + per-service
+degradation modes are codified in
+[ADR-0037](../adr/0037-engine-as-orchestrator.md). The
+operational walkthrough lives at
+[`engine-orchestrator.md`](engine-orchestrator.md).
+
+The Driver Protocol stays **frozen** per
+[ADR-0001](../adr/0001-driver-protocol-as-architectural-primitive.md);
+v1alpha2 DSL primitives (pagination, conditional,
+multi-step navigation, schema declaration, transforms) are
+**engine-internal** — the parser expands them into
+v1alpha1-shaped Driver Protocol calls. See
+[`dsl-evolution.md`](dsl-evolution.md) +
+[ADR-0035](../adr/0035-dsl-evolution-driver-abstraction.md).

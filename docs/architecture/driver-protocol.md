@@ -203,3 +203,47 @@ declared stable. Driver authors run the suite against their adapter
 to confirm it satisfies the contract before submitting it for
 ecosystem inclusion. See
 [Writing a driver](../guides/writing-a-driver.md).
+
+## v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe the
+> Driver Protocol as it exists at refactor close — frozen
+> per [ADR-0001](../adr/0001-driver-protocol-as-architectural-primitive.md);
+> capability divergence (Playwright 13 ⊃ SeleniumBase 12 ⊃
+> curl-impersonate 6) preserved byte-for-byte through every
+> refactor PR. Phase R9 commits to keeping that freeze
+> through every v1alpha2 PR; this subsection records the
+> forward-looking evolution that **layers on top of the
+> protocol**, not into it.*
+
+The Driver Protocol stays **frozen**. v1alpha2 evolution is
+**engine-internal** — the engine's DSL parser gains five new
+primitives (pagination, conditional, multi-step navigation,
+schema declaration, transforms) per
+[ADR-0035 §4](../adr/0035-dsl-evolution-driver-abstraction.md);
+the parser expands them into v1alpha1-shaped Driver Protocol
+calls. Adapters need no changes for the v1alpha2 DSL to
+work.
+
+The strict-subset capability chain is the rule backbone for
+v1beta1's driver routing intelligence per
+[ADR-0035 §5](../adr/0035-dsl-evolution-driver-abstraction.md)
+and [ADR-0017 §1](../adr/0017-curl-impersonate-extraction-and-final-capability-divergence.md).
+v1beta1 transitions the DSL to **intent-declarative** with
+capability hints replacing explicit `driver.kind`; the
+driver-router (slot 14; service-vs-engine-module decision
+deferred to Wave 10 per
+[ADR-0035 §6](../adr/0035-dsl-evolution-driver-abstraction.md))
+consults the chain to match each target's needs to the
+cheapest qualifying driver.
+
+For the operational walkthrough of DSL evolution + driver
+routing intelligence, see
+[`dsl-evolution.md`](dsl-evolution.md).
+
+The Wave 5+ build PRs that materialise the engine's
+orchestrator pattern per
+[ADR-0037](../adr/0037-engine-as-orchestrator.md) consume
+the Driver Protocol unchanged — the engine's adapter client
+shape, the per-call timeouts, the ADR-0022 transport — all
+preserved.

@@ -478,3 +478,47 @@ These deferrals are intentional and have phase pointers:
   everything as a Helm chart per
   [ADR-0030](../adr/0030-helm-chart-structure.md); R7.2 added
   the production-smoke gate; R8.1 closed the refactor.
+
+## v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe the
+> v1alpha1 control plane — a kubebuilder operator
+> reconciling `ScrapeJob` CRDs at `spectre.io/v1alpha2`.
+> Phase R9 expands the operator's CRD surface and adds new
+> reconciliation responsibilities; this subsection forwards
+> readers to the v1alpha2 surface.*
+
+v1alpha2 adds a parallel **`ScrapeBatch` CRD** at the same
+API version + a parallel reconciler in the same operator
+binary (kubebuilder multi-controller pattern). ScrapeBatch
+encodes a batch of work the operator orchestrates into N
+child ScrapeJob CRs over time; the input source variants
+(sitemap / file / API push / Kafka queue / seeded crawl)
+and the input-broker (slot 12 per ADR-0036) own the URL
+queue lifecycle.
+
+The full ScrapeBatch + input-broker contract is codified in
+[ADR-0033](../adr/0033-input-management-subsystem.md).
+
+Two further v1alpha2 evolutions of the operator's
+responsibilities:
+
+- **Schedule-driven CRD creation** — the `scheduler` service
+  (slot 6 per [ADR-0036 §3.2](../adr/0036-microservices-catalog-expansion.md))
+  emits ScrapeJob CRs at cron-trigger time; the operator's
+  reconciliation loop is unchanged but its CRDs now arrive
+  from a service rather than only from kubectl apply.
+- **Schema-aware admission** — the operator's webhook
+  validation calls `schema-registry.Get(schema_ref)` at
+  ScrapeJob admission time per
+  [ADR-0034 §5.2](../adr/0034-output-schema-validation.md)
+  to reject ScrapeJobs with typo'd or unregistered schema
+  refs early.
+
+mTLS (operator ↔ engine) lands in **Wave 3** as the first
+auth PR per
+[ADR-0032 §6](../adr/0032-service-to-service-mtls.md). The
+chart's `cert-manager.enabled` flag is default-off; flag-on
+enables mTLS uniformly. See
+[`platform-architecture.md`](platform-architecture.md) for
+the umbrella overview.
