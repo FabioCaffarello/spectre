@@ -434,3 +434,47 @@ narrow future work to the specific blocker per image. ADR-0018
   Chromium for SeleniumBase, custom Chromium build for
   Playwright, `FROM scratch` for the static binaries) — none are
   worth the maintenance burden for v1alpha1.
+
+## v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe
+> v1alpha1's five published service images
+> (engine + 3 adapters + control-plane). Phase R9 commits
+> the catalog expansion to 14 v1alpha2 services + 1 v1beta1
+> service; this subsection forwards readers to the new
+> image surface.*
+
+v1alpha2 expands the published image set from 5 (today) to
+**14 + future v1beta1 services** as catalog services
+materialise per ADR-0036's wave assignment. Each new
+infra-service ships:
+
+- A `Dockerfile` at `infra-services/<slot>/Dockerfile`
+  following the canonical service shape per
+  [ADR-0036 §5.1](../adr/0036-microservices-catalog-expansion.md)
+- A `docker-bake.hcl` target auto-extending the bake matrix
+  per [`service-shape.md` §5](service-shape.md)
+- A Docker Hub manifest at
+  `docker.io/fabiocaffarello/spectre-<slot>:<tag>` per the
+  existing R6.5.3 publish workflow
+- A multi-arch posture per the per-image criteria — Go
+  services default to `linux/amd64 + linux/arm64`; the Rust
+  `fingerprint-broker` (slot 3) follows the engine's
+  multi-arch unblock when it materialises (per ADR-0018 §5
+  R6.5.3 update)
+
+Image scanning (Trivy) and signing (cosign keyless via
+GitHub OIDC) land as part of **Wave 1** production
+hardening per [`docs/roadmap.md`](../roadmap.md) §4.1; from
+Wave 5 onward, every new service image scans + signs
+automatically.
+
+The five existing v1alpha1 images are **unchanged** in shape
+or publishing path. The engine image gains the
+orchestrator-pattern code paths per ADR-0037 incrementally
+across Waves 5 – 10; image identity (name + tag scheme)
+preserved.
+
+For the canonical service shape that governs new images see
+[`service-shape.md`](service-shape.md) +
+[ADR-0036 §5](../adr/0036-microservices-catalog-expansion.md).

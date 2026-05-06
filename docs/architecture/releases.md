@@ -276,3 +276,49 @@ post-refactor; consumers install from a cloned repo.
   smoke.)
 - **v1alpha2** unblocks the three multi-arch deferrals per the
   per-image criteria in the Multi-arch status table.
+
+## v1alpha2 forward-look
+
+> *Added 2026-05-06 (R9.6). The above sections describe the
+> R7.1-landed release shape — manual `git tag` + GitHub
+> Actions publish workflow; first real publish at
+> `0.1.0-alpha.0` for the five v1alpha1 service images.
+> Phase R9 commits to expanding the release surface across
+> the v1alpha2 catalog; this subsection forwards readers to
+> the v1alpha2 release plan.*
+
+The five existing v1alpha1 service images (engine + 3
+adapters + control-plane) continue releasing per the §
+"Release process" model — manual `git tag` triggers the
+publish workflow. v1alpha2 adds:
+
+- **9 new service images** as catalog services materialise
+  across Waves 5 – 10 — each ships under
+  `docker.io/fabiocaffarello/spectre-<slot>:<tag>`
+  following the canonical service shape per
+  [ADR-0036 §5](../adr/0036-microservices-catalog-expansion.md);
+  the 14th lands when the driver-router decision resolves
+  per [ADR-0035 §6](../adr/0035-dsl-evolution-driver-abstraction.md).
+- **Wave 1 production hardening** (per
+  [`docs/roadmap.md`](../roadmap.md) §4.1) lands four
+  release-side improvements:
+  - Auto-trigger publish on tag push (R6.5.3 §4.4 deferred
+    trigger materialised)
+  - Trivy vulnerability scanning (every image scans before
+    publish)
+  - cosign keyless signing via GitHub OIDC (every published
+    image signed)
+  - CRD upgrade procedure documentation (ADR-0030 §8
+    amendment)
+
+The version-coherence script + `Chart.lock` + appVersion
+tracking continue unchanged. The v1alpha2 release cadence
+remains **maintainer-triggered manual tags** through
+v1alpha2; auto-trigger from main lands in Wave 1.
+
+The `:edge` floating tag and SBOM (syft) generation remain
+deferred per the existing "Post-refactor" deferral; v1beta1
+revisits.
+
+For the full Wave 1 – 12 release plan see
+[`docs/roadmap.md`](../roadmap.md) §4.
