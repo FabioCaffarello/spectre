@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on `workflow_dispatch`. The five-image matrix runs in
   parallel with `fail-fast: false` so one image's findings
   don't mask another's. Trivy invoked via
-  `aquasecurity/trivy-action@0.36.0` with `severity:
+  `aquasecurity/trivy-action@v0.36.0` with `severity:
   HIGH,CRITICAL`, `exit-code: 1` (gating), `ignore-unfixed:
   true` (skips findings without an actionable fix), and
   `format: table`. Per-image override files at

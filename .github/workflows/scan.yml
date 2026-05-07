@@ -98,7 +98,7 @@ jobs:
       # in code paths the adapter doesn't exercise). The file is
       # optional; Trivy ignores missing paths gracefully.
       - name: Trivy scan ${{ matrix.target }}
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: 'spectre-${{ matrix.target }}:scan'
           severity: 'HIGH,CRITICAL'
