@@ -326,6 +326,86 @@ New Access Token, scoped Read/Write/Delete on
 consumes the secret; the secret is added separately by the
 maintainer before the first manual dispatch.
 
+#### W1.2 update — tag-triggered publish enabled
+
+> **W1.2 evolution note (2026-05-07).** This subsection is
+> added in-place per the precedent set by §3a (R6.3 update),
+> §3 R6.5.4 update, and §5 R6.5.3 update above. ADR-0018
+> §5's R6.5.3 deferral text ("Tag-triggered (`v*.*.*`) and
+> main-branch (`:edge`) auto-publish are deferred ... ~5-line
+> additions to `publish.yml`'s `on:` block when the project
+> is ready (R7.x or v1alpha2). The R6.5.3 design doesn't
+> preempt that future step.") is now resolved for the
+> tag-triggered half. The `:edge` half remains deferred to
+> v1beta1.
+
+**What W1.2 lands** (Wave 1, production hardening foundation
+per `docs/roadmap.md` §4.1):
+
+- `.github/workflows/publish.yml` gains an `on.push.tags`
+  trigger matching `v*.*.*`. Pushing a semver-prefixed tag
+  triggers a complete publish — same outputs as a
+  maintainer-dispatched run with default inputs.
+- The `Resolve image tag` step branches on
+  `github.event_name` to handle three trigger paths
+  (tag push / workflow_dispatch with input / workflow_dispatch
+  without input). For tag pushes, the step strips the
+  leading `v` from `github.ref_name` and produces the image
+  tag.
+- A **tag-vs-VERSION consistency check** fails the workflow
+  fast when `github.ref_name` (minus `v` prefix) does not
+  match the committed `VERSION` file content. This prevents
+  publishing images tagged with one value while the source
+  represents another — operator error surfaces immediately
+  rather than as silent inconsistency.
+- The `multi_arch` + `targets` env vars use bash
+  `${VAR:-default}` substitution to apply the
+  workflow_dispatch input defaults (`true` + `"default"`)
+  on tag-triggered runs where inputs are absent. Tag-triggered
+  publishes behave identically to a maintainer-dispatched
+  publish with no overrides.
+
+**What stays unchanged from R6.5.3:**
+
+- The `Verify pushed manifests` step asserting per-image
+  multi-arch posture.
+- Manifest list output (`linux/amd64 + linux/arm64` for
+  `control-plane` and `playwright`; `linux/amd64`-only for
+  `engine`, `seleniumbase`, `curl-impersonate` per the §5
+  R6.5.3 update deferral table).
+- The `DOCKERHUB_TOKEN` + `DOCKERHUB_USERNAME` environment
+  resolution from the `ci` GitHub Actions environment.
+- The `publish-dry-run` job in `.github/workflows/ci.yml`
+  (still validates the multi-arch build path on every PR
+  without pushing).
+- Manifest verification semantics (a manifest-list mismatch
+  fails the workflow per the partial-success caveat in
+  `docs/architecture/releases.md`).
+- The `:edge` (main-branch) auto-publish deferral (v1beta1
+  territory).
+
+**Why this is safe at v1alpha2 maturity** — three observations:
+
+- The repo already has one tag (`v0.1.0-alpha.0`) and a
+  proven publish flow from R7.1's first real Docker Hub
+  publish. The R6.5.3 framing's "no tags exist yet" hesitation
+  is no longer applicable.
+- The tag-vs-VERSION consistency check makes operator error
+  loud: a mistaken tag push fails fast at job setup time, not
+  silently after a complete multi-arch build cycle.
+- The `Verify pushed manifests` step at the end of the
+  workflow continues to assert per-image manifest list
+  posture, catching any silent regression in the multi-arch
+  story regardless of trigger.
+
+W1.2 is **single architectural decision** scope per
+CONTRIBUTING.md "v1alpha2 process rigor matrix" (R9.0).
+Single commit; no master phase prompt; no new ADR (this
+in-place §5 amendment + the publish.yml change + the
+releases.md operator-facing update + the CHANGELOG entry).
+The other Wave 1 PRs (W1.3 Trivy scanning; W1.4 cosign
+signing) follow per the roadmap §4.1 sequence.
+
 ## Consequences
 
 - Good, because contributor onboarding compresses from a multi-

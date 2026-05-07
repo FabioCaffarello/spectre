@@ -1,11 +1,12 @@
 name: Publish images to Docker Hub
 
-# R6.5.3 ships this workflow as `workflow_dispatch` only. Tag-
-# triggered (`v*.*.*`) and main-branch (`:edge`) auto-publish are
-# deferred — see ADR-0018 §5 R6.5.3 update for the rollout plan.
-# The repo has no tags as of R6.5.3 merge; manual dispatch is the
-# right starting posture (no surprises, maintainer verifies the
-# manifest list output before automating).
+# R6.5.3 shipped this workflow as `workflow_dispatch` only; W1.2
+# (Wave 1, 2026-05-07) enabled the tag-triggered path per ADR-0018
+# §5 R6.5.3 update + W1.2 update. Pushing a `v*.*.*` tag now
+# triggers an automatic publish; manual dispatch remains for
+# exotic flows (overriding tag, partial target sets, multi-arch
+# off). Main-branch `:edge` auto-publish remains deferred — that
+# is a v1beta1 concern.
 on:
   workflow_dispatch:
     inputs:
@@ -23,6 +24,16 @@ on:
         required: false
         type: boolean
         default: true
+  push:
+    tags:
+      # Semver-prefixed tags trigger publish. The `Resolve image tag`
+      # step strips the leading `v` and verifies the tag matches the
+      # VERSION file content (mismatch fails fast — see step body).
+      # Pre-release tags like `v0.1.0-alpha.1` match this glob;
+      # GitHub Actions tag globs use `*` to match zero-or-more
+      # non-`/` chars, so `v0.1.0-alpha.0` is matched by `v*.*.*`
+      # via the `0-alpha.0` segment as one match.
+      - "v*.*.*"
 
 permissions:
   contents: read
@@ -58,18 +69,33 @@ jobs:
       - name: Resolve image tag
         id: tag
         run: |
-          # Use the explicit dispatch input if provided, else the
-          # VERSION file. The maintainer's typical flow is to bump
-          # VERSION + merge + dispatch with no tag input — the
-          # workflow reads VERSION on the freshly-merged main and
-          # publishes that tag. The override path covers exotic
-          # flows (e.g. publishing an `rc1` of an in-flight
-          # version).
-          if [ -n "${{ inputs.tag }}" ]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          # Three trigger paths:
+          # 1. push to tag (W1.2) → strip leading `v` from the
+          #    pushed tag name; verify against VERSION file
+          # 2. workflow_dispatch with `tag` input → use the input
+          # 3. workflow_dispatch without `tag` input → use VERSION
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # github.ref_name is the bare tag (e.g. "v0.1.0-alpha.1")
+            tag="${{ github.ref_name }}"
+            tag="${tag#v}"  # strip leading "v" prefix
+
+            # Tag-triggered runs MUST match VERSION file content.
+            # The consistency check prevents pushing a tag that
+            # disagrees with the committed VERSION (would publish
+            # images tagged with one value but represent the source
+            # state of another). Mismatch is operator error;
+            # surfaces fast rather than as a silent inconsistency.
+            version_file="$(cat VERSION)"
+            if [ "$tag" != "$version_file" ]; then
+              echo "::error::tag '${{ github.ref_name }}' (resolved to '${tag}') does not match VERSION file content '${version_file}'. Bump VERSION + commit before tagging, or retag against the committed VERSION."
+              exit 1
+            fi
+          elif [ -n "${{ inputs.tag }}" ]; then
+            tag="${{ inputs.tag }}"
           else
-            echo "tag=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+            tag="$(cat VERSION)"
           fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Login to Docker Hub
         uses: docker/login-action@v4
@@ -95,10 +121,27 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
           VCS_REF: ${{ github.sha }}
           BUILD_DATE: ${{ github.event.repository.updated_at }}
+          # workflow_dispatch sets these from inputs; tag-triggered
+          # push events don't carry inputs so the env vars resolve
+          # to empty strings. The `${VAR:-default}` substitution in
+          # the run block applies the defaults — multi_arch=true
+          # (build the multi-arch images) + targets=default (all
+          # five via the bake `default` group). The defaults match
+          # the workflow_dispatch input defaults, so tag-triggered
+          # publishes behave identically to a maintainer-dispatched
+          # publish with no overrides.
+          MULTI_ARCH: ${{ inputs.multi_arch }}
+          TARGETS: ${{ inputs.targets }}
         run: |
           set -a
           source build/docker/versions.env
           set +a
+
+          # Apply defaults for tag-triggered runs (where inputs are
+          # absent). MULTI_ARCH defaults to true; TARGETS defaults
+          # to "default".
+          multi_arch="${MULTI_ARCH:-true}"
+          targets="${TARGETS:-default}"
 
           # Per-target platform overrides. control-plane and
           # playwright build multi-arch (linux/amd64 + linux/arm64)
@@ -113,7 +156,7 @@ jobs:
           # (`--set foo.platform=a,b`) is documented but renders
           # ambiguously, so we keep the explicit form here.
           platform_overrides=()
-          if [ "${{ inputs.multi_arch }}" = "true" ]; then
+          if [ "$multi_arch" = "true" ]; then
             platform_overrides+=(
               "--set" "control-plane.platform=linux/amd64"
               "--set" "control-plane.platform=linux/arm64"
@@ -125,7 +168,7 @@ jobs:
           docker buildx bake \
             --push \
             "${platform_overrides[@]}" \
-            ${{ inputs.targets }}
+            $targets
 
       - name: Verify pushed manifests
         run: |
