@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **cosign keyless signing integrated into `publish.yml`**
+  (W1.4 — Wave 1 production hardening, 2026-05-07): every
+  published image is now signed by cosign via GitHub OIDC.
+  The signing step runs as a post-bake step in
+  `.github/workflows/publish.yml` after `Verify pushed
+  manifests`, scoping `id-token: write` permission to the
+  publish job and signing each of the five images
+  (`fabiocaffarello/spectre-{engine,control-plane,
+  curl-impersonate,playwright,seleniumbase}`) by manifest-list
+  digest resolved from `docker buildx imagetools inspect`.
+  `cosign sign --recursive` extends the signature to every
+  platform-specific manifest under multi-arch image indexes,
+  so verifiers can validate either the index reference or a
+  single-arch reference. Pinned to
+  `sigstore/cosign-installer@v4.1.2` with `cosign-release:
+  v3.0.6`. Atomicity (signing failure fails the same workflow
+  that pushed — no unsigned images survive on the registry)
+  and digest reuse from the verify loop drove the choice to
+  integrate signing into `publish.yml` rather than the
+  standalone `sign.yml` ADR-0036 §5.8 originally reserved;
+  ADR-0036 §5.8 W1.4 update records the consolidation
+  (filename remains reserved for future SBOM-attestation or
+  non-image signing work). Verification recipe for downstream
+  consumers documented in `docs/architecture/releases.md`
+  "Image signing" section: `cosign verify
+  --certificate-identity-regexp 'https://github\.com/FabioCaffarello/spectre/\.github/workflows/publish\.yml@.*'
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+  fabiocaffarello/spectre-<name>:<tag>`. **Closes Wave 1
+  production hardening** — W1.2 + W1.3 + W1.4 + W1.5 all
+  shipped; Phase R9 + Wave 1 together close the v1alpha2
+  architectural foundation and its first production
+  hardening pass.
+
 - **`.github/workflows/scan.yml`** (W1.3 — Wave 1 production
   hardening, 2026-05-07): standalone Trivy image-vulnerability
   scan workflow committed by ADR-0036 §5.8 + service-shape.md

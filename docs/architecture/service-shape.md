@@ -124,7 +124,7 @@ discovery):
 | Per-language lint job | Auto-discovers source tree |
 | Per-language test job | Auto-discovers test tree |
 | `scan.yml` (Wave 1) | Trivy scan on the built image |
-| `sign.yml` (Wave 1) | cosign signing post-publish |
+| `publish.yml` (Wave 1) | cosign keyless signing integrated post-bake — see [ADR-0036 §5.8 W1.4 update](../adr/0036-microservices-catalog-expansion.md) |
 | `helm-lint.yml` | Chart fragment lints via existing chart-lint gate |
 | `production-smoke.yml` | Included in smoke when on the smoke-cluster topology |
 
