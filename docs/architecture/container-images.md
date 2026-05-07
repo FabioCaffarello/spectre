@@ -465,9 +465,15 @@ infra-service ships:
 
 Image scanning (Trivy) and signing (cosign keyless via
 GitHub OIDC) land as part of **Wave 1** production
-hardening per [`docs/roadmap.md`](../roadmap.md) §4.1; from
-Wave 5 onward, every new service image scans + signs
-automatically.
+hardening per [`docs/roadmap.md`](../roadmap.md) §4.1.
+**W1.3 shipped 2026-05-07** — every PR touching image-affecting
+paths runs `.github/workflows/scan.yml` per ADR-0036 §5.8;
+HIGH/CRITICAL findings fail the workflow; per-image overrides
+live at [`tools/trivy/<target>.trivyignore`](../../tools/trivy/);
+unfixed CVEs ignored to keep the gate actionable.
+W1.4 (cosign keyless) follows. From Wave 5 onward, every new
+infra-service image scans + signs automatically as its bake
+target lands per the canonical service shape.
 
 The five existing v1alpha1 images are **unchanged** in shape
 or publishing path. The engine image gains the

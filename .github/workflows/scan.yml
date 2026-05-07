@@ -1,0 +1,116 @@
+name: Image vulnerability scan
+
+# W1.3 — Wave 1 production hardening foundation
+# (per docs/roadmap.md §4.1). Standalone workflow committed
+# by ADR-0036 §5.8 ("scan.yml: Trivy scan on the built image")
+# and docs/architecture/service-shape.md §5. Each catalog
+# service image scans on PR (paths-filtered to image-affecting
+# changes) and on workflow_dispatch (ad-hoc manual scans).
+# HIGH/CRITICAL findings fail the workflow; unfixed CVEs are
+# ignored (no actionable fix available, surfacing them as
+# build failures would gate on noise rather than actionable
+# work). The five v1alpha1 service images scan today; new
+# infra-services land scan coverage automatically as their
+# bake target lands per the canonical service shape per
+# ADR-0036 §5.8.
+
+on:
+  pull_request:
+    paths:
+      # Workflow self-edits.
+      - '.github/workflows/scan.yml'
+      # Bake config + shared build infrastructure.
+      - 'docker-bake.hcl'
+      - 'build/docker/**'
+      # Per-image source paths (matches ci.yml's images-matrix
+      # filter shape — any change that produces a different
+      # image artifact triggers re-scan).
+      - 'engines/engine/**'
+      - 'operators/control-plane/**'
+      - 'adapters/curl-impersonate/**'
+      - 'adapters/playwright/**'
+      - 'adapters/seleniumbase/**'
+      # Generated proto consumed by every adapter + the engine.
+      - 'proto/spectre/**'
+      # Per-image trivy ignore overrides (see Trivy step below).
+      - 'tools/trivy/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Trivy scan — ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # `fail-fast: false` lets every image's scan complete
+      # so the run reports the FULL set of HIGH/CRITICAL
+      # findings across all five images in one CI cycle,
+      # rather than masking later-image findings behind an
+      # earlier failure.
+      fail-fast: false
+      matrix:
+        target:
+          - engine
+          - control-plane
+          - curl-impersonate
+          - playwright
+          - seleniumbase
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: extractions/setup-just@v4
+
+      # Build via bake — same path as ci.yml's `images` matrix
+      # and `just images`. TAG=scan keeps the produced image
+      # distinct from local `:dev` and CI's matrix-`:ci` artefacts.
+      # The build path is byte-for-byte aligned with publish.yml's
+      # builder so the scanned image content matches what would
+      # publish (modulo platform overrides, which scan.yml does
+      # not need — Trivy's CVE database is platform-agnostic for
+      # OS / language packages).
+      - name: Build ${{ matrix.target }}
+        env:
+          VCS_REF: ${{ github.sha }}
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
+          TAG: scan
+        run: |
+          set -a
+          source build/docker/versions.env
+          set +a
+          docker buildx bake --load ${{ matrix.target }}
+
+      # Trivy invocation. `severity: HIGH,CRITICAL` gates on the
+      # two action-required severities; MEDIUM and below are
+      # informational (Trivy reports them in `format: table`
+      # output but doesn't fail the workflow). `ignore-unfixed:
+      # true` skips findings whose upstream package has no
+      # fixed-version release yet — actionable work is the goal,
+      # not noise. `trivyignores` references the per-image
+      # override file at tools/trivy/<target>.trivyignore for
+      # known-acceptable findings (e.g., a CVE only exploitable
+      # in code paths the adapter doesn't exercise). The file is
+      # optional; Trivy ignores missing paths gracefully.
+      - name: Trivy scan ${{ matrix.target }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: 'spectre-${{ matrix.target }}:scan'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          ignore-unfixed: true
+          format: 'table'
+          trivyignores: 'tools/trivy/${{ matrix.target }}.trivyignore'
+
+      # Report image size for observability — same pattern as
+      # ci.yml's `Report image size` step. Scan workflow runs
+      # rarely (paths-filtered) so the size-history isn't
+      # comprehensive but provides a checkpoint at PR merge time.
+      - name: Report image size
+        if: always()
+        run: docker images "spectre-${{ matrix.target }}:scan" --format '{{.Repository}}:{{.Tag}}\t{{.Size}}'

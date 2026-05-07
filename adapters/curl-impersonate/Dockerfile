@@ -108,13 +108,25 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 # release-cadence independence from upstream.
 FROM ${CURL_IMPERSONATE_IMAGE} AS runtime
 
+# Apply available Alpine package upgrades from the runtime base
+# (W1.3 finding remediation, 2026-05-07): the upstream
+# `lwthiker/curl-impersonate:0.6-chrome` ships pinned package
+# versions that lag behind Alpine 3.18 community/main fixes —
+# Trivy surfaced libcrypto3/libssl3 (CVE-2024-6119) and
+# musl/musl-utils (CVE-2025-26519) as actionable HIGH findings.
+# `apk upgrade --no-cache --available` pulls latest patch
+# versions for every installed Alpine package; the curl-impersonate
+# variant binaries shipped under `/usr/local/bin` are not
+# Alpine-managed and remain untouched.
+#
 # ca-certificates is required for TLS chain verification on outbound
 # HTTPS requests the curl-impersonate variants make. Alpine 3.18's
 # `ca-certificates-bundle` is preinstalled but the explicit package
 # adds the update-ca-certificates symlinks the variants expect under
 # /etc/ssl/. apk add --no-cache keeps the package index out of the
 # image layer.
-RUN apk add --no-cache ca-certificates \
+RUN apk upgrade --no-cache --available \
+ && apk add --no-cache ca-certificates \
  && update-ca-certificates 2>/dev/null || true
 
 # Drop privileges. Upstream ships `nobody` (UID 65534, GID 65534) in
