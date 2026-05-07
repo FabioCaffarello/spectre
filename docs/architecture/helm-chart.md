@@ -185,7 +185,13 @@ them.
 The trade-off: `helm upgrade` does **not** update CRDs. v1alpha1
 ships a stable CRD; the upgrade story for a future shape change
 is documented as a manual `kubectl apply` step in the chart
-README.
+README. The full procedure
+([ADR-0030 §8.4 – §8.9](../adr/0030-helm-chart-structure.md),
+W1.5 update) covers additive changes (§8.6 standard
+five-step procedure), the optional Helm `pre-upgrade` hook
+pattern (§8.7), breaking-change handling via conversion
+webhooks or dual-write windows (§8.8), and the
+chart-rollback-vs-CRD-rollback asymmetry (§8.9).
 
 The `chart-check-crd-sync` justfile recipe (Cluster G) and a
 matching CI job prevent drift between the chart's copy and the
@@ -265,8 +271,6 @@ deferred:
   PR per [ADR-0028 §6](../adr/0028-ancillary-infra-services-catalog.md).
 - **Multi-arch unblocks** for engine / seleniumbase /
   curl-impersonate — separate per-image PRs.
-- **Migration scripts for v1alpha2 → vNext CRD upgrade** —
-  documented as a future concern in ADR-0030 §8.
 
 ## §11 — v1alpha2 forward-look
 

@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **ADR-0030 §8 in-place amendment** (W1.5 — Wave 1
+  production hardening foundation, opens 2026-05-07):
+  replaces ADR-0030 §8.3's sketch-level CRD upgrade
+  procedure with an operational walkthrough. Six new
+  subsections (§8.4 – §8.9) appended in-place per the
+  precedent set by ADR-0018's R6.3 / R6.5.3 / R6.5.4 update
+  notes, ADR-0007's R6.6 evolution notes, and ADR-0023's
+  §14 amendment (R9.2). §1 – §7 + §8.1 – §8.3 byte-identical
+  to pre-amendment baseline (verified via `diff` against
+  `origin/main`). Coverage:
+  - §8.4 W1.5 evolution-note opener
+  - §8.5 Wave 6 ScrapeBatch CRD addition (low-risk per
+    Helm 3 `crds/` semantics; the chart-CRD drift invariant
+    extends to multiple CRDs)
+  - §8.6 Standard 5-step CRD upgrade procedure for additive
+    changes (pre-flight diff; kubectl apply; helm upgrade;
+    operator rollout restart — the often-missed step;
+    post-upgrade verification)
+  - §8.7 Helm `pre-upgrade` hook pattern as opt-in
+    alternative with manual-vs-hook trade-off table
+  - §8.8 Breaking-change handling via conversion webhooks
+    (kubebuilder feature) or dual-write windows
+  - §8.9 Rollback considerations — chart rollback works;
+    CRD rollback is asymmetric (CRDs persist post-rollback);
+    breaking changes are effectively forward-only without
+    dual-write or conversion-webhook paths
+- **`docs/architecture/helm-chart.md`**: §8 body gains a
+  forward-pointer paragraph to ADR-0030 §8.4 – §8.9; §10
+  "Out of scope for R7.1" loses the "Migration scripts for
+  v1alpha2 → vNext CRD upgrade — documented as a future
+  concern in ADR-0030 §8" bullet (no longer deferred).
+
+W1.5 closes the "deferred CRD upgrade procedure" item from
+the roadmap §4.1 Wave 1 plan; **single architectural
+decision** scope per CONTRIBUTING.md "v1alpha2 process
+rigor matrix" (single commit; no master phase prompt; no
+new ADR — in-place amendment only). Wave 1's other PRs
+(W1.2 auto-trigger publish; W1.3 Trivy scanning;
+W1.4 cosign signing) follow.
+
 ### Phase R9 — v1alpha2 architectural foundation (completed 2026-05-06)
 
 Nine sequential PRs (R9.0 → R9.8) crystallising every
