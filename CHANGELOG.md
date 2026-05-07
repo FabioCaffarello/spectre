@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`.github/workflows/scan.yml`** (W1.3 — Wave 1 production
+  hardening, 2026-05-07): standalone Trivy image-vulnerability
+  scan workflow committed by ADR-0036 §5.8 + service-shape.md
+  §5. Each catalog service image (engine, control-plane,
+  curl-impersonate, playwright, seleniumbase) scans on PR
+  (paths-filtered to image-affecting changes — Dockerfiles,
+  bake config, per-image source, proto/, build/docker/) and
+  on `workflow_dispatch`. The five-image matrix runs in
+  parallel with `fail-fast: false` so one image's findings
+  don't mask another's. Trivy invoked via
+  `aquasecurity/trivy-action@0.36.0` with `severity:
+  HIGH,CRITICAL`, `exit-code: 1` (gating), `ignore-unfixed:
+  true` (skips findings without an actionable fix), and
+  `format: table`. Per-image override files at
+  `tools/trivy/<target>.trivyignore` allow selective CVE
+  acceptance with documented rationale per
+  `tools/trivy/README.md`'s "When to use" criteria —
+  defaults are empty (no overrides). New infra-services
+  added in Wave 5+ pick up scan coverage automatically as
+  their bake target lands per ADR-0036 §5.8's CI auto-
+  extension contract. W1.4 (cosign keyless signing via
+  GitHub OIDC) follows in the next Wave 1 PR.
+
 ### Changed
 
 - **Tag-triggered publish enabled** (W1.2 — Wave 1

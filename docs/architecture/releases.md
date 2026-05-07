@@ -323,8 +323,11 @@ publish workflow. v1alpha2 adds:
     2026-05-07 per ADR-0018 §5 W1.2 update)
   - ✅ CRD upgrade procedure documentation (W1.5 shipped
     2026-05-07 per ADR-0030 §8.4 – §8.9)
-  - Trivy vulnerability scanning (W1.3, every image scans
-    before publish)
+  - ✅ Trivy vulnerability scanning (W1.3 shipped 2026-05-07
+    per `.github/workflows/scan.yml` + ADR-0036 §5.8 — every
+    PR touching image-affecting paths runs scans per service
+    image; HIGH/CRITICAL fail; per-image overrides at
+    `tools/trivy/<target>.trivyignore`)
   - cosign keyless signing via GitHub OIDC (W1.4, every
     published image signed)
 

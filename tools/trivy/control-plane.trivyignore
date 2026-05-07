@@ -1,0 +1,7 @@
+# Per-image Trivy override file for spectre-control-plane.
+# See tools/trivy/README.md for usage criteria.
+#
+# Format: one CVE ID per line, '#'-prefixed comments allowed.
+# Initially empty (no overrides). Added entries require
+# maintainer review per the "When to use" section in
+# README.md.
