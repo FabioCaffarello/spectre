@@ -2,6 +2,50 @@
 # See tools/trivy/README.md for usage criteria.
 #
 # Format: one CVE ID per line, '#'-prefixed comments allowed.
-# Initially empty (no overrides). Added entries require
-# maintainer review per the "When to use" section in
-# README.md.
+
+# ---------------------------------------------------------------------------
+# Microsoft Playwright runtime base image findings (W1.3, 2026-05-07)
+# ---------------------------------------------------------------------------
+#
+# The five CVEs below live in Microsoft's `mcr.microsoft.com/playwright:
+# v1.59.1-noble` base image's own node_modules tree (Playwright CLI tooling
+# bundled with the image), not in our pnpm-managed dependencies. Verified
+# locally: adding pnpm.overrides for minimatch / picomatch / tar in
+# adapters/playwright/package.json has no effect on Trivy's findings —
+# Trivy's `(package.json)` annotation points at Microsoft's bundled
+# package.json, not ours.
+#
+# Outside our control until Microsoft publishes a newer Playwright base
+# image that picks up the upstream npm fixes. Tracking via:
+# - https://hub.docker.com/_/microsoft-playwright (image version watch)
+# - bumping `PLAYWRIGHT_VERSION` in build/docker/versions.env when a base
+#   image with the fixes lands
+#
+# All five are DoS-class (denial-of-service via crafted regex / glob /
+# archive paths). The Playwright adapter does not parse user-supplied
+# regex / glob / tar input from external sources — these CVEs surface in
+# Playwright's CLI tooling (test runner, browser-installer scripts) that
+# do not run in the production adapter container at runtime. Risk of
+# real-world exploitation in our deployment shape: low.
+#
+# Reviewed: 2026-05-07 by maintainer (W1.3 PR #101).
+
+# minimatch: Denial of Service due to unbounded recursive backtracking.
+# Fix available in upstream minimatch >= 10.2.3.
+CVE-2026-27903
+
+# minimatch: Denial of Service via catastrophic backtracking in glob
+# expressions. Fix available in upstream minimatch >= 10.2.3.
+CVE-2026-27904
+
+# picomatch: Regular Expression Denial of Service via crafted extglob
+# patterns. Fix available in upstream picomatch >= 4.0.4.
+CVE-2026-33671
+
+# node-tar: hardlink path traversal via drive-relative linkpath. Fix
+# available in upstream tar >= 7.5.10.
+CVE-2026-29786
+
+# tar: File overwrite via drive-relative symlink traversal. Fix
+# available in upstream tar >= 7.5.11.
+CVE-2026-31802
