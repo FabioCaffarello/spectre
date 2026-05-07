@@ -652,6 +652,267 @@ surface mid-upgrade rather than at install). For v1alpha1's
 single stable CRD, the `crds/` directory's semantics are the
 right trade.
 
+### §8.4 — Detailed CRD upgrade procedure (W1.5 update)
+
+> **W1.5 evolution note (2026-05-07).** This subsection
+> + §8.5 – §8.9 are added in-place per the precedent set by
+> ADR-0018's R6.3 / R6.5.3 / R6.5.4 update notes, ADR-0007's
+> R6.6 evolution notes, ADR-0023's §14 amendment (R9.2), and
+> CONTRIBUTING.md "Architectural commitments" #6 (in-place
+> evolution notes are the only allowed amendment to accepted
+> ADRs). §8.1 – §8.3 above remain authoritative; §8.4 – §8.9
+> replace §8.3's sketch with the operational procedure
+> [`docs/architecture/helm-chart.md`](../architecture/helm-chart.md)
+> + `docs/roadmap.md` §4.1's W1.5 entry forward to.
+>
+> The procedure covers the v1alpha2 → vNext CRD upgrade path
+> R7.1 deferred and additionally the **Wave 6 CRD addition**
+> (ScrapeBatch CRD per
+> [ADR-0033](0033-input-management-subsystem.md)) — a new
+> CRD landing in the chart, not a CRD-shape change.
+
+### §8.5 — Wave 6: adding a new CRD (ScrapeBatch)
+
+When [ADR-0033](0033-input-management-subsystem.md)
+materialises in Wave 6, the chart's `crds/` directory grows
+to include `scrapebatch.yaml` alongside the existing
+`scrapejob.yaml`:
+
+```
+build/helm/spectre/crds/
+  scrapejob.yaml      # v1alpha1 CRD (R7.1)
+  scrapebatch.yaml    # v1alpha2 CRD (Wave 6 build PR)
+```
+
+Adding a new CRD to the chart's `crds/` directory is a
+**low-risk** operation per Helm 3's semantics:
+
+- `helm install` of the new chart version creates both CRDs
+  (existing CRDs are skipped because they are already
+  present; new CRDs are installed).
+- `helm upgrade` does not touch the existing
+  `scrapejob.yaml` CRD; the new `scrapebatch.yaml` requires
+  the same manual `kubectl apply` flow §8.6 below details.
+- The chart-CRD drift invariant from §8.2 extends to
+  ScrapeBatch — the Wave 6 build PR's CI gate
+  (`chart-check-crd-sync`) walks every CRD under
+  `crds/` and verifies each against the operator's source.
+
+The `chart-sync-crds` justfile recipe in §8.2 extends to a
+loop over every CRD source file:
+
+```just
+chart-sync-crds:
+    for crd in operators/control-plane/config/crd/bases/*.yaml; do
+        cp "$crd" "build/helm/spectre/crds/$(basename $crd | sed 's/spectre.io_//')"
+    done
+```
+
+(The exact recipe shape lands in the Wave 6 build PR; the
+shape above is illustrative.)
+
+### §8.6 — Standard CRD upgrade procedure (additive changes)
+
+For **additive** CRD shape changes (new optional fields,
+new enum values, type widening — every change that the
+schema-registry's BACKWARD compatibility per
+[ADR-0034 §6.2](0034-output-schema-validation.md) allows
+analogously), the manual procedure is:
+
+```bash
+# 1. Pre-flight: diff the new CRD against the cluster's
+#    existing one so the operator sees the change set.
+kubectl get crd scrapejobs.spectre.io -o yaml > /tmp/cluster-crd.yaml
+diff <(yq 'del(.metadata.creationTimestamp, .metadata.resourceVersion, .metadata.uid, .metadata.generation, .status)' /tmp/cluster-crd.yaml) \
+     operators/control-plane/config/crd/bases/spectre.io_scrapejobs.yaml
+
+# 2. Apply the new CRD. Existing custom resources continue
+#    to validate against the new schema (additive changes
+#    accept all prior CR shapes).
+kubectl apply -f operators/control-plane/config/crd/bases/spectre.io_scrapejobs.yaml
+
+# 3. Helm upgrade picks up the new operator binary + the
+#    new CRD shape any new templated objects reference.
+helm upgrade spectre build/helm/spectre/ \
+  --namespace spectre \
+  --values values-production.yaml
+
+# 4. Restart the operator so it discovers the new schema
+#    via its informer-cache rebuild. Without this step the
+#    operator's cached CRD shape lags behind kubectl's view.
+kubectl -n spectre rollout restart deployment/spectre-control-plane
+kubectl -n spectre rollout status deployment/spectre-control-plane
+
+# 5. Post-upgrade verification: existing ScrapeJobs continue
+#    to reach their terminal phase; new ScrapeJobs accept
+#    new fields.
+kubectl get scrapejobs -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: {.status.phase}{"\n"}{end}'
+```
+
+Step 4 is the most-often-missed step. Without it, the
+operator's reconciliation loop continues to use the old
+schema for validation; ScrapeJobs that submit new fields
+appear to be accepted by the API server but fail
+reconciliation with cryptic "unknown field" errors. The
+rollout restart forces the operator to rebuild its informer
+cache from the new CRD shape.
+
+### §8.7 — Helm `pre-upgrade` hook alternative
+
+For deployments comfortable with chart-managed CRD lifecycle,
+Helm's `pre-upgrade` hook pattern lets the chart apply CRDs
+before `helm upgrade` renders templates that reference the
+new shape:
+
+```yaml
+# build/helm/spectre/templates/crd-upgrade-hook.yaml
+{{- if .Values.crdUpgradeHook.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-crd-upgrade
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    spec:
+      serviceAccountName: {{ .Release.Name }}-crd-upgrader
+      restartPolicy: Never
+      containers:
+        - name: kubectl-apply
+          image: bitnami/kubectl:1.28
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              # Apply each CRD shipped in /crds (mounted from a ConfigMap
+              # that the chart auto-populates from build/helm/spectre/crds/)
+              for crd in /crds/*.yaml; do
+                kubectl apply -f "$crd"
+              done
+{{- end }}
+```
+
+The hook is **opt-in** via `crdUpgradeHook.enabled: false`
+default. When enabled, `helm upgrade` becomes a single
+command:
+
+```bash
+helm upgrade spectre build/helm/spectre/ --namespace spectre
+# CRDs apply via the hook; operator rollout cascades from
+# the chart's existing rollout strategy
+```
+
+Trade-offs vs §8.6's manual procedure:
+
+| Concern | Manual (§8.6) | Hook (§8.7) |
+|---|---|---|
+| Visibility | each step is observable | hook output buried in `helm upgrade` logs |
+| Rollback | each step rolls back independently | chart rollback **does not** revert CRD apply (see §8.9) |
+| RBAC | operator's normal credentials | hook needs cluster-scoped `customresourcedefinitions` patch permissions |
+| Failure mode | step-fails-step-stops | hook failure aborts upgrade; cluster left in mid-upgrade state |
+| Operator rollout | explicit step 4 | cascades from chart's deployment rollout |
+
+The hook trades operator visibility for ergonomics. For
+**production deployments**, §8.6's manual procedure is
+recommended; the hook is appropriate for **dev / staging /
+ephemeral** clusters where ergonomics outweighs forensics.
+
+### §8.8 — Breaking-change handling
+
+For **breaking** CRD shape changes (required field additions
+without defaults, removed fields, type narrowing — changes
+that BACKWARD compatibility per
+[ADR-0034 §6.2](0034-output-schema-validation.md) explicitly
+forbids analogously), the upgrade is **not** a single-step
+operation. Two patterns:
+
+#### §8.8.1 — Conversion webhooks (kubebuilder feature)
+
+The operator hosts a conversion webhook converting between
+CRD `spec.versions` entries. The CRD ships with **both**
+old and new versions enabled; clients submit one version,
+the operator (via the conversion webhook) translates to the
+storage version internally.
+
+The kubebuilder skeleton supports this; the Wave 6+ build
+PR adding the breaking change ships:
+
+- A new `spec.versions[]` entry with `served: true,
+  storage: true` for the new version
+- The old `spec.versions[]` entry flipped to `served: true,
+  storage: false`
+- A conversion webhook implementation under
+  `operators/control-plane/internal/webhooks/`
+- The webhook's TLS certificate provisioned via cert-manager
+  per [ADR-0032](0032-service-to-service-mtls.md)
+
+The upgrade procedure for clients: continue submitting old-
+version ScrapeJobs; the webhook converts them to the new
+version transparently. Migrate clients to the new version on
+the client's own schedule. After all clients migrate, a
+follow-up PR removes the old version's `served: true` flag.
+
+#### §8.8.2 — Dual-write window
+
+Where conversion webhooks aren't viable (e.g., the change
+involves data the operator cannot reconstruct mechanically),
+the upgrade ships **both** the old and new CRD shape
+simultaneously:
+
+```
+Step 1 (T+0): apply new CRD; both v1alpha2 and v2alpha1 active
+Step 2 (T+0): operator binary upgraded; reads both versions
+Step 3 (T+0 → T+N): clients gradually migrate
+                    ScrapeJobs from v1alpha2 to v2alpha1
+Step 4 (T+N): all v1alpha2 ScrapeJobs reach terminal state
+              or migrate
+Step 5 (T+N): follow-up PR removes v1alpha2 from the CRD
+```
+
+The `T+N` window is **deployment-side configurable** —
+production deployments may run dual-write for weeks or
+months; ephemeral deployments collapse it to hours.
+
+### §8.9 — Rollback considerations
+
+Chart rollback (`helm rollback spectre <revision>`) is
+**asymmetric** with the upgrade procedure:
+
+- **Templated resources** (Deployment, Service, ConfigMap)
+  rollback cleanly — Helm reverts to the prior chart
+  revision's manifests.
+- **CRDs in `crds/`** do **not** rollback — Helm 3's `crds/`
+  directory has no rollback semantics; the CRD applied via
+  step 2 of §8.6 (or via the §8.7 hook) persists post-rollback.
+
+The asymmetry means CRD shape changes are **forward-only at
+the chart layer**. To rollback a CRD shape change, the
+operator must:
+
+1. Identify the prior CRD shape from version control
+   (`git checkout <prior-tag> -- operators/control-plane/config/crd/bases/`)
+2. `kubectl apply` the prior CRD shape (only if it is
+   compatible with the cluster's existing custom resources;
+   incompatible rollbacks corrupt CR data and require
+   manual intervention)
+3. `helm rollback spectre <revision>` to revert templated
+   resources
+
+For breaking CRD shape changes (§8.8), rollback is
+**effectively impossible** without dual-write windows or
+conversion webhooks; once the new shape is the storage
+version, reverting requires data migration in the opposite
+direction.
+
+The roadmap's commitment per
+[`docs/roadmap.md`](../roadmap.md) §9.6's DSL evolution
+drift mitigation extends here: every Wave that ships a CRD
+shape change includes the rollback path in its build PR's
+acceptance criteria. Breaking changes without a rollback
+path are review-rejected.
+
 ## §9 — Out of scope for R7.1
 
 R7.1 ships the chart structure documented above. The
