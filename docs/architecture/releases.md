@@ -19,10 +19,12 @@ the `fabiocaffarello` account, flat namespace. As of R6.5.3:
 - Two of five images publish multi-arch (`linux/amd64` +
   `linux/arm64`); three are amd64-only with documented unblock
   criteria.
-- `:edge` rolling tag, image signing (cosign), and SBOM
-  generation remain **deferred** — W1.4 (cosign keyless via
-  GitHub OIDC) lands in Wave 1; `:edge` and SBOM defer to
-  v1beta1.
+- Every published image is **cosign-signed** via GitHub OIDC
+  (W1.4 shipped 2026-05-07; keyless signing — no long-lived
+  private key). Verification recipe under "Image signing"
+  below.
+- `:edge` rolling tag and SBOM (syft) generation remain
+  **deferred** to v1beta1.
 
 The architectural rationale lives in
 [ADR-0018 §5 R6.5.3 update](../adr/0018-devcontainer-and-engine-image.md);
@@ -141,8 +143,6 @@ Each is non-blocking for v1alpha1 release engineering:
   shape as the W1.2-shipped tag trigger; deferred to v1beta1.
 - **`:latest` from stable releases.** Adds a tag-aliasing step
   to the publish flow.
-- **Image signing (`cosign`).** Adds a `cosign sign` step after
-  the `--push`. Post-refactor.
 - **SBOM generation (`syft`).** Adds a syft scan + `--attest`
   flag. Post-refactor.
 - **Registry-side cache (`--cache-to type=registry`).** Build
@@ -238,6 +238,57 @@ docker run --rm --platform linux/arm64 \
   --help
 ```
 
+## Image signing
+
+> *W1.4, 2026-05-07. cosign keyless signing via GitHub OIDC.
+> ADR-0036 §5.8 W1.4 update records the consolidation of
+> signing into `publish.yml` rather than a standalone
+> `sign.yml`.*
+
+Every image published by `publish.yml` is signed by cosign
+**after** `Verify pushed manifests` succeeds. The signing step
+runs in the same job as the bake, so a signing failure fails
+the same workflow that pushed — no unsigned images survive on
+the registry.
+
+**Trust model.** Keyless signing means there is no long-lived
+signing key. Each signature is bound to a short-lived
+certificate issued by Sigstore's Fulcio CA, which embeds the
+GitHub OIDC token's claims (workflow path, repository, ref,
+SHA). Verifiers check the certificate's identity claims match
+the expected workflow.
+
+**Verification recipe** for downstream consumers (run from any
+host with the `cosign` CLI installed):
+
+```bash
+cosign verify \
+  --certificate-identity-regexp \
+    'https://github\.com/FabioCaffarello/spectre/\.github/workflows/publish\.yml@.*' \
+  --certificate-oidc-issuer \
+    'https://token.actions.githubusercontent.com' \
+  fabiocaffarello/spectre-engine:0.1.0-alpha.0
+```
+
+The `--certificate-identity-regexp` ties the signature to
+this repository's `publish.yml` workflow; substitute the image
+name for any of the five published images. `cosign verify`
+exits zero on a valid signature and prints the matched claims;
+non-zero on missing or mismatched signature.
+
+**Recursion over manifest lists.** `cosign sign --recursive`
+extends the signature to every platform-specific manifest
+under a multi-arch index. Verifiers can validate either the
+index reference (`spectre-control-plane:<tag>`) or a
+single-arch reference (e.g., the linux/arm64 manifest digest)
+and get the same identity claims back.
+
+**Cosign / installer versions.** `publish.yml` pins
+`sigstore/cosign-installer@v4.1.2` with `cosign-release: v3.0.6`.
+Bumps follow the standard dependency-bump path; verification
+recipes published here pin no client-side cosign version
+because Sigstore ships strong forward-compat for verifiers.
+
 ## CI dry-run
 
 Every push that touches a Dockerfile, `docker-bake.hcl`,
@@ -290,7 +341,9 @@ post-refactor; consumers install from a cloned repo.
   `:edge`), signing (cosign), and SBOM (syft) once the project
   has a versioned release cadence. (R7.x closed without picking
   these up — its territory was Helm chart packaging + production
-  smoke.)
+  smoke.) Wave 1 has since shipped tag-triggered publish (W1.2)
+  and cosign keyless signing (W1.4); `:edge` + SBOM remain
+  v1beta1 territory.
 - **v1alpha2** unblocks the three multi-arch deferrals per the
   per-image criteria in the Multi-arch status table.
 
@@ -328,8 +381,10 @@ publish workflow. v1alpha2 adds:
     PR touching image-affecting paths runs scans per service
     image; HIGH/CRITICAL fail; per-image overrides at
     `tools/trivy/<target>.trivyignore`)
-  - cosign keyless signing via GitHub OIDC (W1.4, every
-    published image signed)
+  - ✅ cosign keyless signing via GitHub OIDC (W1.4 shipped
+    2026-05-07 per ADR-0036 §5.8 W1.4 update; integrated as a
+    post-bake step in `publish.yml` rather than a standalone
+    `sign.yml` — atomicity and digest reuse won the trade)
 
 The version-coherence script + `Chart.lock` + appVersion
 tracking continue unchanged. The v1alpha2 release cadence

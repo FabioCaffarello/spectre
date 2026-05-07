@@ -933,8 +933,8 @@ following CI surfaces auto-extend:
 - **Per-language test job** — auto-discovers
 - **`.github/workflows/scan.yml`** (Wave 1) — Trivy scan on the
   built image
-- **`.github/workflows/sign.yml`** (Wave 1) — cosign signing
-  post-publish
+- **`.github/workflows/publish.yml`** (Wave 1) — cosign keyless
+  signing integrated as a post-bake step (see W1.4 update below)
 - **`.github/workflows/helm-lint.yml`** — chart fragment lints
   via the existing chart-lint gate
 - **`.github/workflows/production-smoke.yml`** — included in
@@ -945,6 +945,54 @@ the workflow files; the build PR for a new service does not
 need to amend the workflows themselves. ADR-0036 + ADR-0037 land
 the contract; Wave 1's CI work materialises the per-workflow
 glob patterns.
+
+#### §5.8 W1.4 update (2026-05-07) — cosign integrated into publish.yml
+
+This ADR shipped (R9.1, 2026-05-04) reserving
+`.github/workflows/sign.yml` as the canonical filename for
+cosign signing, on the assumption that signing would run as a
+separate workflow triggered post-publish. W1.4 (cosign keyless
+via GitHub OIDC) materialised the signing step and the
+implementation took a different path: cosign signing is **a
+post-bake step inside `publish.yml`**, not a standalone
+workflow.
+
+The trade evaluated:
+
+- **Standalone `sign.yml`** — matches the §5.8 bullet as
+  originally written; would trigger on `workflow_run` after a
+  successful publish. Cost: handoff brittleness (image
+  references must flow through artifacts or be re-resolved
+  from the registry); two workflows must complete for a
+  release to be considered "done"; an interrupted handoff
+  leaves unsigned images on Docker Hub.
+
+- **Integrated step in `publish.yml`** (chosen) — cosign runs
+  in the same job after `Verify pushed manifests`, signing by
+  manifest-list digest resolved from the verify loop. Wins:
+  atomicity (signing failure fails the same workflow that
+  pushed; no unsigned images survive), digest reuse (no need
+  to re-resolve from the registry), narrower trust boundary
+  (`id-token: write` only fires when push-to-registry runs).
+  Trade: `publish.yml`'s permissions widen to include
+  `id-token: write`, scoped at the job level.
+
+The §5.8 bullet list above is amended in-place: the
+`sign.yml` row is replaced by a `publish.yml` row noting the
+integrated post-bake step. Future Wave 5+ build PRs that add
+new services do not need to wire a separate signing workflow —
+adding the new image's name to `publish.yml`'s sign loop is
+the auto-extension surface.
+
+The `sign.yml` filename remains **reserved** (not used) — if
+a future evolution splits signing into its own workflow (e.g.,
+SBOM attestation alongside signing, or signing artifacts
+beyond container images), `sign.yml` is the canonical landing
+spot.
+
+Verification recipe for downstream consumers lives in
+[`docs/architecture/releases.md`](../architecture/releases.md)
+"Image signing" section.
 
 ## §6 — Deployment posture
 

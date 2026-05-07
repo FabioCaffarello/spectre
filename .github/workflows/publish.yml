@@ -43,6 +43,16 @@ jobs:
     name: Build + push to Docker Hub
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # `id-token: write` is required for cosign keyless signing
+    # via GitHub OIDC (W1.4). The token is requested only by the
+    # `Sign images` step at the end of the job; widening the scope
+    # to the whole job (single-job workflow) is functionally
+    # identical to scoping it per-step. ADR-0036 §5.8 W1.4 update
+    # records the decision to integrate cosign here rather than in
+    # a standalone `sign.yml`.
+    permissions:
+      contents: read
+      id-token: write
     # DOCKERHUB_TOKEN + DOCKERHUB_USERNAME live in the `ci`
     # environment (the same one CI's image-matrix and full-stack
     # jobs draw from). Declaring `environment: ci` is what makes
@@ -184,4 +194,48 @@ jobs:
           for img in engine control-plane curl-impersonate playwright seleniumbase; do
             echo "=== fabiocaffarello/spectre-${img}:${{ steps.tag.outputs.tag }} ==="
             docker buildx imagetools inspect "fabiocaffarello/spectre-${img}:${{ steps.tag.outputs.tag }}"
+          done
+
+      # W1.4: cosign keyless signing via GitHub OIDC. Runs after
+      # manifest verification so signing only fires on a confirmed-
+      # good push. ADR-0036 §5.8 W1.4 update consolidates this into
+      # publish.yml rather than a standalone sign.yml — atomicity
+      # (no unsigned images on the registry) and digest reuse from
+      # the verify loop are the wins; the trade is widening this
+      # workflow's permissions to include id-token: write (scoped
+      # at the job level above).
+      - uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: "v3.0.6"
+
+      - name: Sign images (cosign keyless via GitHub OIDC)
+        env:
+          # COSIGN_YES suppresses the interactive confirmation
+          # prompt; required for non-interactive CI runs. cosign
+          # picks up the OIDC token from the workflow's id-token
+          # permission automatically — no explicit token plumbing.
+          COSIGN_YES: "true"
+        run: |
+          # Sign each image by its manifest-list digest, not by
+          # tag — tags are mutable, digests are not. cosign
+          # `--recursive` extends the signature to every platform-
+          # specific manifest under the index, so verifiers can
+          # validate either the index reference or a single-arch
+          # reference. The signature payload (.sig artifact) is
+          # pushed to the same Docker Hub repository alongside
+          # the image; downstream consumers verify with
+          #   cosign verify \
+          #     --certificate-identity-regexp \
+          #       'https://github\.com/FabioCaffarello/spectre/\.github/workflows/publish\.yml@.*' \
+          #     --certificate-oidc-issuer \
+          #       'https://token.actions.githubusercontent.com' \
+          #     fabiocaffarello/spectre-<name>:<tag>
+          # See docs/architecture/releases.md for the full
+          # verification recipe.
+          set -e
+          for img in engine control-plane curl-impersonate playwright seleniumbase; do
+            ref="fabiocaffarello/spectre-${img}:${{ steps.tag.outputs.tag }}"
+            digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
+            echo "=== signing fabiocaffarello/spectre-${img}@${digest} ==="
+            cosign sign --recursive "fabiocaffarello/spectre-${img}@${digest}"
           done

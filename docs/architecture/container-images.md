@@ -6,8 +6,10 @@
 > the Compose stack; R6.3 revisits the Devcontainer; R6.5.3 ships
 > Docker Hub publishing (`fabiocaffarello/spectre-<name>`) with
 > multi-arch for control-plane + playwright, three deferrals
-> documented. Image signing, SBOMs, and tag-triggered publish
-> auto-trigger are deferred post-refactor (v1alpha2).
+> documented. Wave 1 added Trivy scanning (W1.3),
+> tag-triggered auto-publish (W1.2), and cosign keyless signing
+> (W1.4); SBOMs and the `:edge` rolling tag remain deferred to
+> v1beta1.
 
 This page is the operator's reference for "how is this project
 containerised". It is a *reference*, not an architectural decision
@@ -378,11 +380,16 @@ proto-schema change) rebuilds all five images and runs the gate.
   R6.5.3 update and the Multi-arch status subsection above.
   Operator-facing reference:
   [`docs/architecture/releases.md`](releases.md).
-- **Post-refactor (v1alpha2)** will add image signing (`cosign`),
-  SBOMs (`syft`), tag-triggered publish auto-trigger (`v*.*.*`),
-  and the `:edge` rolling tag from main-branch pushes. (R7.x
-  closed without picking these up — its territory was Helm chart
-  packaging + production smoke.)
+- **v1alpha2 Wave 1** added the production-hardening pieces
+  R7.x left out: tag-triggered publish auto-trigger
+  (W1.2 shipped 2026-05-07, `v*.*.*` tag push triggers the
+  publish workflow), Trivy image vulnerability scanning
+  (W1.3 shipped 2026-05-07, every image-affecting PR fails on
+  HIGH/CRITICAL findings), and cosign keyless signing via
+  GitHub OIDC (W1.4 shipped 2026-05-07, every published image
+  is signed and verifiable per the recipe in
+  [`releases.md`](releases.md) "Image signing"). SBOMs (`syft`)
+  and the `:edge` rolling tag remain v1beta1 territory.
 
 ## Multi-arch status
 
@@ -414,7 +421,11 @@ narrow future work to the specific blocker per image. ADR-0018
   are deferred — see "Multi-arch status" above.
 - **Registry publishing.** ~~R7.1.~~ R6.5.3 (Docker Hub) — see
   [`releases.md`](releases.md).
-- **Image signing + SBOMs.** Post-refactor.
+- **Image signing.** ~~Post-refactor.~~ W1.4 shipped
+  2026-05-07 — cosign keyless via GitHub OIDC, integrated as a
+  post-bake step in `publish.yml` per ADR-0036 §5.8 W1.4
+  update.
+- **SBOMs.** Post-refactor (v1beta1).
 - **`HEALTHCHECK` instructions in Dockerfiles.** Healthchecks live
   in Compose / Helm because the bound port is deployment config,
   not image config; `gcr.io/distroless/static` doesn't even have
@@ -471,9 +482,14 @@ paths runs `.github/workflows/scan.yml` per ADR-0036 §5.8;
 HIGH/CRITICAL findings fail the workflow; per-image overrides
 live at [`tools/trivy/<target>.trivyignore`](../../tools/trivy/);
 unfixed CVEs ignored to keep the gate actionable.
-W1.4 (cosign keyless) follows. From Wave 5 onward, every new
-infra-service image scans + signs automatically as its bake
-target lands per the canonical service shape.
+**W1.4 shipped 2026-05-07** — `publish.yml` integrates a
+post-bake cosign signing step (per ADR-0036 §5.8 W1.4 update);
+every published image is signed by manifest-list digest under
+GitHub OIDC keyless attestation; verification recipe lives in
+[`releases.md`](releases.md) "Image signing". From Wave 5
+onward, every new infra-service image scans + signs
+automatically as its bake target lands per the canonical
+service shape.
 
 The five existing v1alpha1 images are **unchanged** in shape
 or publishing path. The engine image gains the
