@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Tag-triggered publish enabled** (W1.2 — Wave 1
+  production hardening, 2026-05-07): the publish workflow
+  at `.github/workflows/publish.yml` gains an
+  `on.push.tags: ['v*.*.*']` trigger alongside the existing
+  `workflow_dispatch`. Pushing a semver-prefixed tag now
+  auto-publishes — same outputs as a maintainer-dispatched
+  run with default inputs. The `Resolve image tag` step
+  branches on `github.event_name`: tag pushes strip the
+  leading `v` from `github.ref_name`; workflow_dispatch
+  paths preserved unchanged. A **tag-vs-VERSION
+  consistency check** fails the workflow fast when the
+  pushed tag's stripped value does not match the committed
+  `VERSION` file content (operator error surfaces
+  immediately rather than as silent inconsistency between
+  pushed image tag and source state). The `multi_arch` and
+  `targets` env vars use bash `${VAR:-default}`
+  substitution to apply workflow_dispatch input defaults
+  (`true` + `"default"`) on tag-triggered runs where inputs
+  are absent — tag-triggered publishes behave identically
+  to manually dispatched publishes with no overrides.
+  Materialises the R6.5.3 §4.4 deferred toggle that
+  ADR-0018 §5 R6.5.3 update reserved for "R7.x or
+  v1alpha2"; resolved here as Wave 1's first CI hardening
+  PR. Manifest verification semantics (per-image multi-arch
+  posture; manifest-list mismatch fails the workflow) are
+  unchanged from R6.5.3.
+- **ADR-0018 §5 in-place amendment** (W1.2): adds a
+  "W1.2 update — tag-triggered publish enabled"
+  subsection appended after the existing R6.5.3 update
+  per the in-place evolution-note precedent
+  (§3a R6.3 update; §3 R6.5.4 update; §5 R6.5.3 update;
+  ADR-0023 §14 R9.2 update; ADR-0030 §8 W1.5 update). §1 –
+  §4 + §5 R6.5.3 update + Maintainer prerequisite section
+  byte-identical to pre-amendment baseline (verified via
+  `diff` against `origin/main`; lines 1 – 328 unchanged).
+- **`docs/architecture/releases.md`**: §"Image registry"
+  intro updated to reflect dual-trigger posture; §"Publish
+  flow" trigger section rewritten with both event-types +
+  consistency-check note; §"What's deferred" loses the
+  resolved tag-trigger bullet; §"v1alpha2 forward-look"
+  marks W1.2 + W1.5 as ✅ shipped within Wave 1; trailing
+  cadence note updated to reflect tag-auto-publish.
 - **ADR-0030 §8 in-place amendment** (W1.5 — Wave 1
   production hardening foundation, opens 2026-05-07):
   replaces ADR-0030 §8.3's sketch-level CRD upgrade

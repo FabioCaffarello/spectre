@@ -10,14 +10,19 @@
 Spectre publishes its five container images to Docker Hub under
 the `fabiocaffarello` account, flat namespace. As of R6.5.3:
 
-- The publish flow is **manual** — `workflow_dispatch` only.
+- The publish flow has **two triggers** (W1.2 update,
+  2026-05-07): pushing a `v*.*.*` tag triggers an automatic
+  publish, and `workflow_dispatch` remains for exotic flows
+  (overriding tag, partial target sets, multi-arch off). A
+  tag-vs-VERSION consistency check fails fast on operator
+  error.
 - Two of five images publish multi-arch (`linux/amd64` +
   `linux/arm64`); three are amd64-only with documented unblock
   criteria.
-- Tag-triggered publish, `:edge` rolling tag, image signing
-  (cosign), and SBOM generation are **deferred** post-refactor
-  (v1alpha2 work; R7.x closed without picking these up — R7.1
-  shipped the Helm chart and R7.2 the production-smoke gate).
+- `:edge` rolling tag, image signing (cosign), and SBOM
+  generation remain **deferred** — W1.4 (cosign keyless via
+  GitHub OIDC) lands in Wave 1; `:edge` and SBOM defer to
+  v1beta1.
 
 The architectural rationale lives in
 [ADR-0018 §5 R6.5.3 update](../adr/0018-devcontainer-and-engine-image.md);
@@ -80,8 +85,23 @@ R6.5.3 update.
 
 The publish workflow is
 [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml).
-Trigger: `workflow_dispatch` only (R6.5.3 posture; auto-trigger
-deferred per ADR-0018 §5 R6.5.3 update §4.4).
+Two triggers (W1.2 update, 2026-05-07):
+
+- **`push` to a `v*.*.*` tag** — triggers an automatic publish.
+  The workflow's `Resolve image tag` step strips the leading `v`
+  from the tag name and asserts the result matches the
+  committed `VERSION` file content (mismatch fails fast). The
+  `multi_arch` and `targets` env vars use bash `${VAR:-default}`
+  substitution to apply `true` + `default` as the
+  workflow_dispatch input defaults — tag-triggered publishes
+  behave identically to a manually dispatched publish with no
+  overrides.
+- **`workflow_dispatch`** — remains for exotic flows
+  (overriding tag, partial target sets, multi-arch off). The
+  three inputs below remain available; the same multi-arch
+  + manifest-verification semantics apply.
+
+Per [ADR-0018 §5 W1.2 update](../adr/0018-devcontainer-and-engine-image.md).
 
 **Three inputs:**
 
@@ -116,12 +136,9 @@ contributors and consumers.
 
 Each is non-blocking for v1alpha1 release engineering:
 
-- **Tag-triggered publish (`v*.*.*`).** ~5 lines added to
-  `publish.yml`'s `on:` block when the project is ready to
-  automate. No tags exist as of R6.5.3 merge; auto-trigger
-  before tags exist is theoretical.
-- **`:edge` rolling tag from main.** Same shape; main-branch
-  push trigger.
+- **`:edge` rolling tag from main.** Main-branch push trigger
+  for an always-current rolling artefact. Same `on.push.<filter>`
+  shape as the W1.2-shipped tag trigger; deferred to v1beta1.
 - **`:latest` from stable releases.** Adds a tag-aliasing step
   to the publish flow.
 - **Image signing (`cosign`).** Adds a `cosign sign` step after
@@ -302,19 +319,21 @@ publish workflow. v1alpha2 adds:
 - **Wave 1 production hardening** (per
   [`docs/roadmap.md`](../roadmap.md) §4.1) lands four
   release-side improvements:
-  - Auto-trigger publish on tag push (R6.5.3 §4.4 deferred
-    trigger materialised)
-  - Trivy vulnerability scanning (every image scans before
-    publish)
-  - cosign keyless signing via GitHub OIDC (every published
-    image signed)
-  - CRD upgrade procedure documentation (ADR-0030 §8
-    amendment)
+  - ✅ Auto-trigger publish on tag push (W1.2 shipped
+    2026-05-07 per ADR-0018 §5 W1.2 update)
+  - ✅ CRD upgrade procedure documentation (W1.5 shipped
+    2026-05-07 per ADR-0030 §8.4 – §8.9)
+  - Trivy vulnerability scanning (W1.3, every image scans
+    before publish)
+  - cosign keyless signing via GitHub OIDC (W1.4, every
+    published image signed)
 
 The version-coherence script + `Chart.lock` + appVersion
 tracking continue unchanged. The v1alpha2 release cadence
-remains **maintainer-triggered manual tags** through
-v1alpha2; auto-trigger from main lands in Wave 1.
+post-W1.2 is **maintainer-triggered tags** that auto-publish
+(`git tag v<x.y.z>` → `git push --tags` → workflow runs).
+Auto-trigger from main (`:edge` rolling tag) remains deferred
+to v1beta1.
 
 The `:edge` floating tag and SBOM (syft) generation remain
 deferred per the existing "Post-refactor" deferral; v1beta1
