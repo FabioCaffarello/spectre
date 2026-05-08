@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`tools/test/verify-s3-sink.sh` mc-output column shift**
+  (production-smoke mini-phase, 2026-05-07): the s3 verifier
+  parsed `mc ls --recursive` output as `[date time tz] size key`
+  (4 fields after the bracketed timestamp) but a Bitnami minio-
+  image refresh introduced a storage-tier column, shifting the
+  layout to `[date time tz] size STANDARD key`. The original
+  awk's positional `$(NF-1)+0 > 0` size check then read
+  `"STANDARD"+0 = 0`, rejecting every row as zero-size and
+  failing the verifier even though the engine had uploaded the
+  expected ~3.8 KiB JSONL object. Fixed by scanning fields for a
+  `B|KiB|MiB|GiB|TiB` suffix to locate the size column robustly
+  across mc versions. Bug was masked by the s3-env-var bug
+  (PutObject failures meant the verifier never reached the
+  parsing branch on a real upload until the env-var fix landed).
+
 - **Helm chart Kafka single-broker replication-factor overrides**
   (production-smoke mini-phase, 2026-05-07): Bitnami's kafka
   subchart leaves `offsets.topic.replication.factor`,
