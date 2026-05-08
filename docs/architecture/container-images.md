@@ -402,7 +402,7 @@ rework.
 |-------|-------------------|-------------------|
 | `spectre-control-plane` | ✅ today | None — pure Go cross-compile (`CGO_ENABLED=0` + `GOARCH=${TARGETARCH}`). |
 | `spectre-playwright` | ✅ today | None — Microsoft Playwright runtime image is multi-arch; Node `pnpm install` runs under QEMU emulation on amd64 runners. |
-| `spectre-engine` | ❌ deferred | `MUSL_TARGET` hardcoded to `x86_64-unknown-linux-musl`; cross-compile setup is amd64-specific. Unblock: select `MUSL_TARGET` per `${TARGETARCH}`, install `gcc-aarch64-linux-gnu` + `g++-aarch64-linux-gnu` cross-toolchain, mirror the libcurl include-path copy step per arch. |
+| `spectre-engine` | ✅ today | Multi-arch from W2.1 (2026-05-08) — Rust musl cross-compile via pre-built `aarch64-linux-musl-cross` toolchain from `musl.cc`; builder runs natively on `$BUILDPLATFORM` and cross-compiles to `$TARGETPLATFORM`. See ADR-0018 §5 W2.1 update. |
 | `spectre-seleniumbase` | ❌ deferred | Google Chrome stable for Linux is amd64-only as of R6.5.3. Unblock paths: (a) wait for Google to publish a Linux/arm64 stable channel; (b) switch from Chrome to Chromium (multi-arch but changes the project's tested driver surface — ADR-level decision, v1alpha2). |
 | `spectre-curl-impersonate` | ❌ deferred | Runtime base `lwthiker/curl-impersonate:0.6-chrome` is published amd64-only on Docker Hub. Unblock paths: (a) upstream multi-arch publish; (b) fork upstream's image build; (c) cross-compile from source per [`INSTALL.md`](https://github.com/lwthiker/curl-impersonate/blob/main/INSTALL.md). |
 

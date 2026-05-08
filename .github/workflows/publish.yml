@@ -153,13 +153,14 @@ jobs:
           multi_arch="${MULTI_ARCH:-true}"
           targets="${TARGETS:-default}"
 
-          # Per-target platform overrides. control-plane and
-          # playwright build multi-arch (linux/amd64 + linux/arm64)
-          # when `multi_arch` is true; the other three remain
-          # amd64-only per the deferral list in ADR-0018 §5 R6.5.3
-          # update. As deferred images unblock, add their override
-          # here without touching docker-bake.hcl. Use a bash array
-          # so empty / multi-flag expansion is correct under set -u.
+          # Per-target platform overrides. control-plane, playwright,
+          # and engine (W2.1, 2026-05-08) build multi-arch (linux/amd64
+          # + linux/arm64) when `multi_arch` is true; seleniumbase and
+          # curl-impersonate remain amd64-only per the deferral list
+          # in ADR-0018 §5 R6.5.3 update (W2.2 + W2.3 unblock them).
+          # As deferred images unblock, add their override here
+          # without touching docker-bake.hcl. Use a bash array so
+          # empty / multi-flag expansion is correct under set -u.
           # Two `--set` per target (one per platform) renders the
           # platforms field as a proper list under `bake --print`;
           # the comma-joined single-value form
@@ -172,6 +173,8 @@ jobs:
               "--set" "control-plane.platform=linux/arm64"
               "--set" "playwright.platform=linux/amd64"
               "--set" "playwright.platform=linux/arm64"
+              "--set" "engine.platform=linux/amd64"
+              "--set" "engine.platform=linux/arm64"
             )
           fi
 

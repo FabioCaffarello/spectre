@@ -406,6 +406,133 @@ releases.md operator-facing update + the CHANGELOG entry).
 The other Wave 1 PRs (W1.3 Trivy scanning; W1.4 cosign
 signing) follow per the roadmap §4.1 sequence.
 
+#### W2.1 update — engine multi-arch unblock
+
+> **W2.1 evolution note (2026-05-08).** This subsection is
+> added in-place per the R6.3 / R6.5.3 / R6.5.4 / W1.2
+> precedent above. The R6.5.3 update's deferral row for the
+> engine ("`MUSL_TARGET` hardcoded to `x86_64-unknown-linux-musl`
+> ... ~30-line Dockerfile change in a focused PR") is now
+> resolved.
+
+**What W2.1 lands** (Wave 2, multi-arch unblocks per
+`docs/roadmap.md` §4.2):
+
+- `engines/engine/Dockerfile` builder stage rewrites
+  toolchain selection per `${TARGETARCH}`. Both target
+  triples (`x86_64-unknown-linux-musl`,
+  `aarch64-unknown-linux-musl`) are supported via a
+  pre-built musl cross-compiler from `https://musl.cc/`
+  (see "Why musl.cc" below). The `MUSL_TARGET` value is
+  derived inline per build (`/musl-target.env` written once
+  and sourced in subsequent RUNs) rather than via a
+  Dockerfile-level ARG, which buildx cannot supply
+  per-platform on a single bake invocation.
+- The builder stage uses
+  `FROM --platform=$BUILDPLATFORM rust:${RUST_VERSION}-bookworm`
+  so it runs natively on the host arch and cross-compiles
+  to `${TARGETPLATFORM}`. Avoids QEMU emulation for the
+  full Rust + CMake + protoc toolchain (~10x slowdown
+  observed on amd64 runners producing arm64 artifacts).
+- Cargo and the `cc` crate are pointed at the cross-
+  compilers via `CARGO_TARGET_<TRIPLE>_LINKER` and
+  `CC_<TRIPLE>` / `CXX_<TRIPLE>` env vars in the builder.
+  Without these, cargo's link step invokes plain `cc` (the
+  host's default C compiler) and fails with
+  `unrecognized command-line option '-m64'` on cross-arch
+  builds.
+- librdkafka's required `<curl/curl.h>` include is provided
+  in the cross-toolchain's sysroot (`/opt/${MUSL_CROSS}/${MUSL_TRIPLE}/include/curl/`),
+  copied from Debian's host-arch multiarch path
+  (`/usr/include/${HOST_TRIPLE}/curl/`). Symbols are dropped
+  by the preprocessor (`-DWITH_CURL=0`); the file just needs
+  to exist on the search path.
+- Strip uses the cross-toolchain's `${MUSL_TRIPLE}-strip`
+  binary so an arm64 host can strip an x86_64 ELF (host
+  `strip` would error with "Unable to recognise the format
+  of the input file").
+- `.github/workflows/publish.yml` adds `engine.platform=linux/amd64`
+  + `engine.platform=linux/arm64` to the multi-arch
+  `platform_overrides` array alongside control-plane and
+  playwright. Tag-triggered publishes now produce a
+  manifest list for engine.
+
+**Why a pre-built musl-cross toolchain and not `musl-tools` from
+Debian.** Debian's `musl-tools` package is host-arch-bound — apt
+installs the `${HOST_ARCH}-linux-musl-gcc` binary, not a
+cross-compiler. On an amd64 host that's `x86_64-linux-musl-gcc`
+only; on an arm64 host it's `aarch64-linux-musl-gcc` only.
+Building musl-cross-make from source for both targets adds 20+
+minutes to every build cycle. The standard industry path for
+Rust musl cross-compile is the pre-built tarballs at
+`https://musl.cc/`, maintained by the musl-libc community as a
+convenience layer over musl-cross-make.
+
+**Why we mirror musl.cc in this repo's GitHub Releases.** The
+W2.1 PR's first CI run (2026-05-08) hit
+`curl: (28) Failed to connect to musl.cc port 443 after 134478
+ms` from GitHub Actions runners — `musl.cc` is community-
+maintained and intermittently unreachable from CI IP ranges.
+The remediation predicted in the original W2.1 plan ("vendor
+the tarballs into our own mirror") was applied immediately:
+the two tarballs (`x86_64-linux-musl-cross.tgz`,
+`aarch64-linux-musl-cross.tgz`) are now hosted in this repo's
+`musl-cross-toolchains-v1` GitHub Release, with SHA256s pinned
+in the Dockerfile so a tampered or replaced artifact fails the
+build. The Dockerfile fetches from `https://github.com/<owner>/spectre/releases/download/musl-cross-toolchains-v<N>/`
+instead of `https://musl.cc/`. Trade preserved: trust
+`github.com/<owner>/spectre` HTTPS the same way we trust
+`github.com/<owner>` for source tarballs in any other repo.
+Bumping the toolchain is a manual operator step (download
+fresh from musl.cc → upload to a new release tag → bump the
+URL prefix and SHA256 lines in the Dockerfile in lockstep) but
+toolchains are static so bumps are rare.
+
+**What stays unchanged from R6.5.3 + W1.2:**
+
+- The five-image set, the registry namespace
+  (`docker.io/fabiocaffarello/spectre-*`), and the bake
+  matrix structure.
+- `docker-bake.hcl` continues to default targets to
+  `platforms = ["linux/amd64"]`; multi-arch is a publish-
+  time `--set` override (per-target, two `--set` per
+  platform per the documented bake idiom).
+- The chef stage, cargo-chef caching pattern, distroless
+  runtime, and the `nonroot` USER directive — all preserved
+  byte-for-byte from R6.5.3 plus the strict path-relative
+  COPY contract that lets the runtime stage be MUSL_TARGET-
+  agnostic.
+- The `Verify pushed manifests` step asserting per-image
+  multi-arch posture — automatically picks up the new
+  engine multi-arch row without code change (loop over the
+  five-image list).
+- The cosign signing step from W1.4 — signs the engine
+  image's manifest-list digest the same way control-plane
+  and playwright are signed; `--recursive` extends the
+  signature to the per-platform manifests.
+
+**What still defers** (Wave 2 continues):
+
+- W2.2 — seleniumbase multi-arch via Chrome → Chromium swap
+  (per the R6.5.3 update's deferral row option (b)).
+  ADR-0018 amendment for the runtime swap will land
+  alongside the build PR.
+- W2.3 — curl-impersonate multi-arch via build-from-source
+  per the upstream INSTALL.md ARM64 instructions (R6.5.3
+  update's deferral row option (c)).
+
+After W2.1+W2.2+W2.3 close, all five published images ship
+`linux/amd64 + linux/arm64` manifest lists; the
+"Multi-arch status" subsection above moves all five rows to
+✅ today.
+
+W2.1 is **single architectural decision** scope per
+CONTRIBUTING.md "v1alpha2 process rigor matrix" (R9.0).
+Single commit; no master phase prompt; no new ADR (this
+in-place §5 amendment + the engine Dockerfile change + the
+publish.yml platform_overrides change + the releases.md /
+container-images.md updates + the CHANGELOG entry).
+
 ## Consequences
 
 - Good, because contributor onboarding compresses from a multi-
