@@ -29,6 +29,17 @@ echo "Reading from topic '${TOPIC}' on pod '${KAFKA_POD}'..."
 TMP_OUT="$(mktemp)"
 trap 'rm -f "$TMP_OUT"' EXIT
 
+# List existing topics first — surfaces the "topic does not exist"
+# vs "topic exists but is empty" distinction that kafka-console-
+# consumer's TimeoutException can't tell us by itself
+# (production-smoke mini-phase 2026-05-07 diagnostic axis).
+echo "Available topics on broker:"
+kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -c kafka -- \
+    /opt/bitnami/kafka/bin/kafka-topics.sh \
+        --bootstrap-server "${RELEASE}-kafka.${NAMESPACE}.svc.cluster.local:9092" \
+        --list 2>/dev/null \
+    | sed 's/^/  /' || echo "  (kafka-topics.sh --list failed)"
+
 # `-c kafka` selects the broker container explicitly. Bitnami
 # kafka 30.0.0 added a `kafka-init` init container alongside
 # the main `kafka` container; without `-c` kubectl emits
