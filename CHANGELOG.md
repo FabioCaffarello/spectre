@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Helm chart S3 credential env var names** (production-smoke
+  mini-phase, 2026-05-07): `build/helm/spectre/templates/_helpers.tpl`
+  rendered `SPECTRE_S3_ACCESS_KEY` / `SPECTRE_S3_SECRET_KEY`,
+  but the engine reads `SPECTRE_S3_ACCESS_KEY_ID` /
+  `SPECTRE_S3_SECRET_ACCESS_KEY` (matching the AWS SDK
+  convention; `engines/engine/src/s3/config.rs:24-25`). The
+  engine therefore came up with the S3 endpoint configured but
+  no credentials, the AWS SDK fell back to the (empty) default
+  chain, and every PutObject request to MinIO returned a 4xx
+  that the SDK reported as a generic `service error`. Root cause
+  of the production-smoke s3 sink failures observed since R7.2
+  merge — every smoke run since 2026-04-30 reported
+  `S3_UPLOAD_FAILED: service error` on `hello-hackernews-s3`
+  while `hello-hackernews-kafka` and `hello-hackernews-webhook`
+  passed (kafka + webhook env vars matched correctly).
+
+### Changed
+
+- **`engines/engine/src/s3/uploader.rs` — richer SDK error
+  diagnostics** (production-smoke mini-phase, 2026-05-07): the
+  S3 upload failure path used to wrap `SdkError<PutObjectError>`
+  via `format!("{e}")`, which renders only the SDK's category
+  string (`"service error"` / `"dispatch failure"` / `"timeout"`
+  / …) and discards HTTP status, error code, and error message.
+  Replaced with a `format_put_object_error` helper that
+  matches on the variant and surfaces `code=<aws-error-code>
+  message=<aws-error-message>` for `ServiceError`, the underlying
+  `Display` for the other variants. The next S3 failure surfaces
+  the actual SDK detail in the `ScrapeJob.status.error` field
+  (and in the engine logs) rather than an opaque `service error`
+  — directly addresses the diagnostic gap that hid the env-var
+  bug for ~7 days post-R7.2 merge.
+
 ### Added
 
 - **cosign keyless signing integrated into `publish.yml`**

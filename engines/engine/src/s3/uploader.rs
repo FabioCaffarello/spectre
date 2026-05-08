@@ -13,6 +13,7 @@ use std::sync::Arc;
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::Region;
+use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::{Client, Config};
 use uuid::Uuid;
@@ -152,8 +153,38 @@ impl S3Uploader {
             .send()
             .await
             .map(|_| ())
-            .map_err(|e| S3Error::Upload(format!("{e}")))
+            .map_err(format_put_object_error)
     }
+}
+
+/// Render an `SdkError<PutObjectError>` into a diagnostic string
+/// for `S3Error::Upload`. The SDK's `Display` only renders the
+/// category (`"service error"` / `"dispatch failure"` / …);
+/// match on the variant to surface HTTP status, error code, and
+/// error message so smoke failures are debuggable from the run
+/// log alone (production-smoke mini-phase 2026-05-07 — every
+/// failure since R7.2 surfaced as a bare "service error" with no
+/// way to tell auth-vs-bucket-vs-region from the kubectl output).
+fn format_put_object_error<E, R>(err: SdkError<E, R>) -> S3Error
+where
+    E: std::error::Error + ProvideErrorMetadata,
+{
+    let detail = match &err {
+        SdkError::ServiceError(svc) => {
+            let inner = svc.err();
+            format!(
+                "service error: code={} message={}",
+                inner.code().unwrap_or("(none)"),
+                inner.message().unwrap_or("(none)"),
+            )
+        }
+        SdkError::DispatchFailure(_) => format!("dispatch failure: {err}"),
+        SdkError::TimeoutError(_) => "timeout".to_owned(),
+        SdkError::ResponseError(_) => format!("response parse error: {err}"),
+        SdkError::ConstructionFailure(_) => format!("construction failure: {err}"),
+        _ => format!("{err}"),
+    };
+    S3Error::Upload(detail)
 }
 
 /// Wrapper that exposes [`S3Uploader::from_env`]'s signature for
