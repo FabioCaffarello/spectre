@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`tools/test/verify-kafka-sink.sh` container disambiguation**
+  (production-smoke mini-phase, 2026-05-07): the kafka verifier
+  invoked `kubectl exec` against `<release>-kafka-controller-0`
+  without `-c <container>`. Bitnami kafka 30.0.0 added a
+  `kafka-init` init container alongside the main `kafka`
+  container, so kubectl emitted `Defaulted container "kafka" out
+  of: kafka, kafka-init (init)` on stderr — the verifier's
+  `2>&1` redirect interleaved this into the output buffer, and
+  the downstream `head -n 1 | jq -e` pipeline parsed the warning
+  line as the message and failed with `jq: parse error: Invalid
+  numeric literal at line 1, column 10`. Fixed: pass `-c kafka`
+  explicitly to silence the warning at source, plus filter
+  `^Defaulted container` in the framing-line grep as
+  defence-in-depth. The bug was masked by the s3-env-var bug
+  above — every prior smoke run failed at "Wait for ScrapeJobs
+  to complete" before reaching the kafka verifier.
+
 - **Helm chart S3 credential env var names** (production-smoke
   mini-phase, 2026-05-07): `build/helm/spectre/templates/_helpers.tpl`
   rendered `SPECTRE_S3_ACCESS_KEY` / `SPECTRE_S3_SECRET_KEY`,

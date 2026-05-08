@@ -29,7 +29,13 @@ echo "Reading from topic '${TOPIC}' on pod '${KAFKA_POD}'..."
 TMP_OUT="$(mktemp)"
 trap 'rm -f "$TMP_OUT"' EXIT
 
-if ! kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -- \
+# `-c kafka` selects the broker container explicitly. Bitnami
+# kafka 30.0.0 added a `kafka-init` init container alongside
+# the main `kafka` container; without `-c` kubectl emits
+# `Defaulted container "kafka" out of: kafka, kafka-init (init)`
+# on stderr, which the `2>&1` redirect below interleaves into
+# TMP_OUT and contaminates jq parsing downstream.
+if ! kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -c kafka -- \
     /opt/bitnami/kafka/bin/kafka-console-consumer.sh \
         --bootstrap-server "${RELEASE}-kafka.${NAMESPACE}.svc.cluster.local:9092" \
         --topic "$TOPIC" \
@@ -44,8 +50,12 @@ fi
 
 # kafka-console-consumer prints framing lines ("Processed a
 # total of N messages", "Bye!") alongside the actual messages.
-# Keep only the first non-blank, non-framing line.
-MSG="$(grep -v '^$\|Processed a total\|^Bye!' "$TMP_OUT" | head -n 1 || true)"
+# Filter framing + the kubectl `Defaulted container` warning
+# (defence-in-depth — the `-c kafka` flag above silences it
+# upstream, but a future chart adding more containers would
+# re-introduce a similar diagnostic). Keep only the first
+# non-blank, non-framing line.
+MSG="$(grep -v '^$\|Processed a total\|^Bye!\|^Defaulted container' "$TMP_OUT" | head -n 1 || true)"
 if [[ -z "$MSG" ]]; then
     echo "ERROR: empty message body from kafka topic" >&2
     cat "$TMP_OUT" >&2
