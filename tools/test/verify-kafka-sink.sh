@@ -29,7 +29,40 @@ echo "Reading from topic '${TOPIC}' on pod '${KAFKA_POD}'..."
 TMP_OUT="$(mktemp)"
 trap 'rm -f "$TMP_OUT"' EXIT
 
-if ! kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -- \
+# List existing topics first — surfaces the "topic does not exist"
+# vs "topic exists but is empty" distinction that kafka-console-
+# consumer's TimeoutException can't tell us by itself
+# (production-smoke mini-phase 2026-05-07 diagnostic axis).
+echo "Available topics on broker:"
+kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -c kafka -- \
+    /opt/bitnami/kafka/bin/kafka-topics.sh \
+        --bootstrap-server "${RELEASE}-kafka.${NAMESPACE}.svc.cluster.local:9092" \
+        --list 2>/dev/null \
+    | sed 's/^/  /' || echo "  (kafka-topics.sh --list failed)"
+
+# High-water-mark per partition for the target topic. If the
+# broker's log holds the engine's published rows, HWM > 0; if
+# HWM = 0 despite the engine logging `kafka publish complete
+# rows=N`, there's a producer-vs-broker disconnect (single-broker
+# `acks=all`-but-no-flush, listener mismatch, in-memory log
+# eviction, etc.). Distinguishes "broker has messages, consumer
+# can't read them" from "broker has no messages despite producer
+# success" — both are otherwise indistinguishable from
+# kafka-console-consumer's TimeoutException output.
+echo "Topic '${TOPIC}' offsets (partition:offset = HWM per partition):"
+kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -c kafka -- \
+    /opt/bitnami/kafka/bin/kafka-get-offsets.sh \
+        --bootstrap-server "${RELEASE}-kafka.${NAMESPACE}.svc.cluster.local:9092" \
+        --topic "$TOPIC" 2>/dev/null \
+    | sed 's/^/  /' || echo "  (kafka-get-offsets.sh failed — topic may not exist yet)"
+
+# `-c kafka` selects the broker container explicitly. Bitnami
+# kafka 30.0.0 added a `kafka-init` init container alongside
+# the main `kafka` container; without `-c` kubectl emits
+# `Defaulted container "kafka" out of: kafka, kafka-init (init)`
+# on stderr, which the `2>&1` redirect below interleaves into
+# TMP_OUT and contaminates jq parsing downstream.
+if ! kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -c kafka -- \
     /opt/bitnami/kafka/bin/kafka-console-consumer.sh \
         --bootstrap-server "${RELEASE}-kafka.${NAMESPACE}.svc.cluster.local:9092" \
         --topic "$TOPIC" \
@@ -42,13 +75,35 @@ if ! kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -- \
     exit 1
 fi
 
+# kafka-console-consumer can exit 0 while still emitting an
+# ERROR line (e.g. "Error processing message, terminating
+# consumer process") on stderr if a deserializer throws. Detect
+# that explicitly so the verifier surfaces the underlying cause
+# rather than letting the framing-line filter silently take
+# the next non-framing line.
+if grep -qE '\] ERROR ' "$TMP_OUT"; then
+    echo "ERROR: kafka-console-consumer reported an error processing messages" >&2
+    echo "--- full kafka-console-consumer output ---" >&2
+    cat "$TMP_OUT" >&2
+    echo "--- end ---" >&2
+    exit 1
+fi
+
 # kafka-console-consumer prints framing lines ("Processed a
 # total of N messages", "Bye!") alongside the actual messages.
-# Keep only the first non-blank, non-framing line.
-MSG="$(grep -v '^$\|Processed a total\|^Bye!' "$TMP_OUT" | head -n 1 || true)"
+# Filter framing + the kubectl `Defaulted container` warning
+# (defence-in-depth — the `-c kafka` flag above silences it
+# upstream, but a future chart adding more containers would
+# re-introduce a similar diagnostic) + Java-style log lines
+# (`[YYYY-MM-DD HH:MM:SS,mmm] LEVEL ...`) emitted by Kafka
+# tooling on stderr. Keep only the first non-blank, non-
+# framing, non-log line.
+MSG="$(grep -vE '^$|Processed a total|^Bye!|^Defaulted container|^\[[0-9]{4}-' "$TMP_OUT" | head -n 1 || true)"
 if [[ -z "$MSG" ]]; then
     echo "ERROR: empty message body from kafka topic" >&2
+    echo "--- full kafka-console-consumer output ---" >&2
     cat "$TMP_OUT" >&2
+    echo "--- end ---" >&2
     exit 1
 fi
 
@@ -59,6 +114,9 @@ fi
 if ! echo "$MSG" | jq -e 'has("title") and has("url")' > /dev/null; then
     echo "ERROR: kafka message missing required fields (title, url)" >&2
     echo "Got: $MSG" >&2
+    echo "--- full kafka-console-consumer output ---" >&2
+    cat "$TMP_OUT" >&2
+    echo "--- end ---" >&2
     exit 1
 fi
 

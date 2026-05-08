@@ -516,6 +516,23 @@ async fn stream_run_job(args: StreamRunJobArgs) {
     // per-row failures surface (override successful outcome with
     // `S3_UPLOAD_FAILED` / `WEBHOOK_POST_FAILED`).
     if sink_publish_error.is_none() && outcome.is_ok() {
+        // Kafka publishes happen per-row inside the drain loop above;
+        // by the time we get here every row's delivery future already
+        // resolved Ok. Log a `kafka publish complete` event mirroring
+        // s3's `s3 upload ok` so a green RunJob log line confirms the
+        // sink-side work landed (production-smoke mini-phase 2026-05-07
+        // — without this, a kafka ScrapeJob with zero published rows
+        // looks identical to a kafka job with thirty published rows in
+        // the engine log).
+        if publish_kafka {
+            info!(
+                job_id = %job_uuid,
+                topic = %kafka_topic,
+                rows = row_index,
+                "kafka publish complete",
+            );
+        }
+
         if buffer_s3 {
             if let (Some(uploader), Some(cfg)) = (s3.as_ref(), s3_config.as_ref()) {
                 let key = crate::s3::render_key(&cfg.key, job_uuid);

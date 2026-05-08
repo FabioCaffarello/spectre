@@ -51,10 +51,26 @@ if [[ -z "$LISTING" ]]; then
     exit 1
 fi
 
-# `mc ls` output: "[date] [time] [size] [key]". Find the first
-# non-zero-size .jsonl key. Brittle assertions on exact key
-# (which contains a generated JobID) would be flaky.
-FIRST_KEY="$(echo "$LISTING" | awk '$NF ~ /\.jsonl$/ && $(NF-1)+0 > 0 { print $NF; exit }')"
+# `mc ls --recursive` output format varies by mc version:
+#   `[date time tz] size key`             (older)
+#   `[date time tz] size STANDARD key`    (newer — adds a
+#                                          storage-tier column)
+# The verifier was originally written against the older form
+# with `$(NF-1)+0 > 0` as the size check, which silently breaks
+# when "STANDARD" sits in NF-1 (`"STANDARD"+0 == 0` → all rows
+# rejected as zero-size). Scan fields for a `B|KiB|MiB|GiB|TiB`
+# suffix to locate the size column robustly across versions
+# (production-smoke mini-phase, 2026-05-07).
+FIRST_KEY="$(echo "$LISTING" | awk '
+  $NF ~ /\.jsonl$/ {
+    for (i = 1; i < NF; i++) {
+      if ($i ~ /^[0-9.]+(B|KiB|MiB|GiB|TiB)$/) {
+        size = $i;
+        gsub(/[^0-9.]/, "", size);
+        if (size + 0 > 0) { print $NF; exit }
+      }
+    }
+  }')"
 if [[ -z "$FIRST_KEY" ]]; then
     echo "ERROR: no non-empty .jsonl objects under scrapes/" >&2
     echo "Listing was:" >&2

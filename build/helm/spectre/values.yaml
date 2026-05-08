@@ -323,6 +323,26 @@ kafka:
   enabled: true
   controller:
     replicaCount: 1
+    # Override Kafka's hardcoded defaults for internal-topic
+    # replication so a single-broker deployment can actually
+    # serve idempotent / transactional producers. The engine
+    # sets `enable.idempotence=true` (ADR-0023 §3 R4.4 addendum),
+    # which requires the broker's transaction coordinator, which
+    # in turn requires the `__transaction_state` topic — whose
+    # replication factor defaults to 3 (unreachable on a single
+    # broker), leaving InitProducerId hanging / silently failing
+    # and producer publishes never landing on the topic. The
+    # Compose stack at `docker-compose.yml` already sets these
+    # via `KAFKA_*_REPLICATION_FACTOR=1` env vars; this block is
+    # the chart-side equivalent. Production deployments that bump
+    # `controller.replicaCount` must also raise these factors to
+    # match. Production-smoke mini-phase, 2026-05-07.
+    extraConfig: |
+      offsets.topic.replication.factor=1
+      transaction.state.log.replication.factor=1
+      transaction.state.log.min.isr=1
+      default.replication.factor=1
+      min.insync.replicas=1
   listeners:
     client:
       protocol: PLAINTEXT

@@ -152,9 +152,18 @@ externally-managed instance.
 {{- if .Values.minio.enabled }}
 - name: SPECTRE_S3_ENDPOINT
   value: "http://{{ .Release.Name }}-minio:9000"
-- name: SPECTRE_S3_ACCESS_KEY
+# The engine reads SPECTRE_S3_ACCESS_KEY_ID +
+# SPECTRE_S3_SECRET_ACCESS_KEY (matching the AWS SDK convention
+# that pairs with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY); see
+# engines/engine/src/s3/config.rs:24-25. R7.2 originally rendered
+# the env vars as SPECTRE_S3_ACCESS_KEY / SPECTRE_S3_SECRET_KEY,
+# which the engine silently ignored — every smoke run since
+# 2026-04-30 reported S3_UPLOAD_FAILED `service error` with
+# unsigned PutObject requests against MinIO. Fixed in the
+# production-smoke mini-phase (2026-05-07).
+- name: SPECTRE_S3_ACCESS_KEY_ID
   value: {{ .Values.minio.auth.rootUser | quote }}
-- name: SPECTRE_S3_SECRET_KEY
+- name: SPECTRE_S3_SECRET_ACCESS_KEY
   value: {{ .Values.minio.auth.rootPassword | quote }}
 - name: SPECTRE_S3_BUCKET
   value: {{ .Values.minio.defaultBuckets | quote }}

@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tools/test/verify-webhook-sink.sh` JSON-escape matching**
+  (production-smoke mini-phase, 2026-05-07): the webhook
+  verifier checked for `"title"` literal in the receiver's
+  request log, but mendhak/http-https-echo emits each request's
+  body as a JSON-encoded **string** inside the outer log JSON
+  (so `title` arrives as `\"title\"` with the quotes escaped).
+  The original pattern never matched. Fixed with a regex that
+  matches either the escaped form (current image layout) or the
+  unescaped form (forward-compat with a future receiver image).
+  Bug was masked by the s3 verifier failing on its own parsing
+  bug above — the workflow exited before reaching the webhook
+  step.
+
+- **`tools/test/verify-s3-sink.sh` mc-output column shift**
+  (production-smoke mini-phase, 2026-05-07): the s3 verifier
+  parsed `mc ls --recursive` output as `[date time tz] size key`
+  (4 fields after the bracketed timestamp) but a Bitnami minio-
+  image refresh introduced a storage-tier column, shifting the
+  layout to `[date time tz] size STANDARD key`. The original
+  awk's positional `$(NF-1)+0 > 0` size check then read
+  `"STANDARD"+0 = 0`, rejecting every row as zero-size and
+  failing the verifier even though the engine had uploaded the
+  expected ~3.8 KiB JSONL object. Fixed by scanning fields for a
+  `B|KiB|MiB|GiB|TiB` suffix to locate the size column robustly
+  across mc versions. Bug was masked by the s3-env-var bug
+  (PutObject failures meant the verifier never reached the
+  parsing branch on a real upload until the env-var fix landed).
+
+- **Helm chart Kafka single-broker replication-factor overrides**
+  (production-smoke mini-phase, 2026-05-07): Bitnami's kafka
+  subchart leaves `offsets.topic.replication.factor`,
+  `transaction.state.log.replication.factor`,
+  `transaction.state.log.min.isr`, `default.replication.factor`,
+  and `min.insync.replicas` at Kafka's hardcoded defaults (3 / 3
+  / 2 / 1 / 1). The spectre chart sets `controller.replicaCount:
+  1` (single-broker for v1alpha1), so the internal
+  `__transaction_state` topic — which the engine's idempotent
+  producer (`enable.idempotence=true`, ADR-0023 §3 R4.4 addendum)
+  needs to acquire a Producer ID — couldn't be created (needs 3
+  replicas; only 1 broker). librdkafka's `send().await` returned
+  Ok despite InitProducerId silently failing, so publishes never
+  landed on the user-facing topic. The user-visible symptom:
+  kafka ScrapeJobs reached `phase=Completed` with `rows=N`, the
+  engine logged `kafka publish complete`, the topic existed on
+  the broker, but the consumer read zero messages with
+  `TimeoutException`. Fixed by adding
+  `kafka.controller.extraConfig` to
+  `build/helm/spectre/values.yaml` pinning the five factors to 1
+  (matching the `KAFKA_*_REPLICATION_FACTOR=1` env vars the
+  Compose stack already sets at `docker-compose.yml`).
+  Production deployments that bump `controller.replicaCount`
+  must raise these accordingly. Diagnosis path: engine kafka
+  integration tests at `engines/engine/tests/kafka_integration.rs`
+  pass against a Compose broker with the matching factor=1
+  settings (2/2 green in 1.95s), confirming the engine code is
+  fine; the rendered Bitnami chart's controller `server.properties`
+  was missing the five factor lines, confirming the chart-side
+  gap.
+
+- **`tools/test/verify-kafka-sink.sh` container disambiguation**
+  (production-smoke mini-phase, 2026-05-07): the kafka verifier
+  invoked `kubectl exec` against `<release>-kafka-controller-0`
+  without `-c <container>`. Bitnami kafka 30.0.0 added a
+  `kafka-init` init container alongside the main `kafka`
+  container, so kubectl emitted `Defaulted container "kafka" out
+  of: kafka, kafka-init (init)` on stderr — the verifier's
+  `2>&1` redirect interleaved this into the output buffer, and
+  the downstream `head -n 1 | jq -e` pipeline parsed the warning
+  line as the message and failed with `jq: parse error: Invalid
+  numeric literal at line 1, column 10`. Fixed: pass `-c kafka`
+  explicitly to silence the warning at source, plus filter
+  `^Defaulted container` in the framing-line grep as
+  defence-in-depth. The bug was masked by the s3-env-var bug
+  above — every prior smoke run failed at "Wait for ScrapeJobs
+  to complete" before reaching the kafka verifier.
+
+- **Helm chart S3 credential env var names** (production-smoke
+  mini-phase, 2026-05-07): `build/helm/spectre/templates/_helpers.tpl`
+  rendered `SPECTRE_S3_ACCESS_KEY` / `SPECTRE_S3_SECRET_KEY`,
+  but the engine reads `SPECTRE_S3_ACCESS_KEY_ID` /
+  `SPECTRE_S3_SECRET_ACCESS_KEY` (matching the AWS SDK
+  convention; `engines/engine/src/s3/config.rs:24-25`). The
+  engine therefore came up with the S3 endpoint configured but
+  no credentials, the AWS SDK fell back to the (empty) default
+  chain, and every PutObject request to MinIO returned a 4xx
+  that the SDK reported as a generic `service error`. Root cause
+  of the production-smoke s3 sink failures observed since R7.2
+  merge — every smoke run since 2026-04-30 reported
+  `S3_UPLOAD_FAILED: service error` on `hello-hackernews-s3`
+  while `hello-hackernews-kafka` and `hello-hackernews-webhook`
+  passed (kafka + webhook env vars matched correctly).
+
+### Changed
+
+- **`engines/engine/src/s3/uploader.rs` — richer SDK error
+  diagnostics** (production-smoke mini-phase, 2026-05-07): the
+  S3 upload failure path used to wrap `SdkError<PutObjectError>`
+  via `format!("{e}")`, which renders only the SDK's category
+  string (`"service error"` / `"dispatch failure"` / `"timeout"`
+  / …) and discards HTTP status, error code, and error message.
+  Replaced with a `format_put_object_error` helper that
+  matches on the variant and surfaces `code=<aws-error-code>
+  message=<aws-error-message>` for `ServiceError`, the underlying
+  `Display` for the other variants. The next S3 failure surfaces
+  the actual SDK detail in the `ScrapeJob.status.error` field
+  (and in the engine logs) rather than an opaque `service error`
+  — directly addresses the diagnostic gap that hid the env-var
+  bug for ~7 days post-R7.2 merge.
+
 ### Added
 
 - **cosign keyless signing integrated into `publish.yml`**
