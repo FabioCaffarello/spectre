@@ -153,7 +153,7 @@ impl S3Uploader {
             .send()
             .await
             .map(|_| ())
-            .map_err(format_put_object_error)
+            .map_err(|e| S3Error::Upload(format_put_object_error(&e)))
     }
 }
 
@@ -165,11 +165,11 @@ impl S3Uploader {
 /// log alone (production-smoke mini-phase 2026-05-07 — every
 /// failure since R7.2 surfaced as a bare "service error" with no
 /// way to tell auth-vs-bucket-vs-region from the kubectl output).
-fn format_put_object_error<E, R>(err: SdkError<E, R>) -> S3Error
+fn format_put_object_error<E, R>(err: &SdkError<E, R>) -> String
 where
     E: std::error::Error + ProvideErrorMetadata,
 {
-    let detail = match &err {
+    match err {
         SdkError::ServiceError(svc) => {
             let inner = svc.err();
             format!(
@@ -183,8 +183,7 @@ where
         SdkError::ResponseError(_) => format!("response parse error: {err}"),
         SdkError::ConstructionFailure(_) => format!("construction failure: {err}"),
         _ => format!("{err}"),
-    };
-    S3Error::Upload(detail)
+    }
 }
 
 /// Wrapper that exposes [`S3Uploader::from_env`]'s signature for
