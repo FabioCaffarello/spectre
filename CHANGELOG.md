@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`engines/engine/Dockerfile` — multi-arch builds** (W2.1,
+  Wave 2 multi-arch unblocks per `docs/roadmap.md` §4.2,
+  2026-05-08): the engine image now publishes
+  `linux/amd64 + linux/arm64` alongside control-plane and
+  playwright. The R6.5.3 deferral row in ADR-0018 §5
+  ("`MUSL_TARGET` hardcoded to `x86_64-unknown-linux-musl`")
+  is resolved. Implementation: builder stage runs natively on
+  `$BUILDPLATFORM` (avoids QEMU emulation of the full Rust +
+  CMake + protoc toolchain) and cross-compiles via a pre-built
+  musl cross-toolchain from `https://musl.cc/`
+  (`x86_64-linux-musl-cross` for amd64,
+  `aarch64-linux-musl-cross` for arm64). `MUSL_TARGET` is
+  derived per build via a `/musl-target.env` hand-off file
+  rather than a Dockerfile-level ARG (buildx cannot supply
+  per-platform args on a single bake invocation). Cargo and
+  the `cc` crate are pointed at the cross-compilers via
+  `CARGO_TARGET_<TRIPLE>_LINKER` and `CC_<TRIPLE>` /
+  `CXX_<TRIPLE>` env vars; without these, cargo's link step
+  invokes plain `cc` and fails on cross-arch builds. Strip
+  uses the cross-toolchain's `${MUSL_TRIPLE}-strip` so an
+  arm64 host can strip an x86_64 ELF. `.github/workflows/publish.yml`
+  adds engine to the `platform_overrides` array. Verified
+  locally on Apple Silicon: amd64 (45.9 MB image) and arm64
+  (40.9 MB image) both build clean and the binary runs to its
+  expected `SPECTRE_POSTGRES_URL` startup error. Closes Wave
+  2 W2.1; W2.2 (seleniumbase Chromium swap) and W2.3
+  (curl-impersonate build-from-source) remain ahead per the
+  roadmap.
+
 ## [0.1.0-alpha.1] - 2026-05-08
 
 First tag-triggered release. Exercises W1.2 auto-publish and
