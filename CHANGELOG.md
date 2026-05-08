@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`tools/test/verify-webhook-sink.sh` JSON-escape matching**
+  (production-smoke mini-phase, 2026-05-07): the webhook
+  verifier checked for `"title"` literal in the receiver's
+  request log, but mendhak/http-https-echo emits each request's
+  body as a JSON-encoded **string** inside the outer log JSON
+  (so `title` arrives as `\"title\"` with the quotes escaped).
+  The original pattern never matched. Fixed with a regex that
+  matches either the escaped form (current image layout) or the
+  unescaped form (forward-compat with a future receiver image).
+  Bug was masked by the s3 verifier failing on its own parsing
+  bug above — the workflow exited before reaching the webhook
+  step.
+
 - **`tools/test/verify-s3-sink.sh` mc-output column shift**
   (production-smoke mini-phase, 2026-05-07): the s3 verifier
   parsed `mc ls --recursive` output as `[date time tz] size key`

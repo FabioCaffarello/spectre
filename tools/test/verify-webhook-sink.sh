@@ -55,9 +55,14 @@ for HEADER in "x-spectre-job-id" "x-spectre-driver"; do
     fi
 done
 
-# The body should be NDJSON; the receiver echoes it back. Look
-# for the title field (from the hello-hackernews extraction).
-if ! echo "$LOGS" | grep -q '"title"'; then
+# The body should be NDJSON; the receiver echoes it back inside
+# the `body` field as a JSON-encoded *string*, so the inner JSON
+# arrives in escaped form (`\"title\":\"...\"`). Match either
+# form so a future receiver image that emits the body unescaped
+# still works (production-smoke mini-phase, 2026-05-07 — the
+# pattern was previously `"title"` which the current
+# mendhak/http-https-echo image's escaped layout never matches).
+if ! echo "$LOGS" | grep -qE '\\"title\\"|"title"'; then
     echo "ERROR: no 'title' field in any received body" >&2
     echo "Logs (last 50 lines):" >&2
     echo "$LOGS" | tail -50 >&2
