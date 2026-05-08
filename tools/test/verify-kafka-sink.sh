@@ -48,17 +48,35 @@ if ! kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -c kafka -- \
     exit 1
 fi
 
+# kafka-console-consumer can exit 0 while still emitting an
+# ERROR line (e.g. "Error processing message, terminating
+# consumer process") on stderr if a deserializer throws. Detect
+# that explicitly so the verifier surfaces the underlying cause
+# rather than letting the framing-line filter silently take
+# the next non-framing line.
+if grep -qE '\] ERROR ' "$TMP_OUT"; then
+    echo "ERROR: kafka-console-consumer reported an error processing messages" >&2
+    echo "--- full kafka-console-consumer output ---" >&2
+    cat "$TMP_OUT" >&2
+    echo "--- end ---" >&2
+    exit 1
+fi
+
 # kafka-console-consumer prints framing lines ("Processed a
 # total of N messages", "Bye!") alongside the actual messages.
 # Filter framing + the kubectl `Defaulted container` warning
 # (defence-in-depth — the `-c kafka` flag above silences it
 # upstream, but a future chart adding more containers would
-# re-introduce a similar diagnostic). Keep only the first
-# non-blank, non-framing line.
-MSG="$(grep -v '^$\|Processed a total\|^Bye!\|^Defaulted container' "$TMP_OUT" | head -n 1 || true)"
+# re-introduce a similar diagnostic) + Java-style log lines
+# (`[YYYY-MM-DD HH:MM:SS,mmm] LEVEL ...`) emitted by Kafka
+# tooling on stderr. Keep only the first non-blank, non-
+# framing, non-log line.
+MSG="$(grep -vE '^$|Processed a total|^Bye!|^Defaulted container|^\[[0-9]{4}-' "$TMP_OUT" | head -n 1 || true)"
 if [[ -z "$MSG" ]]; then
     echo "ERROR: empty message body from kafka topic" >&2
+    echo "--- full kafka-console-consumer output ---" >&2
     cat "$TMP_OUT" >&2
+    echo "--- end ---" >&2
     exit 1
 fi
 
@@ -69,6 +87,9 @@ fi
 if ! echo "$MSG" | jq -e 'has("title") and has("url")' > /dev/null; then
     echo "ERROR: kafka message missing required fields (title, url)" >&2
     echo "Got: $MSG" >&2
+    echo "--- full kafka-console-consumer output ---" >&2
+    cat "$TMP_OUT" >&2
+    echo "--- end ---" >&2
     exit 1
 fi
 
