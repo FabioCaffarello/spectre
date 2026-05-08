@@ -40,6 +40,22 @@ kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -c kafka -- \
         --list 2>/dev/null \
     | sed 's/^/  /' || echo "  (kafka-topics.sh --list failed)"
 
+# High-water-mark per partition for the target topic. If the
+# broker's log holds the engine's published rows, HWM > 0; if
+# HWM = 0 despite the engine logging `kafka publish complete
+# rows=N`, there's a producer-vs-broker disconnect (single-broker
+# `acks=all`-but-no-flush, listener mismatch, in-memory log
+# eviction, etc.). Distinguishes "broker has messages, consumer
+# can't read them" from "broker has no messages despite producer
+# success" — both are otherwise indistinguishable from
+# kafka-console-consumer's TimeoutException output.
+echo "Topic '${TOPIC}' offsets (partition:offset = HWM per partition):"
+kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -c kafka -- \
+    /opt/bitnami/kafka/bin/kafka-get-offsets.sh \
+        --bootstrap-server "${RELEASE}-kafka.${NAMESPACE}.svc.cluster.local:9092" \
+        --topic "$TOPIC" 2>/dev/null \
+    | sed 's/^/  /' || echo "  (kafka-get-offsets.sh failed — topic may not exist yet)"
+
 # `-c kafka` selects the broker container explicitly. Bitnami
 # kafka 30.0.0 added a `kafka-init` init container alongside
 # the main `kafka` container; without `-c` kubectl emits
