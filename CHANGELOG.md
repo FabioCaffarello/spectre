@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Helm chart Kafka single-broker replication-factor overrides**
+  (production-smoke mini-phase, 2026-05-07): Bitnami's kafka
+  subchart leaves `offsets.topic.replication.factor`,
+  `transaction.state.log.replication.factor`,
+  `transaction.state.log.min.isr`, `default.replication.factor`,
+  and `min.insync.replicas` at Kafka's hardcoded defaults (3 / 3
+  / 2 / 1 / 1). The spectre chart sets `controller.replicaCount:
+  1` (single-broker for v1alpha1), so the internal
+  `__transaction_state` topic — which the engine's idempotent
+  producer (`enable.idempotence=true`, ADR-0023 §3 R4.4 addendum)
+  needs to acquire a Producer ID — couldn't be created (needs 3
+  replicas; only 1 broker). librdkafka's `send().await` returned
+  Ok despite InitProducerId silently failing, so publishes never
+  landed on the user-facing topic. The user-visible symptom:
+  kafka ScrapeJobs reached `phase=Completed` with `rows=N`, the
+  engine logged `kafka publish complete`, the topic existed on
+  the broker, but the consumer read zero messages with
+  `TimeoutException`. Fixed by adding
+  `kafka.controller.extraConfig` to
+  `build/helm/spectre/values.yaml` pinning the five factors to 1
+  (matching the `KAFKA_*_REPLICATION_FACTOR=1` env vars the
+  Compose stack already sets at `docker-compose.yml`).
+  Production deployments that bump `controller.replicaCount`
+  must raise these accordingly. Diagnosis path: engine kafka
+  integration tests at `engines/engine/tests/kafka_integration.rs`
+  pass against a Compose broker with the matching factor=1
+  settings (2/2 green in 1.95s), confirming the engine code is
+  fine; the rendered Bitnami chart's controller `server.properties`
+  was missing the five factor lines, confirming the chart-side
+  gap.
+
 - **`tools/test/verify-kafka-sink.sh` container disambiguation**
   (production-smoke mini-phase, 2026-05-07): the kafka verifier
   invoked `kubectl exec` against `<release>-kafka-controller-0`
