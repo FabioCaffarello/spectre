@@ -18,9 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is resolved. Implementation: builder stage runs natively on
   `$BUILDPLATFORM` (avoids QEMU emulation of the full Rust +
   CMake + protoc toolchain) and cross-compiles via a pre-built
-  musl cross-toolchain from `https://musl.cc/`
-  (`x86_64-linux-musl-cross` for amd64,
-  `aarch64-linux-musl-cross` for arm64). `MUSL_TARGET` is
+  musl cross-toolchain (`x86_64-linux-musl-cross` for amd64,
+  `aarch64-linux-musl-cross` for arm64) mirrored in this repo's
+  `musl-cross-toolchains-v1` GitHub Release (originally from
+  `https://musl.cc/`; SHA256-pinned in the Dockerfile so
+  tampering fails the build). The mirror was added after the
+  W2.1 PR's first CI run hit `curl: (28)` connecting to
+  `musl.cc` from GitHub Actions runners. `MUSL_TARGET` is
   derived per build via a `/musl-target.env` hand-off file
   rather than a Dockerfile-level ARG (buildx cannot supply
   per-platform args on a single bake invocation). Cargo and

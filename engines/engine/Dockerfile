@@ -91,26 +91,39 @@ RUN apt-get update \
       ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# Per-target musl toolchain — pre-built tarball from musl.cc.
+# Per-target musl toolchain — pre-built tarball mirrored in this
+# repo's GitHub Releases (originally from https://musl.cc/).
 #
-# Why musl.cc instead of Debian's `musl-tools`? `musl-tools` is
+# Why a mirror? `musl.cc` is community-maintained and has been
+# intermittently unreachable from GitHub Actions runners; PR #105
+# CI hit `curl: (28) Failed to connect to musl.cc port 443` after
+# a 134s timeout. Self-hosting the tarballs in this repo's
+# `musl-cross-toolchains-v1` release removes the supply-chain
+# risk without changing the toolchain. Tarballs are byte-identical
+# to the upstream musl.cc downloads from 2026-05-08; SHA256s pinned
+# below so a tampered or replaced artifact fails the build.
+#
+# Why a pre-built toolchain at all? Debian's `musl-tools` is
 # arch-bound to the host (apt installs the host-arch binary), so
 # on an amd64 host it provides x86_64-linux-musl-gcc only, not
 # aarch64-linux-musl-gcc. Building musl-cross-make from source
-# would add 20+ minutes to every build. musl.cc publishes
-# pre-built cross-toolchains for every (host, target) pair — the
-# standard industry path for Rust musl cross-compile. Trade-off:
-# trust an HTTPS fetch the same way we trust crates.io / npm.
-# Mitigation: pin the URL (no version drift); the tarballs are
-# small (~50 MB) so the layer cache amortises the download
-# across rebuilds. Per ADR-0018 §5 W2.1 update.
+# would add 20+ minutes to every build. The pre-built tarball is
+# the standard industry path for Rust musl cross-compile.
 #
-# Both arches are handled with the same logic — download the
-# matching tarball, extract under /opt/, symlink binaries into
-# /usr/local/bin/ so cargo's musl target finds the linker by
-# the standard `${TARGET_TRIPLE}-gcc` lookup. The libcurl include
-# directory is host-arch-dependent (Debian multiarch path);
-# `dpkg --print-architecture` resolves it.
+# Bumping the toolchain: download fresh tarballs from musl.cc,
+# upload to a new `musl-cross-toolchains-v<N>` release, update
+# the URL prefix + the two SHA256 lines below in lockstep.
+# Per ADR-0018 §5 W2.1 update.
+ARG MUSL_TOOLCHAINS_RELEASE=https://github.com/FabioCaffarello/spectre/releases/download/musl-cross-toolchains-v1
+ARG MUSL_X86_64_SHA256=c5d410d9f82a4f24c549fe5d24f988f85b2679b452413a9f7e5f7b956f2fe7ea
+ARG MUSL_AARCH64_SHA256=c909817856d6ceda86aa510894fa3527eac7989f0ef6e87b5721c58737a06c38
+
+# Download the matching tarball, verify SHA256, extract under
+# /opt/, symlink binaries into /usr/local/bin/ so cargo's musl
+# target finds the linker by the standard `${TARGET_TRIPLE}-gcc`
+# lookup. The libcurl include directory is host-arch-dependent
+# (Debian multiarch path); `dpkg --print-architecture` resolves
+# it.
 #
 # `MUSL_TARGET` is computed inline per stage rather than a
 # Dockerfile-level ARG because bake invokes the builder once per
@@ -127,8 +140,13 @@ RUN HOST_TRIPLE=$(case "$(dpkg --print-architecture)" in \
         arm64) echo "aarch64-linux-musl-cross" ;; \
         *) echo "unsupported TARGETARCH: ${TARGETARCH}"; exit 1 ;; \
     esac) \
+ && MUSL_SHA256=$(case "${TARGETARCH:-amd64}" in \
+        amd64) echo "${MUSL_X86_64_SHA256}" ;; \
+        arm64) echo "${MUSL_AARCH64_SHA256}" ;; \
+    esac) \
  && MUSL_TRIPLE="${MUSL_CROSS%-cross}" \
- && curl -fsSL "https://musl.cc/${MUSL_CROSS}.tgz" -o /tmp/musl-cross.tgz \
+ && curl -fsSL "${MUSL_TOOLCHAINS_RELEASE}/${MUSL_CROSS}.tgz" -o /tmp/musl-cross.tgz \
+ && echo "${MUSL_SHA256}  /tmp/musl-cross.tgz" | sha256sum -c - \
  && tar -xzf /tmp/musl-cross.tgz -C /opt/ \
  && rm /tmp/musl-cross.tgz \
  && for bin in /opt/${MUSL_CROSS}/bin/*; do \

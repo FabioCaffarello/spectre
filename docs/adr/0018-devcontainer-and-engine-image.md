@@ -457,24 +457,36 @@ signing) follow per the roadmap §4.1 sequence.
   playwright. Tag-triggered publishes now produce a
   manifest list for engine.
 
-**Why musl.cc and not `musl-tools` from Debian.** Debian's
-`musl-tools` package is host-arch-bound — apt installs the
-`${HOST_ARCH}-linux-musl-gcc` binary, not a cross-compiler.
-On an amd64 host that's `x86_64-linux-musl-gcc` only; on an
-arm64 host it's `aarch64-linux-musl-gcc` only. Building
-musl-cross-make from source for both targets adds 20+
-minutes to every build cycle. The standard industry path
-for Rust musl cross-compile is the pre-built tarballs at
-`https://musl.cc/`, maintained by the musl-libc community
-as a convenience layer over musl-cross-make. The trade is
-a build-time HTTPS dependency on `musl.cc` — accepted on
-the same trust basis as crates.io and the npm registry.
-Mitigation: layer caching amortises the ~50 MB tarball
-download across rebuilds, and the URL is pinned (no
-version-drift). If `musl.cc` becomes unreliable, the
-remediation is to vendor the tarballs into our own mirror
-or build musl-cross-make from source — both are mechanical
-follow-ups that don't change the Dockerfile shape.
+**Why a pre-built musl-cross toolchain and not `musl-tools` from
+Debian.** Debian's `musl-tools` package is host-arch-bound — apt
+installs the `${HOST_ARCH}-linux-musl-gcc` binary, not a
+cross-compiler. On an amd64 host that's `x86_64-linux-musl-gcc`
+only; on an arm64 host it's `aarch64-linux-musl-gcc` only.
+Building musl-cross-make from source for both targets adds 20+
+minutes to every build cycle. The standard industry path for
+Rust musl cross-compile is the pre-built tarballs at
+`https://musl.cc/`, maintained by the musl-libc community as a
+convenience layer over musl-cross-make.
+
+**Why we mirror musl.cc in this repo's GitHub Releases.** The
+W2.1 PR's first CI run (2026-05-08) hit
+`curl: (28) Failed to connect to musl.cc port 443 after 134478
+ms` from GitHub Actions runners — `musl.cc` is community-
+maintained and intermittently unreachable from CI IP ranges.
+The remediation predicted in the original W2.1 plan ("vendor
+the tarballs into our own mirror") was applied immediately:
+the two tarballs (`x86_64-linux-musl-cross.tgz`,
+`aarch64-linux-musl-cross.tgz`) are now hosted in this repo's
+`musl-cross-toolchains-v1` GitHub Release, with SHA256s pinned
+in the Dockerfile so a tampered or replaced artifact fails the
+build. The Dockerfile fetches from `https://github.com/<owner>/spectre/releases/download/musl-cross-toolchains-v<N>/`
+instead of `https://musl.cc/`. Trade preserved: trust
+`github.com/<owner>/spectre` HTTPS the same way we trust
+`github.com/<owner>` for source tarballs in any other repo.
+Bumping the toolchain is a manual operator step (download
+fresh from musl.cc → upload to a new release tag → bump the
+URL prefix and SHA256 lines in the Dockerfile in lockstep) but
+toolchains are static so bumps are rare.
 
 **What stays unchanged from R6.5.3 + W1.2:**
 
