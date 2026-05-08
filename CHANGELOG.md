@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.1] - 2026-05-08
+
+First tag-triggered release. Exercises W1.2 auto-publish and
+W1.4 cosign keyless signing for the first time end-to-end on
+Docker Hub. Baseline contains Phase R9 (v1alpha2 architectural
+foundation), Wave 1 (production hardening: W1.2 + W1.3 + W1.4
++ W1.5), and the production-smoke mini-phase fixes (PR #103).
+Five published images:
+`docker.io/fabiocaffarello/spectre-{engine,control-plane,
+curl-impersonate,playwright,seleniumbase}:0.1.0-alpha.1`,
+each signed via cosign keyless under
+`https://github.com/FabioCaffarello/spectre/.github/workflows/publish.yml`.
+Verification recipe in `docs/architecture/releases.md` "Image
+signing" section.
+
 ### Fixed
 
 - **`tools/test/verify-webhook-sink.sh` JSON-escape matching**

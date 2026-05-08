@@ -1,6 +1,6 @@
 [package]
 name = "spectre-engine"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Spectre engine core: DSL parsing, planning, and execution scheduling."
