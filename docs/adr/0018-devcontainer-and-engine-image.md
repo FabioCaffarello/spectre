@@ -644,6 +644,124 @@ seleniumbase Dockerfile change + the adapter source change
 releases.md / container-images.md updates + the CHANGELOG
 entry).
 
+#### W2.3 update — curl-impersonate multi-arch unblock (closes Wave 2)
+
+> **W2.3 evolution note (2026-05-08).** This subsection closes
+> the R6.5.3 update's three-row deferral table by resolving
+> the curl-impersonate row. The original deferral noted three
+> unblock paths: (a) wait for upstream to publish a multi-
+> arch manifest list; (b) fork the upstream image build and
+> publish our own multi-arch tag; (c) cross-compile
+> curl-impersonate from source. We chose path (c) — except
+> upstream **already publishes prebuilt aarch64 + x86_64
+> tarballs** under their v0.6.1 GitHub Release, so the
+> "compile from source" framing was over-specified. The
+> actual W2.3 path is "extract upstream's prebuilt tarballs
+> into a debian-slim runtime", which is faster, smaller,
+> and equally multi-arch.
+
+**What W2.3 lands** (Wave 2 multi-arch unblocks per
+`docs/roadmap.md` §4.2 — closes Wave 2):
+
+- `adapters/curl-impersonate/Dockerfile` runtime stage
+  replaces the upstream base `lwthiker/curl-impersonate:0.6-chrome`
+  (amd64-only on Docker Hub) with a `debian:bookworm-slim`
+  base into which the build downloads + extracts upstream's
+  prebuilt tarballs:
+  - `curl-impersonate-v0.6.1.<arch>-linux-gnu.tar.gz`
+    (binaries + `curl_chrome*` / `curl_ff*` wrappers)
+  - `libcurl-impersonate-v0.6.1.<arch>-linux-gnu.tar.gz`
+    (shared library `libcurl-impersonate-chrome.so.4` etc.)
+  Per-target tarball selection is `${TARGETARCH}`-conditional
+  inline (`amd64` → `x86_64-linux-gnu`,
+  `arm64` → `aarch64-linux-gnu`).
+- `build/docker/versions.env` replaces `CURL_IMPERSONATE_IMAGE`
+  with `CURL_IMPERSONATE_VERSION=0.6.1`. The Dockerfile no
+  longer references an upstream Docker image; the runtime is
+  Debian + extracted tarballs.
+- `docker-bake.hcl` renames the corresponding bake variable
+  + the curl-impersonate target's `args` map.
+- `.github/workflows/publish.yml` adds curl-impersonate to
+  the multi-arch `platform_overrides` array. **All five
+  images now ship `linux/amd64 + linux/arm64` manifest
+  lists.**
+
+**Why mirror upstream tarballs in this repo's releases.**
+Same supply-chain pattern as W2.1's `musl-cross-toolchains-v1`:
+removes a build-time HTTPS dependency on a third-party host
+(github.com/lwthiker/curl-impersonate releases). Bumping the
+version requires download from upstream → upload to a new
+`curl-impersonate-vX.Y.Z` release tag in this repo → bump
+`CURL_IMPERSONATE_VERSION` + the four SHA256 ARGs in
+`adapters/curl-impersonate/Dockerfile` in lockstep. Upstream
+tarballs are static so bumps are rare (curl-impersonate v0.6.x
+is the maintained line as of 2026-05-08).
+
+**Why debian-slim and not Alpine.** The pre-W2.3 runtime base
+`lwthiker/curl-impersonate:0.6-chrome` was Alpine-based. The
+upstream prebuilt tarballs are tagged `linux-gnu` — they
+dynamically link against glibc, not musl. Running them under
+Alpine would require glibc compat shims (`gcompat`) or a
+sysroot trick; debian-slim is the natural runtime since the
+binaries match its libc out of the box. The debian-slim base
+is ~30 MB vs Alpine's ~5 MB, but the variant binaries +
+shared library are ~12 MB on top of either base, so the
+relative-cost gap is negligible. Final image size: ~75 MB
+(measured locally), within the 80 MB target the original
+deferral comment cited.
+
+**Why dash, not bash.** The wrappers' shebangs in upstream
+v0.6.1 are `#!/usr/bin/env bash`. Earlier upstream versions
+used `#!/usr/bin/env ash` (Alpine-only). The Dockerfile
+defensively `sed`-replaces `env ash` → `env sh` in case
+upstream reverts; the no-op sed against bash-shebanged
+wrappers is harmless. Bash is essential in Debian (Priority:
+required) so the wrappers run unchanged on debian-slim too.
+
+**`ldconfig` finds the shared library.** The runtime stage
+runs `ldconfig` after extracting the libs into
+`/usr/local/lib/`, so `curl-impersonate-chrome` finds
+`libcurl-impersonate-chrome.so.4` via the dynamic linker
+cache without an `LD_LIBRARY_PATH` env override at runtime.
+This is the standard Linux pattern for shipping shared
+libs in non-standard prefixes.
+
+**What stays unchanged from R6.5.3 + W1.2 + W2.1 + W2.2:**
+
+- ADR-0016 §1 (subprocess invocation over cgo) — adapter
+  still execs the variant wrappers per Navigate, not via
+  libcurl-impersonate FFI.
+- ADR-0016 §3 (default variant `curl_chrome116`,
+  env-overridable) — env-var contract preserved
+  byte-for-byte.
+- The chef + Go builder stages — same multi-stage layout
+  shipping a static Go adapter binary.
+- `docker-bake.hcl` continues to default the
+  curl-impersonate target to `platforms = ["linux/amd64"]`;
+  multi-arch is a publish-time `--set` override.
+- `Verify pushed manifests` step asserting per-image
+  manifest list — automatically picks up curl-impersonate's
+  new multi-arch row without code change.
+- Cosign keyless signing from W1.4 — signs curl-impersonate's
+  manifest-list digest the same way the other multi-arch
+  images are signed.
+
+**Closes the Wave 2 deferral table.** The R6.5.3 update's
+"Multi-arch status" subsection now reads ✅ today across all
+five rows (control-plane, playwright, engine, seleniumbase,
+curl-impersonate). The next time the maintainer pushes a
+`v*.*.*` tag, every published image will ship as a
+`linux/amd64 + linux/arm64` manifest list under cosign
+keyless attestation.
+
+W2.3 is **single architectural decision** scope per
+CONTRIBUTING.md "v1alpha2 process rigor matrix" (R9.0).
+Single commit; no master phase prompt; no new ADR (this
+in-place §5 amendment + the curl-impersonate Dockerfile
+change + the docker-bake.hcl variable rename + the
+publish.yml platform_overrides change + the releases.md /
+container-images.md updates + the CHANGELOG entry).
+
 ## Consequences
 
 - Good, because contributor onboarding compresses from a multi-

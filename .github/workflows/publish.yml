@@ -153,18 +153,19 @@ jobs:
           multi_arch="${MULTI_ARCH:-true}"
           targets="${TARGETS:-default}"
 
-          # Per-target platform overrides. control-plane, playwright,
-          # engine (W2.1, 2026-05-08), and seleniumbase (W2.2,
-          # 2026-05-08) build multi-arch (linux/amd64 + linux/arm64)
-          # when `multi_arch` is true; curl-impersonate remains
-          # amd64-only per the deferral list in ADR-0018 §5 R6.5.3
-          # update (W2.3 unblocks it via build-from-source).
-          # As deferred images unblock, add their override here
-          # without touching docker-bake.hcl. Use a bash array so
-          # empty / multi-flag expansion is correct under set -u.
-          # Two `--set` per target (one per platform) renders the
-          # platforms field as a proper list under `bake --print`;
-          # the comma-joined single-value form
+          # Per-target platform overrides. All five images build
+          # multi-arch (linux/amd64 + linux/arm64) when `multi_arch`
+          # is true after W2.3 (2026-05-08) closed Wave 2 by
+          # unblocking curl-impersonate via the upstream prebuilt-
+          # tarball mirror. Earlier multi-arch unblocks: control-
+          # plane (R6.5.3), playwright (R6.5.3), engine (W2.1
+          # via musl cross-compile), seleniumbase (W2.2 via
+          # Chromium swap).
+          #
+          # Use a bash array so empty / multi-flag expansion is
+          # correct under set -u. Two `--set` per target (one per
+          # platform) renders the platforms field as a proper list
+          # under `bake --print`; the comma-joined single-value form
           # (`--set foo.platform=a,b`) is documented but renders
           # ambiguously, so we keep the explicit form here.
           platform_overrides=()
@@ -178,6 +179,8 @@ jobs:
               "--set" "engine.platform=linux/arm64"
               "--set" "seleniumbase.platform=linux/amd64"
               "--set" "seleniumbase.platform=linux/arm64"
+              "--set" "curl-impersonate.platform=linux/amd64"
+              "--set" "curl-impersonate.platform=linux/arm64"
             )
           fi
 
