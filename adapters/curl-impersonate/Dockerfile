@@ -9,47 +9,26 @@
 #   (CGO_ENABLED=0). ADR-0016 §1 chose subprocess invocation over
 #   cgo, so the adapter does not link libcurl-impersonate — it
 #   shells out to a `curl_<variant>` wrapper per Navigate.
-# - runtime stage: the upstream `lwthiker/curl-impersonate:<tag>`
-#   image used as a base, not extracted from. Rationale below.
+# - runtime stage: debian:bookworm-slim + extracted upstream
+#   curl-impersonate v0.6.1 tarballs (W2.3, 2026-05-08 — ADR-0018
+#   §5 W2.3 update + ADR-0017 §3 W2.3 amendment).
 #
-# Runtime-base choice
-# -------------------
-# The phase prompt's R6.1 §4.3 sketched
-# `gcr.io/distroless/base-debian12:nonroot` with a multi-stage
-# COPY --from=upstream extracting `curl_chrome116` and its shared
-# library into a distroless rootfs. That sketch is infeasible: the
-# variant binaries shipped by upstream (`curl_chrome116`,
-# `curl_chrome110`, `curl_firefox117`, …) are POSIX shell wrappers
-# (`#!/usr/bin/env ash`) that exec the actual `curl-impersonate-chrome`
-# binary with a Chrome-116-specific TLS cipher list and header set.
-# Distroless ships no shell — the wrappers cannot execute. The
-# pre-R3.1 operator image bundled the variants by downloading the
-# upstream release tarball into a Microsoft Playwright base which
-# happens to ship `bash`; that base is not available here.
+# Multi-arch (W2.3, 2026-05-08). Builds `linux/amd64 + linux/arm64`.
+# Replaces the pre-W2.3 runtime base `lwthiker/curl-impersonate:0.6-chrome`
+# (amd64-only on Docker Hub) with a Debian bookworm-slim base into
+# which we install the upstream curl-impersonate v0.6.1 tarballs
+# matching the target architecture. Upstream publishes prebuilt
+# `aarch64-linux-gnu.tar.gz` + `x86_64-linux-gnu.tar.gz` releases
+# per [their v0.6.1 release page](https://github.com/lwthiker/curl-impersonate/releases/tag/v0.6.1);
+# the binaries are dynamically linked against glibc (linux-gnu)
+# so debian-slim is the natural runtime, not Alpine (musl) which
+# the pre-W2.3 image used.
 #
-# The minimal viable runtime is therefore the upstream Alpine image
-# itself (`lwthiker/curl-impersonate:0.6-chrome`, 14 MB compressed),
-# which provides:
-#
-#   * `/bin/ash` and `/bin/sh` for the wrapper shebang,
-#   * every chrome / firefox / edge / safari variant in
-#     `/usr/local/bin/`,
-#   * `libcurl-impersonate-chrome.so.4` in `/usr/local/lib/`,
-#   * a working dynamic linker for the underlying glibc-style
-#     binary (Alpine's musl is API-compatible enough — the
-#     upstream binaries are built specifically for this image).
-#
-# We add `ca-certificates` (TLS verification needs the trust store)
-# and a non-root user; the adapter binary lands in /usr/local/bin/.
-# Final image size: ~25–30 MB, well under the 80 MB target. Using
-# the upstream image as the base trades a deeper supply-chain
-# coupling for an order-of-magnitude smaller image and a working
-# runtime — the better trade for v1alpha1.
-#
-# The image tag is pinned via `build/docker/versions.env` (key
-# CURL_IMPERSONATE_IMAGE) so a bump is one edit. ADR-0016 §3 records
-# the variant-default rationale; ADR-0017 §3 covers the extraction
-# approach.
+# Tarballs are mirrored in this repo's `curl-impersonate-v0.6.1`
+# GitHub Release with SHA256 verification (same supply-chain
+# pattern as `musl-cross-toolchains-v1` from W2.1) so a build-
+# time outage on github.com/lwthiker/curl-impersonate releases
+# does not break our publish flow.
 #
 # Build context: repository root.
 #
@@ -57,7 +36,13 @@
 
 ARG GO_VERSION=1.26
 ARG BUF_VERSION=1.55.1
-ARG CURL_IMPERSONATE_IMAGE=lwthiker/curl-impersonate:0.6-chrome
+ARG CURL_IMPERSONATE_VERSION=0.6.1
+
+# Note: TARGETPLATFORM, TARGETOS, and TARGETARCH are auto-injected
+# by BuildKit into FROM directives without explicit top-level ARG
+# declarations. Each stage that needs them in RUN bodies declares
+# them inside its own FROM block (see W2.1 commit 0f70209's
+# similar pattern in engines/engine/Dockerfile).
 
 # ---------------------------------------------------------------------------
 # Stage 1 — regenerate Go protocol bindings (gitignored — ADR-0007)
@@ -94,44 +79,102 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -trimpath -ldflags="-s -w" -o /out/adapter ./cmd/adapter
 
 # ---------------------------------------------------------------------------
-# Stage 3 — runtime: upstream curl-impersonate image (Alpine)
+# Stage 3 — runtime: debian:bookworm-slim + curl-impersonate tarballs
 # ---------------------------------------------------------------------------
-# R7.x: multi-arch unblock — the runtime base
-# `lwthiker/curl-impersonate:0.6-chrome` is published amd64-only on
-# Docker Hub as of R6.5.3. See ADR-0018 §5 R6.5.3 update for unblock
-# options: (a) wait for upstream to publish a multi-arch manifest
-# list, (b) fork the upstream image build and publish our own
-# multi-arch tag, (c) cross-compile curl-impersonate from source per
-# https://github.com/lwthiker/curl-impersonate/blob/main/INSTALL.md's
-# ARM64 instructions and skip the upstream base entirely. Option (a)
-# is the lowest-effort path; (b) and (c) trade engineering cost for
-# release-cadence independence from upstream.
-FROM ${CURL_IMPERSONATE_IMAGE} AS runtime
+# Debian-slim is the runtime base because:
+#   1. Upstream's curl-impersonate-v0.6.1 binaries are
+#      `linux-gnu` (glibc), not musl. They won't run on Alpine.
+#   2. The variant binaries (`curl_chrome116`, `curl_ff117`, …)
+#      are POSIX shell wrappers that exec the underlying
+#      `curl-impersonate-chrome` binary. Debian-slim ships
+#      `dash` at `/bin/sh` so the wrappers work — we sed-replace
+#      their `#!/usr/bin/env ash` shebangs to `#!/usr/bin/env sh`
+#      below since `ash` (busybox's Almquist shell) is not on
+#      Debian.
+#   3. The shared library (`libcurl-impersonate-chrome.so.4`)
+#      links against glibc + the standard NSS/SSL surfaces; no
+#      additional userland needs to ship.
+FROM debian:bookworm-slim AS runtime
+ARG TARGETARCH
+ARG CURL_IMPERSONATE_VERSION
 
-# Apply available Alpine package upgrades from the runtime base
-# (W1.3 finding remediation, 2026-05-07): the upstream
-# `lwthiker/curl-impersonate:0.6-chrome` ships pinned package
-# versions that lag behind Alpine 3.18 community/main fixes —
-# Trivy surfaced libcrypto3/libssl3 (CVE-2024-6119) and
-# musl/musl-utils (CVE-2025-26519) as actionable HIGH findings.
-# `apk upgrade --no-cache --available` pulls latest patch
-# versions for every installed Alpine package; the curl-impersonate
-# variant binaries shipped under `/usr/local/bin` are not
-# Alpine-managed and remain untouched.
+# Per-target tarball SHA256 pins. Upstream publishes prebuilt
+# binaries for both arches; we mirror the tarballs in this repo's
+# `curl-impersonate-v${CURL_IMPERSONATE_VERSION}` GitHub Release
+# (W2.3 supply-chain pattern, 2026-05-08). Bumping the upstream
+# version requires: download the new tarballs from upstream,
+# upload to a new release tag, update CURL_IMPERSONATE_VERSION
+# above + the four SHA256 ARGs below + (likely) the
+# CURL_IMPERSONATE_VERSION pin in build/docker/versions.env in
+# lockstep.
+ARG CURL_IMPERSONATE_TARBALLS_RELEASE=https://github.com/FabioCaffarello/spectre/releases/download/curl-impersonate-v${CURL_IMPERSONATE_VERSION}
+ARG CI_X86_64_SHA256=fa1e1614f7ba69ccc66721a0f38be457a3647eb64c75d66974b56186e3316b12
+ARG CI_AARCH64_SHA256=b45f14366e4766fbd70a54a07182d2ffaf1e8aed0f0d85aa4e0183fa9d041694
+ARG LIBCI_X86_64_SHA256=cf68ce8d4fd5a848cb62fd782c6eb6c8a17d473adba658198e2528ce48923c12
+ARG LIBCI_AARCH64_SHA256=1e34628a06e857704ac1f1689019e4e2ac7884c9a5142f32fb043ae07b29fc73
+
+# Install the bare-minimum runtime userland: curl/ca-certs for
+# the tarball download + TLS chain verification, and dash (already
+# present on slim, listed for documentation). The wrappers' POSIX
+# shell shape is satisfied by /bin/sh which dash provides.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Per-target tarball selection. Both the binaries tarball
+# (curl-impersonate-*) and the shared-library tarball
+# (libcurl-impersonate-*) ship per-arch upstream and need to be
+# installed together: the wrappers under /usr/local/bin/ exec the
+# `curl-impersonate-chrome` binary (binaries tarball), which
+# dynamically links `libcurl-impersonate-chrome.so.4` (libs
+# tarball). Both tarballs unpack flat — files land directly under
+# the cwd — so we extract into /usr/local/bin and /usr/local/lib
+# respectively.
 #
-# ca-certificates is required for TLS chain verification on outbound
-# HTTPS requests the curl-impersonate variants make. Alpine 3.18's
-# `ca-certificates-bundle` is preinstalled but the explicit package
-# adds the update-ca-certificates symlinks the variants expect under
-# /etc/ssl/. apk add --no-cache keeps the package index out of the
-# image layer.
-RUN apk upgrade --no-cache --available \
- && apk add --no-cache ca-certificates \
- && update-ca-certificates 2>/dev/null || true
+# After extraction, the wrappers' shebangs are rewritten from
+# `#!/usr/bin/env ash` to `#!/usr/bin/env sh` so they run under
+# Debian's dash (POSIX-compatible). The wrappers are simple
+# wrappers — they exec the curl binary with a per-variant flag
+# set — and the substitution is shell-shape-preserving.
+#
+# `ldconfig` rebuilds the dynamic linker cache so
+# `curl-impersonate-chrome` finds `libcurl-impersonate-chrome.so.4`
+# under /usr/local/lib without an LD_LIBRARY_PATH override at
+# runtime.
+RUN CI_TARBALL=$(case "${TARGETARCH:-amd64}" in \
+        amd64) echo "curl-impersonate-v${CURL_IMPERSONATE_VERSION}.x86_64-linux-gnu.tar.gz" ;; \
+        arm64) echo "curl-impersonate-v${CURL_IMPERSONATE_VERSION}.aarch64-linux-gnu.tar.gz" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}"; exit 1 ;; \
+    esac) \
+ && LIBCI_TARBALL=$(case "${TARGETARCH:-amd64}" in \
+        amd64) echo "libcurl-impersonate-v${CURL_IMPERSONATE_VERSION}.x86_64-linux-gnu.tar.gz" ;; \
+        arm64) echo "libcurl-impersonate-v${CURL_IMPERSONATE_VERSION}.aarch64-linux-gnu.tar.gz" ;; \
+    esac) \
+ && CI_SHA256=$(case "${TARGETARCH:-amd64}" in \
+        amd64) echo "${CI_X86_64_SHA256}" ;; \
+        arm64) echo "${CI_AARCH64_SHA256}" ;; \
+    esac) \
+ && LIBCI_SHA256=$(case "${TARGETARCH:-amd64}" in \
+        amd64) echo "${LIBCI_X86_64_SHA256}" ;; \
+        arm64) echo "${LIBCI_AARCH64_SHA256}" ;; \
+    esac) \
+ && curl -fsSL "${CURL_IMPERSONATE_TARBALLS_RELEASE}/${CI_TARBALL}" -o /tmp/ci.tar.gz \
+ && echo "${CI_SHA256}  /tmp/ci.tar.gz" | sha256sum -c - \
+ && curl -fsSL "${CURL_IMPERSONATE_TARBALLS_RELEASE}/${LIBCI_TARBALL}" -o /tmp/libci.tar.gz \
+ && echo "${LIBCI_SHA256}  /tmp/libci.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/ci.tar.gz    -C /usr/local/bin \
+ && tar -xzf /tmp/libci.tar.gz -C /usr/local/lib \
+ && rm /tmp/ci.tar.gz /tmp/libci.tar.gz \
+ && sed -i 's|^#!/usr/bin/env ash$|#!/usr/bin/env sh|' /usr/local/bin/curl_* \
+ && chmod +x /usr/local/bin/curl_* /usr/local/bin/curl-impersonate-* \
+ && ldconfig
 
-# Drop privileges. Upstream ships `nobody` (UID 65534, GID 65534) in
-# /etc/passwd; reuse it rather than creating a redundant account.
-# This satisfies Kubernetes runAsNonRoot security contexts.
+# Drop privileges. Debian's `nobody` user (UID 65534) is
+# preinstalled; reuse it rather than creating a redundant
+# account. This satisfies Kubernetes runAsNonRoot security
+# contexts.
 COPY --from=builder /out/adapter /usr/local/bin/adapter
 USER 65534:65534
 

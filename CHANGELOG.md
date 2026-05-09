@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`adapters/curl-impersonate/Dockerfile` — debian-slim +
+  upstream prebuilt tarballs for multi-arch** (W2.3, Wave 2
+  closes per `docs/roadmap.md` §4.2, 2026-05-08): the
+  curl-impersonate image now publishes `linux/amd64 +
+  linux/arm64`. **All five images now ship multi-arch — Wave 2
+  closed.** Replaces the upstream
+  `lwthiker/curl-impersonate:0.6-chrome` runtime base
+  (amd64-only on Docker Hub) with a `debian:bookworm-slim` base
+  into which the Dockerfile downloads + verifies (SHA256) +
+  extracts upstream's prebuilt tarballs:
+  `curl-impersonate-v0.6.1.<arch>-linux-gnu.tar.gz` (binaries +
+  `curl_chrome*` / `curl_ff*` wrappers) and
+  `libcurl-impersonate-v0.6.1.<arch>-linux-gnu.tar.gz` (shared
+  library). The four tarballs are mirrored in this repo's
+  `curl-impersonate-v0.6.1` GitHub Release (same supply-chain
+  pattern as W2.1's `musl-cross-toolchains-v1`) so a build-time
+  outage at github.com/lwthiker/curl-impersonate releases does
+  not break our publish flow. `ldconfig` rebuilds the dynamic
+  linker cache after extracting the libs into
+  `/usr/local/lib/`, so `curl-impersonate-chrome` finds
+  `libcurl-impersonate-chrome.so.4` without `LD_LIBRARY_PATH`
+  at runtime. `build/docker/versions.env` replaces
+  `CURL_IMPERSONATE_IMAGE` with `CURL_IMPERSONATE_VERSION=0.6.1`;
+  `docker-bake.hcl` renames the corresponding bake variable +
+  the curl-impersonate target's `args` map.
+  `.github/workflows/publish.yml` adds curl-impersonate to the
+  multi-arch `platform_overrides` array. Verified locally on
+  Apple Silicon: amd64 and arm64 builds both succeed and
+  `curl_chrome116 --version` returns
+  `curl 8.1.1 (<arch>-...-linux-gnu) libcurl/8.1.1 BoringSSL`
+  (the impersonation TLS stack loads correctly on both arches).
+  Image size grew from ~22 MB (Alpine base) to ~75 MB
+  (debian-slim base + tarballs); within the 80 MB target the
+  R6.1 §4.3 sketch cited. ADR-0018 §5 W2.3 in-place evolution
+  note documents the trade decisions; ADR-0016 §1's
+  subprocess-over-cgo contract holds byte-for-byte.
+
 - **`adapters/seleniumbase/Dockerfile` — Chrome → Chromium swap
   for multi-arch** (W2.2, Wave 2 multi-arch unblocks per
   `docs/roadmap.md` §4.2, 2026-05-08): the seleniumbase image

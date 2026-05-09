@@ -93,8 +93,20 @@ variable "PLAYWRIGHT_VERSION" {
   default = "1.59.1"
 }
 
-variable "CURL_IMPERSONATE_IMAGE" {
-  default = "lwthiker/curl-impersonate:0.6-chrome"
+variable "CURL_IMPERSONATE_VERSION" {
+  // W2.3 (2026-05-08, ADR-0018 §5 W2.3 update + ADR-0017 §3 W2.3
+  // amendment): replaced the upstream `lwthiker/curl-impersonate:
+  // 0.6-chrome` runtime base (amd64-only) with a debian-slim base
+  // into which the Dockerfile installs the upstream prebuilt
+  // tarballs (`curl-impersonate-vX.Y.Z.<arch>-linux-gnu.tar.gz` +
+  // `libcurl-impersonate-vX.Y.Z.<arch>-linux-gnu.tar.gz`)
+  // mirrored in this repo's `curl-impersonate-vX.Y.Z` GitHub
+  // Release. `CURL_IMPERSONATE_VERSION` pins the upstream
+  // release; the four SHA256s for the per-arch tarballs are
+  // pinned in the Dockerfile. Bumping requires uploading new
+  // tarballs to a new release tag and updating both this var
+  // and the SHA256 ARGs in lockstep.
+  default = "0.6.1"
 }
 
 // CI sets these; local builds leave them empty.
@@ -207,9 +219,9 @@ target "curl-impersonate" {
     "Spectre curl-impersonate adapter: TLS-fingerprint HTTP fetcher",
   )
   args = {
-    GO_VERSION             = GO_VERSION
-    BUF_VERSION            = BUF_VERSION
-    CURL_IMPERSONATE_IMAGE = CURL_IMPERSONATE_IMAGE
+    GO_VERSION                = GO_VERSION
+    BUF_VERSION               = BUF_VERSION
+    CURL_IMPERSONATE_VERSION  = CURL_IMPERSONATE_VERSION
   }
   platforms = ["linux/amd64"]
 }

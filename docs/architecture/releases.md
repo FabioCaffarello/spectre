@@ -75,7 +75,7 @@ deferrals carry explicit unblock criteria.
 | `spectre-playwright` | ✅ amd64 + arm64 | None — already multi-arch. |
 | `spectre-engine` | ✅ amd64 + arm64 | Multi-arch from W2.1 (2026-05-08) — Rust musl cross-compile via pre-built `aarch64-linux-musl-cross` toolchain from `musl.cc`. See ADR-0018 §5 W2.1 update. |
 | `spectre-seleniumbase` | ✅ amd64 + arm64 | Multi-arch from W2.2 (2026-05-08) — Chrome → Chromium runtime swap (Debian's `chromium` + `chromium-driver` ship for both arches in bookworm-main). See ADR-0018 §5 W2.2 update + ADR-0014 §6 amendment. |
-| `spectre-curl-impersonate` | ❌ amd64 only | Runtime base `lwthiker/curl-impersonate:0.6-chrome` is amd64-only on Docker Hub. Three paths: (a) upstream multi-arch publish, (b) fork upstream's image build, (c) cross-compile from source per their [`INSTALL.md`](https://github.com/lwthiker/curl-impersonate/blob/main/INSTALL.md). v1alpha2. |
+| `spectre-curl-impersonate` | ✅ amd64 + arm64 | Multi-arch from W2.3 (2026-05-08) — runtime swapped from `lwthiker/curl-impersonate:0.6-chrome` to `debian:bookworm-slim` + extracted upstream prebuilt tarballs (mirrored in this repo's `curl-impersonate-v0.6.1` release with SHA256 verification). See ADR-0018 §5 W2.3 update. **All five images now ship multi-arch — Wave 2 closed.** |
 
 The forward-readiness changes in R6.5.3's deferred Dockerfiles
 (`ARG TARGETPLATFORM` / `ARG TARGETARCH` declarations, plus
@@ -148,11 +148,11 @@ Each is non-blocking for v1alpha1 release engineering:
 - **Registry-side cache (`--cache-to type=registry`).** Build
   performance optimisation for repeated multi-arch publishes.
   Post-refactor.
-- **Multi-arch builds for curl-impersonate.** Engine multi-arch
-  shipped in W2.1 (2026-05-08); seleniumbase multi-arch
-  shipped in W2.2 (2026-05-08, Chromium swap). Only
-  curl-impersonate remains amd64-only; W2.3 unblocks it via
-  build-from-source per `docs/roadmap.md` §4.2.
+- ~~**Multi-arch builds for curl-impersonate.**~~ Wave 2 closed
+  2026-05-08: engine (W2.1, musl cross-compile), seleniumbase
+  (W2.2, Chrome → Chromium swap), and curl-impersonate (W2.3,
+  upstream prebuilt tarballs) all unblocked. **All five images
+  now ship `linux/amd64 + linux/arm64` manifest lists.**
 - **Native arm64 runners (`ubuntu-24.04-arm`).** Eliminates
   QEMU emulation overhead (~3-5x slowdown for the playwright
   build's `pnpm install` step). v1alpha2 if publish runtime
@@ -228,10 +228,10 @@ docker buildx imagetools inspect \
   fabiocaffarello/spectre-control-plane:0.1.0-alpha.0
 # Expect: Manifests: linux/amd64 + linux/arm64
 
-# Single-arch (curl-impersonate only after W2.2)
+# All five images are multi-arch after W2.3. Inspect any:
 docker buildx imagetools inspect \
-  fabiocaffarello/spectre-curl-impersonate:0.1.0-alpha.1
-# Expect: Manifests: linux/amd64
+  fabiocaffarello/spectre-curl-impersonate:0.1.0-alpha.2
+# Expect: Manifests: linux/amd64 + linux/arm64
 
 # Pull and run an arm64 manifest on amd64 (Docker Desktop
 # emulation) for a quick smoke

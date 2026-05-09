@@ -25,7 +25,7 @@ Five images, each multi-stage, each shipped from this repo:
 |---|---|---|---|---|
 | `spectre-engine` | `rust:1.88-bookworm` (musl target) | `gcr.io/distroless/static:nonroot` | 65532 | 11.4 MB |
 | `spectre-control-plane` | `golang:1.25` | `gcr.io/distroless/static:nonroot` | 65532 | 17.6 MB |
-| `spectre-curl-impersonate` | `golang:1.25` (codegen + builder) | `lwthiker/curl-impersonate:0.6-chrome` (Alpine) | 65534 (`nobody`) | 20.5 MB |
+| `spectre-curl-impersonate` | `golang:1.26` (codegen + builder) | `debian:bookworm-slim` + extracted upstream tarballs | 65534 (`nobody`) | ~75 MB |
 | `spectre-playwright` | `node:20-bookworm-slim` | `mcr.microsoft.com/playwright:v1.49.0-noble` | 1000 (`pwuser`) | 836 MB |
 | `spectre-seleniumbase` | `python:3.12-slim-bookworm` (uv) | `python:3.12-slim-bookworm` + Chromium + chromium-driver | 1000 (`seluser`) | ~450 MB |
 
@@ -116,26 +116,36 @@ in `go.mod` resolves at link time.
 
 ### `spectre-curl-impersonate` (`adapters/curl-impersonate/Dockerfile`)
 
-**Runtime-base deviation from R6.1 §4.3 sketch.** The phase prompt
-proposed `gcr.io/distroless/base-debian12:nonroot` with a multi-
-stage `COPY --from=` extracting `curl_chrome116` and its shared
-library. That sketch is infeasible: the variant binaries shipped
-upstream (`curl_chrome116`, `curl_chrome110`, …) are POSIX shell
-wrappers (`#!/usr/bin/env ash`) that exec the underlying
-`curl-impersonate-chrome` binary with a Chrome-116-specific TLS
-cipher list and header set. Distroless ships no shell, so the
-wrappers cannot execute.
+**Runtime base.** Post-W2.3 (2026-05-08) the runtime is
+`debian:bookworm-slim` + extracted upstream prebuilt tarballs.
+The variant binaries (`curl_chrome116`, `curl_chrome110`, …) are
+POSIX shell wrappers that exec the underlying
+`curl-impersonate-chrome` binary with a Chrome-N-specific TLS
+cipher list and header set. Debian-slim ships `bash` (essential
+in Debian; Priority: required) and `dash` at `/bin/sh`, so the
+wrappers run regardless of which `env`-resolved shell upstream
+chose for the shebang.
 
-The minimal viable runtime is the upstream Alpine image itself
-(`lwthiker/curl-impersonate:0.6-chrome`, 14 MB compressed),
-providing `/bin/ash`, every variant in `/usr/local/bin/`, and
-`libcurl-impersonate-chrome.so.4` in `/usr/local/lib/`. We add
-`ca-certificates` and copy the adapter binary in. Final image is
-~22 MB — well under the 80 MB target. The trade-off (deeper
-supply-chain coupling to upstream) is the better deal versus
-forking the variant scripts or modifying the adapter to call
-`curl-impersonate-chrome` directly. ADR-0016 §1's
+The Dockerfile downloads two tarballs per build —
+`curl-impersonate-v${VERSION}.${arch}-linux-gnu.tar.gz`
+(binaries + wrappers) and
+`libcurl-impersonate-v${VERSION}.${arch}-linux-gnu.tar.gz`
+(shared library) — from this repo's
+`curl-impersonate-v${VERSION}` GitHub Release (mirror of upstream
+`lwthiker/curl-impersonate` releases for build-time reliability;
+SHA256-pinned per ADR-0018 §5 W2.3 update). The binaries unpack
+into `/usr/local/bin/`, the libs into `/usr/local/lib/`;
+`ldconfig` rebuilds the dynamic linker cache. Final image is
+~75 MB — within the 80 MB target. ADR-0016 §1's
 subprocess-over-cgo contract holds byte-for-byte.
+
+**Pre-W2.3 history.** R6.1 §4.3's original sketch (distroless
++ multi-stage extract from upstream's image) was infeasible
+because distroless ships no shell. R6.1 → W2.3 used the
+upstream `lwthiker/curl-impersonate:0.6-chrome` (Alpine-based)
+as the runtime base — minimal viable but amd64-only on Docker
+Hub. W2.3 swapped to debian-slim + extracted-tarball pattern
+to unblock multi-arch.
 
 ### `spectre-playwright` (`adapters/playwright/Dockerfile`)
 
@@ -380,11 +390,12 @@ proto-schema change) rebuilds all five images and runs the gate.
   (`fabiocaffarello/spectre-<name>`) via
   [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml)
   (`workflow_dispatch` only). Multi-arch ships for control-plane
-  + playwright + engine (W2.1) + seleniumbase (W2.2);
-  curl-impersonate remains amd64-only with documented unblock
-  criteria — see ADR-0018 §5 R6.5.3 / W2.1 / W2.2 updates and
-  the Multi-arch status subsection above. Operator-facing
-  reference: [`docs/architecture/releases.md`](releases.md).
+  + playwright + engine (W2.1) + seleniumbase (W2.2) +
+  curl-impersonate (W2.3) — **Wave 2 closed 2026-05-08, all
+  five images multi-arch.** See ADR-0018 §5 R6.5.3 / W2.1 /
+  W2.2 / W2.3 updates and the Multi-arch status subsection
+  above. Operator-facing reference:
+  [`docs/architecture/releases.md`](releases.md).
 - **v1alpha2 Wave 1** added the production-hardening pieces
   R7.x left out: tag-triggered publish auto-trigger
   (W1.2 shipped 2026-05-07, `v*.*.*` tag push triggers the
@@ -409,7 +420,7 @@ rework.
 | `spectre-playwright` | ✅ today | None — Microsoft Playwright runtime image is multi-arch; Node `pnpm install` runs under QEMU emulation on amd64 runners. |
 | `spectre-engine` | ✅ today | Multi-arch from W2.1 (2026-05-08) — Rust musl cross-compile via pre-built `aarch64-linux-musl-cross` toolchain from `musl.cc`; builder runs natively on `$BUILDPLATFORM` and cross-compiles to `$TARGETPLATFORM`. See ADR-0018 §5 W2.1 update. |
 | `spectre-seleniumbase` | ✅ today | Multi-arch from W2.2 (2026-05-08) — Chrome → Chromium runtime swap (Debian's `chromium` + `chromium-driver` ship for both arches in bookworm-main). See ADR-0018 §5 W2.2 update + ADR-0014 §6 amendment. |
-| `spectre-curl-impersonate` | ❌ deferred | Runtime base `lwthiker/curl-impersonate:0.6-chrome` is published amd64-only on Docker Hub. Unblock paths: (a) upstream multi-arch publish; (b) fork upstream's image build; (c) cross-compile from source per [`INSTALL.md`](https://github.com/lwthiker/curl-impersonate/blob/main/INSTALL.md). |
+| `spectre-curl-impersonate` | ✅ today | Multi-arch from W2.3 (2026-05-08) — runtime swapped from `lwthiker/curl-impersonate:0.6-chrome` to `debian:bookworm-slim` + extracted upstream prebuilt tarballs (mirrored in `curl-impersonate-v0.6.1` GitHub Release with SHA256 verification). See ADR-0018 §5 W2.3 update. |
 
 The forward-readiness changes in R6.5.3 (`ARG TARGETPLATFORM` /
 `ARG TARGETARCH` declarations in the deferred Dockerfiles, plus
