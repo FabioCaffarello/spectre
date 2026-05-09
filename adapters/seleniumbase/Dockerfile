@@ -13,36 +13,37 @@
 #   bindings are staged at /opt/spectre/proto/gen/python so the
 #   adapter's `[tool.uv.sources] path = "../../proto/gen/python"`
 #   resolves identically in builder and runtime.
-# - runtime stage: python:3.12-slim-bookworm + Google Chrome stable
-#   (from Google's apt repo, the only source for the branded Chrome
-#   build that SeleniumBase's `Driver(browser="chrome")` expects) +
-#   matching ChromeDriver fetched via `seleniumbase install
-#   chromedriver` at image build time so the bundled driver is on
-#   disk before the first runtime request. SPECTRE_SELENIUMBASE_
-#   CONTAINER=1 baked as a default ENV so the adapter's container-
-#   aware Chrome flag path
-#   (adapters/seleniumbase/src/spectre_seleniumbase/server.py:325)
-#   activates without Compose / Helm having to remember.
+# - runtime stage: python:3.12-slim-bookworm + Debian `chromium` +
+#   `chromium-driver` (W2.2 — see below). chromium and
+#   chromium-driver are released as a single Debian source package,
+#   so the chromedriver binary at /usr/bin/chromedriver always
+#   matches the chromium binary at /usr/bin/chromium — no need for
+#   the `seleniumbase install chromedriver` runtime step that the
+#   Google Chrome path required. SPECTRE_SELENIUMBASE_CONTAINER=1
+#   baked as a default ENV so the adapter's container-aware browser
+#   flag path (server.py: `_default_driver_factory`) activates
+#   without Compose / Helm having to remember.
+#
+# Multi-arch (W2.2, 2026-05-08 — ADR-0018 §5 W2.2 update). Builds
+# `linux/amd64 + linux/arm64`. Debian's `chromium` package ships
+# for both architectures in bookworm-main, where Google Chrome
+# stable ships amd64-only. SeleniumBase's `Driver(browser="chrome")`
+# accepts a `binary_location` kwarg pointing at any Chromium-family
+# binary; the adapter passes `/usr/bin/chromium` when
+# SPECTRE_SELENIUMBASE_CONTAINER=1 (preserving dev-host fallback
+# to whatever chrome is on PATH).
 #
 # Build context: repository root.
 #
 # Refs: R6.1 phase prompt §2 (SeleniumBase Dockerfile sketch),
-# §4.3 (runtime base — python:3.12-slim + Chrome from Google's
-# repo), §9.4 (SPECTRE_SELENIUMBASE_CONTAINER=1 baked).
+# §4.3 (runtime base — python:3.12-slim), §9.4
+# (SPECTRE_SELENIUMBASE_CONTAINER=1 baked).
 #
 # Usage: docker buildx bake seleniumbase
 
 ARG PYTHON_VERSION=3.12
 ARG BUF_VERSION=1.55.1
 ARG UV_VERSION=0.5.11
-
-# Forward-readiness for multi-arch (R6.5.3). TARGETARCH is
-# auto-populated by BuildKit per stage when declared inside the
-# stage; the buf-arch case-statement below already handles
-# aarch64 via $(uname -m). The runtime stage ships amd64-only —
-# see the R7.x deferral comment above the google-chrome apt-source
-# pin further down.
-ARG TARGETARCH
 
 # ---------------------------------------------------------------------------
 # Stage 1 — builder: uv-managed venv at the final runtime path
@@ -110,44 +111,38 @@ RUN ./.venv/bin/python -c "import spectre_seleniumbase; print(spectre_seleniumba
  && ./.venv/bin/python -c "from spectre.driver.v1alpha1 import driver_pb2; print(driver_pb2.__file__)"
 
 # ---------------------------------------------------------------------------
-# Stage 2 — runtime: python:3.12-slim + Chrome + ChromeDriver
+# Stage 2 — runtime: python:3.12-slim + Chromium + chromium-driver
 # ---------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
 
-# Chrome runtime libraries (libnss3, libatk-bridge2.0-0,
-# libxcomposite1, fonts, …) plus Google's apt repo for
-# google-chrome-stable. The adapter's `Driver(browser="chrome")`
-# expects the branded Chrome build, not Chromium — Google's repo is
-# the only source.
+# Browser runtime: Debian bookworm's `chromium` (the browser) +
+# `chromium-driver` (matching chromedriver, released as the same
+# Debian source package). Multi-arch (W2.2, 2026-05-08): both
+# packages ship for amd64 + arm64 in bookworm main. The adapter
+# points SeleniumBase at /usr/bin/chromium via `binary_location`
+# when SPECTRE_SELENIUMBASE_CONTAINER=1. The runtime libs
+# (libnss3, libxss1, fonts, …) come in via the chromium package's
+# Depends graph automatically; the explicit list below is kept
+# for documentation and as a safety net in case Debian unbundles
+# in a future release.
+#
+# Replaces R6.1's Google Chrome flow (`google-chrome-stable` from
+# Google's amd64-only apt repo + `seleniumbase install
+# chromedriver`). The ADR-0014 amendment + ADR-0018 §5 W2.2
+# update record the Chrome → Chromium decision rationale.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        ca-certificates curl gnupg \
+        ca-certificates \
+        chromium chromium-driver \
         fonts-liberation libnss3 libxss1 libasound2 \
         libgbm1 libdrm2 libxcomposite1 libxdamage1 libxrandr2 \
         libatk-bridge2.0-0 libatk1.0-0 libgtk-3-0 \
         xdg-utils \
- && install -d -m 0755 /etc/apt/keyrings \
- && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
-        | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg \
- # R7.x: multi-arch unblock — Google Chrome stable for Linux is
- # published only for amd64 as of R6.5.3 (Chromium has arm64 builds;
- # Chrome stable does not). The `[arch=amd64]` apt-source pin and
- # the `seleniumbase install chromedriver` runtime step both depend
- # on the amd64-only google-chrome-stable package. See
- # ADR-0018 §5 R6.5.3 update for unblock options: (a) wait for
- # Google to publish a Linux/arm64 stable channel, or (b) switch
- # the adapter from Chrome to Chromium (which IS multi-arch — but
- # changes the project's tested driver surface, an ADR-level
- # decision deferred to v1alpha2).
- && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
-        > /etc/apt/sources.list.d/google-chrome.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends google-chrome-stable \
  && rm -rf /var/lib/apt/lists/*
 
-# Provision the seluser (UID 1000). SeleniumBase + Chrome run as
-# this user so /home/seluser is writable for ChromeDriver caching
-# and Chrome's user-data-dir.
+# Provision the seluser (UID 1000). SeleniumBase + Chromium run
+# as this user so /home/seluser is writable for the
+# user-data-dir at runtime.
 RUN useradd -m -u 1000 -s /bin/bash seluser
 
 # COPY the seleniumbase venv + sources + the proto bindings tree at
@@ -160,14 +155,6 @@ COPY --from=builder --chown=seluser:seluser /opt/spectre/proto                 /
 
 USER seluser
 WORKDIR /opt/spectre/adapters/seleniumbase
-
-# Provision ChromeDriver matching the apt-installed Chrome. Run as
-# seluser so the cached driver lands under
-# /home/seluser/.seleniumbase/drivers/chromedriver — where
-# SeleniumBase looks at runtime. We do this here (runtime stage) so
-# the version-matching logic inspects the actual google-chrome
-# shipped in this image; the builder has no Chrome installed.
-RUN /opt/spectre/adapters/seleniumbase/.venv/bin/python -m seleniumbase install chromedriver
 
 # ADR-0021 §4 reserves 8092 for the SeleniumBase adapter; the env
 # var is the canonical port input. SPECTRE_SELENIUMBASE_CONTAINER=1

@@ -329,6 +329,85 @@ Rejected:
   of the deliverable. A reader who asks "is Docker on the
   roadmap" deserves a written yes, not a silent maybe.
 
+### 6. W2.2 amendment (2026-05-08) — Chrome → Chromium runtime swap
+
+> **In-place evolution note** per the precedent established in
+> ADR-0018 §5 (R6.3 / R6.5.3 / R6.5.4 / W1.2 / W2.1 / W2.2).
+> The original ADR-0014 (PR12) referred to "Chrome" as the
+> runtime browser the SeleniumBase adapter drives. W2.2 swaps
+> the container runtime browser from Google Chrome stable to
+> Debian's Chromium package; this section records why the
+> capability invariant from §1 still holds.
+
+**What changes.** The adapter's Docker runtime stage now
+installs `chromium` + `chromium-driver` from Debian
+bookworm-main instead of `google-chrome-stable` from Google's
+apt repo. The adapter's `_default_driver_factory` passes
+`binary_location="/usr/bin/chromium"` to SeleniumBase's
+`Driver()` when `SPECTRE_SELENIUMBASE_CONTAINER=1`. Dev-host
+workflow (env unset) is unchanged: contributors with Chrome
+installed locally continue driving their host's Chrome.
+
+**Why this preserves the §1 capability progression invariant.**
+The 12 capabilities the adapter declares (extract_attribute,
+extract_eval, extract_html, extract_text, js_execution,
+navigation, query_attribute, query_css, query_text, query_xpath,
+screenshot_element, screenshot_full_page, screenshot_viewport)
+are the **declared = tested** set per the §1 rule. The
+conformance suite's red-bar discipline does not assume Chrome
+vs Chromium; it asserts protocol-level behaviour that both
+browsers' V8 + Blink engines produce identically:
+
+- DOM extraction (text / attribute / HTML) — Blink rendering,
+  identical across Chrome and Chromium.
+- JavaScript execution and result marshalling — V8, identical.
+- Screenshots — Blink's compositor produces byte-different
+  outputs across browser builds even on the same Chrome
+  branch (font rendering, video codec presence in the OS
+  layer); the conformance suite's screenshot tests already
+  use shape / size / format assertions rather than
+  byte-for-byte comparison per ADR-0014's screenshot
+  capability commentary. Chrome → Chromium fits the same
+  shape — no test change required.
+- Navigation, queries, DSL bindings — protocol-level
+  semantics governed by the SeleniumBase + Selenium WebDriver
+  layers, both of which operate identically against Chrome
+  and Chromium.
+
+**What does *not* port.** Chrome's branded features that
+Chromium does not ship — DRM (Widevine), proprietary
+video / audio codecs (H.264, AAC), Google's sync surface — are
+out of scope for the SeleniumBase adapter's capability set.
+None of the 12 declared capabilities exercise these surfaces.
+A future capability that legitimately needs Chrome-branded
+behaviour (e.g., a video-extraction capability requiring
+H.264 decode) would require a second decision; if and when
+that appears, the adapter can either (a) ship a separate
+`spectre-seleniumbase-chrome` image variant for amd64-only
+workloads or (b) bundle codecs via the `chromium-codecs-ffmpeg`
+add-on package. ADR-amendable when the use case materialises.
+
+**ChromeDriver provenance.** Debian releases `chromium` and
+`chromium-driver` from a single source package, so the
+chromedriver binary at `/usr/bin/chromedriver` is
+version-locked to the chromium binary at `/usr/bin/chromium`.
+The R6.1 `seleniumbase install chromedriver` runtime step is
+no longer required and has been removed from the Dockerfile.
+
+**Image size.** Debian's chromium package + dependencies is
+~250 MB compressed, vs ~95 MB for Google Chrome stable. The
+size growth is acceptable at v1alpha2 maturity (the image is
+already the largest of the five at >2 GB uncompressed due to
+the Python venv + dependency tree); image-size optimisation
+remains a Day-2 follow-up if it becomes painful.
+
+**Forward path.** A future amendment may revisit this if
+either (a) Google ships a Linux/arm64 stable Chrome channel
+making the deferred path (a) from ADR-0018 §5 R6.5.3 update
+viable, or (b) Spectre adds capabilities that exercise
+Chrome-branded surfaces. Until then, Debian Chromium is the
+single runtime browser.
+
 ## Consequences
 
 - Good, because the capability progression rule (declared = tested)

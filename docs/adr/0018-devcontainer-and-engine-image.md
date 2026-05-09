@@ -533,6 +533,117 @@ in-place §5 amendment + the engine Dockerfile change + the
 publish.yml platform_overrides change + the releases.md /
 container-images.md updates + the CHANGELOG entry).
 
+#### W2.2 update — seleniumbase multi-arch via Chrome → Chromium swap
+
+> **W2.2 evolution note (2026-05-08).** This subsection is
+> added in-place per the R6.3 / R6.5.3 / R6.5.4 / W1.2 / W2.1
+> precedent above. The R6.5.3 update's deferral row for
+> seleniumbase ("Google Chrome stable for Linux is published
+> only for amd64 ... an ADR-level decision deferred to
+> v1alpha2") is now resolved via path (b): switch the adapter
+> from Chrome to Chromium. Path (a) — wait for Google to
+> publish a Linux/arm64 Chrome stable channel — would mean
+> indefinite blocking on Google's release cadence; path (b)
+> ships now using Debian's chromium package which is multi-
+> arch in bookworm-main.
+
+**What W2.2 lands** (Wave 2 multi-arch unblocks per
+`docs/roadmap.md` §4.2):
+
+- `adapters/seleniumbase/Dockerfile` runtime stage replaces
+  Google Chrome stable + ChromeDriver (from Google's amd64-only
+  apt repo + a runtime `seleniumbase install chromedriver`
+  step) with Debian's `chromium` + `chromium-driver` packages
+  from bookworm-main. Both ship for amd64 + arm64 in the same
+  Debian source package, so the chromedriver binary at
+  `/usr/bin/chromedriver` is version-locked to the chromium
+  binary at `/usr/bin/chromium` — eliminates the runtime
+  download step entirely.
+- `adapters/seleniumbase/src/spectre_seleniumbase/server.py`'s
+  `_default_driver_factory` adds
+  `binary_location="/usr/bin/chromium"` to the
+  SeleniumBase `Driver()` kwargs **only when
+  `SPECTRE_SELENIUMBASE_CONTAINER=1`**. Dev-host workflow
+  (env var unset) is unchanged: contributors with Chrome
+  installed locally continue driving their host's Chrome via
+  SeleniumBase's default lookup — no breakage in the local-
+  dev path.
+- `.github/workflows/publish.yml` adds
+  `seleniumbase.platform=linux/amd64` +
+  `seleniumbase.platform=linux/arm64` to the multi-arch
+  `platform_overrides` array alongside engine, control-plane,
+  and playwright. Tag-triggered publishes now produce a
+  manifest list for seleniumbase.
+- `build/docker/versions.env` removes the `CHROME_VERSION`
+  pin (no longer baked into the image — bookworm's chromium
+  package is the version source). The comment block at that
+  position now documents the version source change.
+
+**Why Chromium and not waiting for arm64 Chrome stable.**
+Google's Chrome-for-Testing program ships arm64 builds since
+late 2024, but Chrome **stable** on Linux remains amd64-only
+as of 2026-05-08. Waiting on Google's release cadence is
+indefinite — the previous deferral on this row tracked an
+external decision Spectre cannot influence. Chromium is
+upstream Chrome's open-source base; the pages-per-second
+behaviour, the V8 engine, the CDP surface, and the
+fingerprint anti-bot characteristics are functionally
+identical for the scraping workloads the SeleniumBase adapter
+targets. The known divergences (Chrome's branded
+DRM / sync / proprietary codecs) are out of scope for the
+adapter's capability set per ADR-0014 §1.
+
+**Trade documented in ADR-0014 amendment.** ADR-0014
+("SeleniumBase adapter and cross-language conformance")
+gets a §6 amendment recording the Chrome → Chromium runtime
+substitution decision: capability set unchanged (the
+declared = tested rule per §1 holds), runtime browser swap
+is contained to the Dockerfile + the
+`SPECTRE_SELENIUMBASE_CONTAINER=1` code path, dev-host
+fallback to Chrome preserved.
+
+**What stays unchanged from R6.5.3 + W1.2 + W2.1:**
+
+- The five-image set, the registry namespace
+  (`docker.io/fabiocaffarello/spectre-*`), and the bake
+  matrix structure.
+- `docker-bake.hcl` continues to default targets to
+  `platforms = ["linux/amd64"]`; multi-arch is a publish-
+  time `--set` override.
+- The chef stage (uv-managed venv at the final runtime
+  path), the `seluser` UID 1000, and the
+  `SPECTRE_SELENIUMBASE_CONTAINER=1` env-var contract — all
+  preserved byte-for-byte from R6.1.
+- The `Verify pushed manifests` step asserting per-image
+  multi-arch posture — automatically picks up the new
+  seleniumbase multi-arch row without code change.
+- The cosign signing step from W1.4 — signs the seleniumbase
+  manifest-list digest the same way the other multi-arch
+  images are signed.
+
+**What still defers** (Wave 2 W2.3 ahead):
+
+- W2.3 — curl-impersonate multi-arch via build-from-source
+  per the upstream INSTALL.md ARM64 instructions (R6.5.3
+  update's deferral row option (c)). The runtime base
+  `lwthiker/curl-impersonate:0.6-chrome` is amd64-only on
+  Docker Hub and the upstream maintainer hasn't published a
+  multi-arch tag.
+
+After W2.3 closes, all five published images ship
+`linux/amd64 + linux/arm64` manifest lists; the
+"Multi-arch status" subsection above moves all five rows to
+✅ today.
+
+W2.2 is **single architectural decision** scope per
+CONTRIBUTING.md "v1alpha2 process rigor matrix" (R9.0).
+Single commit; no master phase prompt; no new ADR (this
+in-place §5 amendment + the ADR-0014 §6 amendment + the
+seleniumbase Dockerfile change + the adapter source change
++ the publish.yml platform_overrides change + the
+releases.md / container-images.md updates + the CHANGELOG
+entry).
+
 ## Consequences
 
 - Good, because contributor onboarding compresses from a multi-

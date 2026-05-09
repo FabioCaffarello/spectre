@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`adapters/seleniumbase/Dockerfile` — Chrome → Chromium swap
+  for multi-arch** (W2.2, Wave 2 multi-arch unblocks per
+  `docs/roadmap.md` §4.2, 2026-05-08): the seleniumbase image
+  now publishes `linux/amd64 + linux/arm64`. Replaces Google
+  Chrome stable (amd64-only on Linux) with Debian bookworm-main's
+  `chromium` + `chromium-driver` packages (multi-arch). The
+  `[arch=amd64]` apt-source pin and the runtime
+  `seleniumbase install chromedriver` step are removed —
+  Debian releases the browser + driver as a single source
+  package, so `/usr/bin/chromedriver` is always version-locked
+  to `/usr/bin/chromium`. The adapter's
+  `_default_driver_factory` adds
+  `binary_location="/usr/bin/chromium"` to the SeleniumBase
+  `Driver()` kwargs only when `SPECTRE_SELENIUMBASE_CONTAINER=1`,
+  preserving the dev-host fallback (contributors with Chrome
+  installed locally continue to drive their host's Chrome
+  unchanged). `build/docker/versions.env` removes the
+  `CHROME_VERSION` pin (no longer baked in;
+  bookworm's chromium package is the version source).
+  `.github/workflows/publish.yml` adds seleniumbase to the
+  multi-arch `platform_overrides` array. ADR-0018 §5 W2.2
+  in-place evolution note + ADR-0014 §6 amendment record the
+  Chrome → Chromium decision rationale (capability invariant
+  preserved; out-of-scope features — Widevine DRM, proprietary
+  codecs — were never part of the adapter's declared = tested
+  set per ADR-0014 §1). After W2.2 four of five images are
+  multi-arch; only curl-impersonate (W2.3) remains.
+
 - **`engines/engine/Dockerfile` — multi-arch builds** (W2.1,
   Wave 2 multi-arch unblocks per `docs/roadmap.md` §4.2,
   2026-05-08): the engine image now publishes

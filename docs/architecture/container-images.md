@@ -27,7 +27,7 @@ Five images, each multi-stage, each shipped from this repo:
 | `spectre-control-plane` | `golang:1.25` | `gcr.io/distroless/static:nonroot` | 65532 | 17.6 MB |
 | `spectre-curl-impersonate` | `golang:1.25` (codegen + builder) | `lwthiker/curl-impersonate:0.6-chrome` (Alpine) | 65534 (`nobody`) | 20.5 MB |
 | `spectre-playwright` | `node:20-bookworm-slim` | `mcr.microsoft.com/playwright:v1.49.0-noble` | 1000 (`pwuser`) | 836 MB |
-| `spectre-seleniumbase` | `python:3.12-slim-bookworm` (uv) | `python:3.12-slim-bookworm` + Chrome + ChromeDriver | 1000 (`seluser`) | 308 MB |
+| `spectre-seleniumbase` | `python:3.12-slim-bookworm` (uv) | `python:3.12-slim-bookworm` + Chromium + chromium-driver | 1000 (`seluser`) | ~450 MB |
 
 > Sizes via `docker image inspect --format '{{.Size}}'`. The
 > `docker images` listing reports a larger value because it
@@ -173,14 +173,19 @@ bindings are staged at `/opt/spectre/proto/gen/python` so the
 adapter's `[tool.uv.sources] path = "../../proto/gen/python"`
 resolves identically in builder and runtime.
 
-Runtime is `python:3.12-slim-bookworm` + Google Chrome stable
-(from Google's apt repo — the only source for the branded Chrome
-that `Driver(browser="chrome")` expects) + matching ChromeDriver
-fetched via `seleniumbase install chromedriver` at image build
-time. `SPECTRE_SELENIUMBASE_CONTAINER=1` is baked as a default
-ENV so the adapter's container-aware Chrome flag path
-(`--no-sandbox` / `--disable-dev-shm-usage`) activates without
-Compose / Helm having to remember.
+Runtime is `python:3.12-slim-bookworm` + Debian's `chromium` +
+`chromium-driver` (W2.2, 2026-05-08 — Chrome → Chromium swap
+unblocked multi-arch; ADR-0014 §6 amendment + ADR-0018 §5 W2.2
+update). Both apt packages ship for amd64 + arm64 in
+bookworm-main and are released as a single Debian source package
+so the chromedriver binary is version-locked to the chromium
+binary — eliminates the runtime `seleniumbase install chromedriver`
+step that the prior Google Chrome flow required.
+`SPECTRE_SELENIUMBASE_CONTAINER=1` is baked as a default ENV so
+the adapter's container-aware browser flag path
+(`--no-sandbox` / `--disable-dev-shm-usage`, plus
+`binary_location=/usr/bin/chromium`) activates without Compose /
+Helm having to remember.
 
 ## Bake orchestration
 
@@ -375,11 +380,11 @@ proto-schema change) rebuilds all five images and runs the gate.
   (`fabiocaffarello/spectre-<name>`) via
   [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml)
   (`workflow_dispatch` only). Multi-arch ships for control-plane
-  + playwright; engine, seleniumbase, and curl-impersonate are
-  amd64-only with documented unblock criteria — see ADR-0018 §5
-  R6.5.3 update and the Multi-arch status subsection above.
-  Operator-facing reference:
-  [`docs/architecture/releases.md`](releases.md).
+  + playwright + engine (W2.1) + seleniumbase (W2.2);
+  curl-impersonate remains amd64-only with documented unblock
+  criteria — see ADR-0018 §5 R6.5.3 / W2.1 / W2.2 updates and
+  the Multi-arch status subsection above. Operator-facing
+  reference: [`docs/architecture/releases.md`](releases.md).
 - **v1alpha2 Wave 1** added the production-hardening pieces
   R7.x left out: tag-triggered publish auto-trigger
   (W1.2 shipped 2026-05-07, `v*.*.*` tag push triggers the
@@ -403,7 +408,7 @@ rework.
 | `spectre-control-plane` | ✅ today | None — pure Go cross-compile (`CGO_ENABLED=0` + `GOARCH=${TARGETARCH}`). |
 | `spectre-playwright` | ✅ today | None — Microsoft Playwright runtime image is multi-arch; Node `pnpm install` runs under QEMU emulation on amd64 runners. |
 | `spectre-engine` | ✅ today | Multi-arch from W2.1 (2026-05-08) — Rust musl cross-compile via pre-built `aarch64-linux-musl-cross` toolchain from `musl.cc`; builder runs natively on `$BUILDPLATFORM` and cross-compiles to `$TARGETPLATFORM`. See ADR-0018 §5 W2.1 update. |
-| `spectre-seleniumbase` | ❌ deferred | Google Chrome stable for Linux is amd64-only as of R6.5.3. Unblock paths: (a) wait for Google to publish a Linux/arm64 stable channel; (b) switch from Chrome to Chromium (multi-arch but changes the project's tested driver surface — ADR-level decision, v1alpha2). |
+| `spectre-seleniumbase` | ✅ today | Multi-arch from W2.2 (2026-05-08) — Chrome → Chromium runtime swap (Debian's `chromium` + `chromium-driver` ship for both arches in bookworm-main). See ADR-0018 §5 W2.2 update + ADR-0014 §6 amendment. |
 | `spectre-curl-impersonate` | ❌ deferred | Runtime base `lwthiker/curl-impersonate:0.6-chrome` is published amd64-only on Docker Hub. Unblock paths: (a) upstream multi-arch publish; (b) fork upstream's image build; (c) cross-compile from source per [`INSTALL.md`](https://github.com/lwthiker/curl-impersonate/blob/main/INSTALL.md). |
 
 The forward-readiness changes in R6.5.3 (`ARG TARGETPLATFORM` /

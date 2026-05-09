@@ -332,6 +332,20 @@ def _default_driver_factory() -> Any:
                 f"--user-data-dir={user_data_dir}",
             ]
         )
+        # W2.2 (2026-05-08, ADR-0018 §5 W2.2 update): the
+        # container image installs Debian's `chromium` package at
+        # /usr/bin/chromium instead of Google Chrome stable
+        # (chrome-stable is amd64-only on Linux; chromium is
+        # multi-arch in bookworm-main). SeleniumBase's
+        # `binary_location` kwarg points the underlying selenium
+        # WebDriver at the explicit binary path; without it,
+        # `Driver(browser="chrome")` would search the standard
+        # google-chrome-stable install paths and fail. Dev-host
+        # workflow (no SPECTRE_SELENIUMBASE_CONTAINER env) is
+        # unchanged: contributors with Chrome installed locally
+        # continue to drive their host's Chrome via
+        # SeleniumBase's default lookup.
+        kwargs["binary_location"] = "/usr/bin/chromium"
     return Driver(**kwargs)
 
 
