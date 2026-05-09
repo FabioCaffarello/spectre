@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] - 2026-05-08
+
+**All-multi-arch milestone.** First release where every
+published image ships `linux/amd64 + linux/arm64` manifest
+lists. Wave 2 closes per `docs/roadmap.md` §4.2 — three PRs
+unblocked the three deferral rows from ADR-0018 §5 R6.5.3
+update's multi-arch table:
+
+- W2.1 (PR #105) — engine via Rust musl cross-compile +
+  `musl.cc` toolchain mirror.
+- W2.2 (PR #106) — seleniumbase via Chrome → Chromium runtime
+  swap (Debian bookworm-main multi-arch source package +
+  ADR-0014 §6 amendment).
+- W2.3 (PR #107) — curl-impersonate via debian-slim +
+  extracted upstream prebuilt tarballs (mirror in this repo's
+  `curl-impersonate-v0.6.1` GitHub Release with SHA256
+  verification).
+
+Five published images:
+`docker.io/fabiocaffarello/spectre-{engine,control-plane,
+curl-impersonate,playwright,seleniumbase}:0.1.0-alpha.2`,
+each shipping a `linux/amd64 + linux/arm64` manifest list and
+each signed via cosign keyless under
+`https://github.com/FabioCaffarello/spectre/.github/workflows/publish.yml`.
+Verification recipe in `docs/architecture/releases.md` "Image
+signing" section.
+
 ### Changed
 
 - **`adapters/curl-impersonate/Dockerfile` — debian-slim +

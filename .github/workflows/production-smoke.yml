@@ -123,12 +123,12 @@ jobs:
       # Build the five spectre-* images on the runner. R7.2
       # tests current main branch state, not whatever was
       # last published. Refs match the chart defaults
-      # (`docker.io/fabiocaffarello/spectre-*:0.1.0-alpha.1`)
+      # (`docker.io/fabiocaffarello/spectre-*:0.1.0-alpha.2`)
       # so values-ci.yaml only overrides pullPolicy.
       - name: Build images via bake
         env:
           REGISTRY: docker.io/fabiocaffarello
-          TAG: 0.1.0-alpha.1
+          TAG: 0.1.0-alpha.2
           VCS_REF: ${{ github.sha }}
           BUILD_DATE: ${{ github.event.repository.updated_at }}
         run: |
@@ -155,7 +155,7 @@ jobs:
         run: |
           for img in engine control-plane curl-impersonate playwright seleniumbase; do
             kind load docker-image \
-              "docker.io/fabiocaffarello/spectre-${img}:0.1.0-alpha.1" \
+              "docker.io/fabiocaffarello/spectre-${img}:0.1.0-alpha.2" \
               --name spectre-r72
           done
 

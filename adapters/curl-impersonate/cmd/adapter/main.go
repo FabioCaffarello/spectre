@@ -56,7 +56,7 @@ import (
 
 const (
 	binaryName = "spectre-curl-impersonate"
-	version    = "0.1.0-alpha.1"
+	version    = "0.1.0-alpha.2"
 
 	// shutdownDeadline matches the Playwright/SeleniumBase
 	// adapters: five seconds for graceful drain before the harness
