@@ -105,7 +105,7 @@ BAKE_PINS=(
     BUF_VERSION
     UV_VERSION
     PLAYWRIGHT_VERSION
-    CURL_IMPERSONATE_IMAGE
+    CURL_IMPERSONATE_VERSION
 )
 
 for name in "${BAKE_PINS[@]}"; do
@@ -134,7 +134,7 @@ echo "checking versions.env <-> Dockerfile ARG defaults"
 ARG_CHECKS=(
     "adapters/curl-impersonate/Dockerfile|GO_VERSION"
     "adapters/curl-impersonate/Dockerfile|BUF_VERSION"
-    "adapters/curl-impersonate/Dockerfile|CURL_IMPERSONATE_IMAGE"
+    "adapters/curl-impersonate/Dockerfile|CURL_IMPERSONATE_VERSION"
     "adapters/playwright/Dockerfile|NODE_VERSION"
     "adapters/playwright/Dockerfile|BUF_VERSION"
     "adapters/playwright/Dockerfile|PLAYWRIGHT_VERSION"

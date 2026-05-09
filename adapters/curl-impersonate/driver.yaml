@@ -1,5 +1,5 @@
 name: curl-impersonate
-version: 0.1.0-alpha.1
+version: 0.1.0-alpha.2
 protocol_version: spectre.driver.v1alpha1
 
 # Capabilities follow the "declared = tested" rule from ADR-0014 §1.
