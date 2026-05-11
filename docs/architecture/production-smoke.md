@@ -204,31 +204,52 @@ hanging consumer or unresponsive pod doesn't burn the job's
 
 ### verify-observability.sh
 
-Added in W3.1 (2026-05-11). Asserts the engine + operator
-observability surface lands per ADR-0031 §3 / §5:
+Added in W3.1 (2026-05-11) for engine + operator; W3.2
+(2026-05-11) extended for the three adapters + cross-service
+trace topology. Asserts the observability surface lands per
+ADR-0031 §3 / §4 / §5:
 
-- `kubectl exec` against the engine pod + `curl localhost:9090
-  /metrics` returns 200 and the response includes the
-  `spectre_engine_jobs_active`, `spectre_engine_jobs_completed_total`,
-  and `spectre_engine_rows_emitted_total` series (the three
-  guaranteed-to-have-samples instruments after the preceding
-  steps complete three ScrapeJobs).
-- Same against the control-plane pod for
-  `spectre_operator_scrapejobs_total` (W3.1 §5.2 custom) and
+- **Engine `/metrics`**: apiserver-proxy scrape of
+  `<release>-engine:metrics/metrics` returns 200 and includes
+  `spectre_engine_jobs_active`,
+  `spectre_engine_jobs_completed_total`, and
+  `spectre_engine_rows_emitted_total` (the three guaranteed-to-
+  have-samples §5.1 instruments after the preceding steps
+  complete three ScrapeJobs).
+- **Operator `/metrics`**: same against
+  `<release>-control-plane:metrics/metrics` —
+  `spectre_operator_scrapejobs_total` (W3.1 §5.2) +
   `controller_runtime_reconcile_total` (controller-runtime
-  default — surfaces alongside the spectre custom on the same
-  endpoint, confirming the metrics server's port flip).
-- `kubectl logs` the engine pod and assert at least one JSON
-  line carries a non-empty `trace_id` (32-hex). That line is
-  the `engine.assemble_row` event emitted per row by the
-  drainer loop under W3.1 Cluster D's `tracing-opentelemetry`
-  bridge.
+  default surfacing alongside the spectre custom on the same
+  endpoint, confirming the W3.1 metrics-bind-address flip).
+- **Adapter `/metrics`**: apiserver-proxy scrapes of all three
+  `<release>-{playwright,seleniumbase,curl-impersonate}-adapter:
+  metrics/metrics` services. Each must include
+  `spectre_adapter_sessions_active{kind="<lang>"}` (the §5.3
+  gauge surfaces unconditionally — duration histograms only
+  surface after the adapter handles an RPC, so the gauge is
+  the most portable presence check). `<lang>` ∈
+  `{playwright, seleniumbase, curl_impersonate}`.
+- **Engine logs trace_id**: `kubectl logs <release>-engine`
+  contains at least one JSON line with a non-empty `trace_id`
+  (32-hex). That line is the `engine.assemble_row` event
+  emitted per row by the drainer loop under the
+  `tracing-opentelemetry` bridge.
+- **Trace topology end-to-end (W3.2 §4.2 acceptance)**: pick
+  the `hello-hackernews-s3` ScrapeJob's UID; find the engine
+  log line whose `job_id` matches; extract its `trace_id`;
+  assert the same trace_id appears in the operator's logs and
+  in the playwright-adapter's logs. Proves the W3C propagator
+  chain works across operator → engine → adapter (three
+  languages: Go → Rust → TypeScript).
 
-Asserts: §5.1 / §5.2 metric names present, trace_id field
-populated in at least one log event.
-Does NOT assert: exact scrape values (workload-dependent), span
-tree shape (no trace-backend assertion), tenant_id population
-(always `null` in v1alpha1).
+Asserts: §5.1 / §5.2 / §5.3 metric names present; trace_id
+field populated; **same** trace_id observed in three different
+services' logs for one job UID.
+Does NOT assert: exact scrape values (workload-dependent),
+span-tree shape against a trace backend (no Jaeger / Tempo in
+the smoke topology), `tenant_id` population (always `null` in
+v1alpha1).
 
 ## §7 — Debugging failures
 
