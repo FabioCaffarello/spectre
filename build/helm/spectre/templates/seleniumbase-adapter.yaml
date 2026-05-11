@@ -51,10 +51,14 @@ spec:
             - name: grpc
               containerPort: {{ .Values.seleniumbaseAdapter.service.port }}
               protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.observability.metricsPort }}
+              protocol: TCP
           env:
             - name: SPECTRE_ADAPTER_GRPC_PORT
               value: {{ .Values.seleniumbaseAdapter.service.port | quote }}
             {{- include "spectre.commonEnv" . | nindent 12 }}
+            {{- include "spectre.observabilityEnv" . | nindent 12 }}
             {{- with .Values.seleniumbaseAdapter.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -79,6 +83,10 @@ spec:
       targetPort: grpc
       protocol: TCP
       name: grpc
+    - port: {{ .Values.observability.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
   selector:
     {{- include "spectre.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: seleniumbase-adapter

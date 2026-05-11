@@ -8,11 +8,12 @@ Requires `monitoring.coreos.com/v1` CRDs in the cluster
 chart does NOT install the prometheus-operator subchart — that
 choice is deployment-side per ADR-0031 §11.
 
-Selects the engine + control-plane Services by their
-`app.kubernetes.io/component` label, scraping the `metrics`
-named port that points at `observability.metricsPort` in both
-service templates. The shared port name keeps the selector
-stable even if the value changes.
+Selects the engine + control-plane + three adapter Services by
+their `app.kubernetes.io/component` label, scraping the
+`metrics` named port that points at `observability.metricsPort`
+in every service template. The shared port name keeps the
+selector stable even if the value changes. W3.2 (2026-05-11)
+extends the selector with the three `*-adapter` components.
 */ -}}
 {{- if .Values.observability.serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
@@ -43,6 +44,9 @@ spec:
         values:
           - engine
           - control-plane
+          - playwright-adapter
+          - seleniumbase-adapter
+          - curl-impersonate-adapter
   endpoints:
     - port: metrics
       path: /metrics
