@@ -33,6 +33,7 @@ import (
 	curlerrors "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/errors"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/parser"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/sessions"
+	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/telemetry"
 	driverv1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1"
 )
 
@@ -87,14 +88,18 @@ type Server struct {
 	sessions *sessions.Manager
 	fetch    Fetcher
 	variant  string
+	metrics  *telemetry.Metrics
 }
 
 // New constructs a Server whose Navigate RPC will dispatch via
 // the supplied Fetcher (curlx.Fetch in production; a fake in
 // tests). variant is the curl-impersonate binary name as
 // resolved at startup; the Server forwards it to every
-// curlx.Options so SPECTRE_CURL_VARIANT is honoured.
-func New(mgr *sessions.Manager, fetch Fetcher, variant string) *Server {
+// curlx.Options so SPECTRE_CURL_VARIANT is honoured. metrics is
+// the §5.3 instrument handle the Server records into per
+// W3.2 Cluster C; nil disables emission (used by tests that do
+// not need the metric surface).
+func New(mgr *sessions.Manager, fetch Fetcher, variant string, metrics *telemetry.Metrics) *Server {
 	if fetch == nil {
 		fetch = curlx.Fetch
 	}
@@ -105,7 +110,27 @@ func New(mgr *sessions.Manager, fetch Fetcher, variant string) *Server {
 		sessions: mgr,
 		fetch:    fetch,
 		variant:  variant,
+		metrics:  metrics,
 	}
+}
+
+// recordNavigateDuration records the Navigate RPC duration with
+// the canonical `result` label per ADR-0031 §5.3. Safe when
+// `s.metrics` is nil (test path).
+func (s *Server) recordNavigateDuration(start time.Time, result string) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.NavigateDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
+}
+
+// recordExtractDuration mirrors recordNavigateDuration for the
+// Extract RPC.
+func (s *Server) recordExtractDuration(start time.Time, result string) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.ExtractDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
 }
 
 // Initialize allocates a fresh session and returns the declared
@@ -115,11 +140,37 @@ func New(mgr *sessions.Manager, fetch Fetcher, variant string) *Server {
 // it would see if the adapter could not start. The local
 // registry is only updated after a successful Redis write — see
 // ``sessions.Manager.Create``.
-func (s *Server) Initialize(ctx context.Context, _ *driverv1alpha1.InitializeRequest) (*driverv1alpha1.InitializeResponse, error) {
+func (s *Server) Initialize(ctx context.Context, req *driverv1alpha1.InitializeRequest) (*driverv1alpha1.InitializeResponse, error) {
+	start := time.Now()
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.InitializeDuration.Observe(time.Since(start).Seconds())
+		}
+	}()
+
+	// ADR-0031 §5.3 capability_violations_total: every requested
+	// capability not in the adapter manifest increments the counter
+	// with the offending name. The Initialize still succeeds with
+	// the adapter's actual manifest so the caller can negotiate
+	// gracefully; the counter is the auditable signal.
+	if s.metrics != nil {
+		manifest := capabilitySet(caps.Names())
+		for _, requested := range req.GetRequestedCapabilities() {
+			if _, ok := manifest[requested]; !ok {
+				s.metrics.CapabilityViolationsTotal.WithLabelValues(requested).Inc()
+			}
+		}
+	}
+
 	session, err := s.sessions.Create(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "%s; cannot persist session metadata: %v", redisUnavailablePrefix, err)
 	}
+
+	if s.metrics != nil {
+		s.metrics.SessionsActive.Inc()
+	}
+
 	return &driverv1alpha1.InitializeResponse{
 		SessionId: session.ID,
 		Capabilities: &driverv1alpha1.Capabilities{
@@ -130,11 +181,31 @@ func (s *Server) Initialize(ctx context.Context, _ *driverv1alpha1.InitializeReq
 	}, nil
 }
 
+// capabilitySet builds a lookup map from the adapter's declared
+// capability list. Allocated per Initialize call — caller already
+// pays for the request decode, so the extra map is in the noise.
+func capabilitySet(names []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		set[n] = struct{}{}
+	}
+	return set
+}
+
 // Navigate validates the request, looks up the session, and
 // invokes the curl subprocess. The WaitCondition field is
 // accepted but has no observable effect for this adapter — see
 // ADR-0016 §2 (honest no-op contract).
-func (s *Server) Navigate(ctx context.Context, req *driverv1alpha1.NavigateRequest) (*driverv1alpha1.NavigateResponse, error) {
+func (s *Server) Navigate(ctx context.Context, req *driverv1alpha1.NavigateRequest) (rpcResp *driverv1alpha1.NavigateResponse, rpcErr error) {
+	rpcStart := time.Now()
+	defer func() {
+		result := "success"
+		if rpcErr != nil || (rpcResp != nil && rpcResp.GetError() != nil) {
+			result = "failure"
+		}
+		s.recordNavigateDuration(rpcStart, result)
+	}()
+
 	if req.GetSessionId() == "" {
 		return navigateError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
 			"session_id is required"), nil
@@ -298,6 +369,9 @@ func (s *Server) Close(ctx context.Context, req *driverv1alpha1.CloseRequest) (*
 			},
 		}, nil
 	}
+	if s.metrics != nil {
+		s.metrics.SessionsActive.Dec()
+	}
 	return &driverv1alpha1.CloseResponse{}, nil
 }
 
@@ -403,7 +477,16 @@ const (
 //     output as MODE_TEXT_CONTENT — because computing rendered
 //     visibility requires a layout engine. Documented
 //     approximation; see ADR-0017 §5.
-func (s *Server) Extract(ctx context.Context, req *driverv1alpha1.ExtractRequest) (*driverv1alpha1.ExtractResponse, error) {
+func (s *Server) Extract(ctx context.Context, req *driverv1alpha1.ExtractRequest) (rpcResp *driverv1alpha1.ExtractResponse, rpcErr error) {
+	rpcStart := time.Now()
+	defer func() {
+		result := "success"
+		if rpcErr != nil || (rpcResp != nil && rpcResp.GetError() != nil) {
+			result = "failure"
+		}
+		s.recordExtractDuration(rpcStart, result)
+	}()
+
 	if req.GetSessionId() == "" {
 		return extractError(driverv1alpha1.DriverError_CODE_INVALID_ARGUMENT,
 			"session_id is required"), nil
