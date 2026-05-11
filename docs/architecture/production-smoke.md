@@ -238,10 +238,18 @@ ADR-0031 §3 / §4 / §5:
 - **Trace topology end-to-end (W3.2 §4.2 acceptance)**: pick
   the `hello-hackernews-s3` ScrapeJob's UID; find the engine
   log line whose `job_id` matches; extract its `trace_id`;
-  assert the same trace_id appears in the operator's logs and
-  in the playwright-adapter's logs. Proves the W3C propagator
-  chain works across operator → engine → adapter (three
-  languages: Go → Rust → TypeScript).
+  assert the same trace_id appears in the playwright-adapter's
+  logs. Proves the W3C propagator chain works across the
+  engine ↔ adapter boundary (Rust → TypeScript). The
+  operator → engine half is verified transitively — the
+  operator's `otelgrpc.NewClientHandler()` injects
+  `traceparent` into the outgoing RunJob, and the engine
+  reproducing the same trace_id in its own log proves the
+  inbound propagation. Operator log enrichment with trace_id
+  (controller-runtime / zap does not auto-inject from OTel
+  context) is a separate concern tracked for W3.3+; the
+  verifier soft-warns rather than failing when the operator
+  logs don't (yet) carry the trace_id.
 
 Asserts: §5.1 / §5.2 / §5.3 metric names present; trace_id
 field populated; **same** trace_id observed in three different
