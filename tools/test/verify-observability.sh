@@ -19,40 +19,40 @@
 #      drainer loop's `engine.assemble_row` span (Cluster D, via
 #      the `tracing-opentelemetry` bridge).
 #
-# The script `kubectl exec`s a one-shot `curl` from inside the
-# target pod so it does not need a Service exposed externally.
+# Scrapes via the Kubernetes apiserver proxy
+# (`kubectl get --raw /api/v1/namespaces/.../services/.../proxy/metrics`)
+# rather than `kubectl exec curl` — the engine container is a
+# musl-static binary on a `scratch`-like base with no shell + no
+# curl. The apiserver proxy reaches the Service's `metrics` port
+# end-to-end without touching the target container's PATH.
 #
 # Usage:
-#   bash tools/test/verify-observability.sh [namespace]
+#   bash tools/test/verify-observability.sh [namespace] [release]
 #
 # Exits 0 on success; non-zero with a debug dump on any failure.
 
 set -euo pipefail
 
 NAMESPACE="${1:-spectre-system}"
-METRICS_PORT="${SPECTRE_METRICS_PORT:-9090}"
+RELEASE="${2:-spectre}"
 
 fail() {
     echo "ERROR: $*" >&2
     exit 1
 }
 
+scrape_metrics() {
+    local service="$1"
+    kubectl get --raw \
+        "/api/v1/namespaces/${NAMESPACE}/services/${service}:metrics/proxy/metrics" \
+        2>&1
+}
+
 # --- 1. Engine /metrics --------------------------------------------------
 
-ENGINE_POD="$(
-    kubectl -n "${NAMESPACE}" get pod \
-        -l app.kubernetes.io/component=engine \
-        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
-)"
-[[ -n "${ENGINE_POD}" ]] || fail "no engine pod found in namespace ${NAMESPACE}"
+echo "Scraping engine /metrics via apiserver proxy..."
 
-echo "Engine pod: ${ENGINE_POD}"
-echo "Scraping engine /metrics on :${METRICS_PORT}..."
-
-ENGINE_METRICS="$(
-    kubectl -n "${NAMESPACE}" exec "${ENGINE_POD}" -- \
-        curl -fsS "http://localhost:${METRICS_PORT}/metrics" 2>&1
-)" || fail "engine /metrics scrape failed:
+ENGINE_METRICS="$(scrape_metrics "${RELEASE}-engine")" || fail "engine /metrics scrape failed:
 ${ENGINE_METRICS}"
 
 ENGINE_REQUIRED_METRICS=(
@@ -70,20 +70,9 @@ done
 
 # --- 2. Operator /metrics ------------------------------------------------
 
-OPERATOR_POD="$(
-    kubectl -n "${NAMESPACE}" get pod \
-        -l app.kubernetes.io/component=control-plane \
-        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
-)"
-[[ -n "${OPERATOR_POD}" ]] || fail "no control-plane pod found in namespace ${NAMESPACE}"
+echo "Scraping operator /metrics via apiserver proxy..."
 
-echo "Operator pod: ${OPERATOR_POD}"
-echo "Scraping operator /metrics on :${METRICS_PORT}..."
-
-OPERATOR_METRICS="$(
-    kubectl -n "${NAMESPACE}" exec "${OPERATOR_POD}" -- \
-        curl -fsS "http://localhost:${METRICS_PORT}/metrics" 2>&1
-)" || fail "operator /metrics scrape failed:
+OPERATOR_METRICS="$(scrape_metrics "${RELEASE}-control-plane")" || fail "operator /metrics scrape failed:
 ${OPERATOR_METRICS}"
 
 OPERATOR_REQUIRED_METRICS=(
@@ -100,20 +89,27 @@ done
 
 # --- 3. Engine logs carry trace_id --------------------------------------
 
-echo "Inspecting engine pod logs for JSON events with a non-empty trace_id..."
+ENGINE_POD="$(
+    kubectl -n "${NAMESPACE}" get pod \
+        -l app.kubernetes.io/component=engine \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
+)"
+[[ -n "${ENGINE_POD}" ]] || fail "no engine pod found in namespace ${NAMESPACE}"
+
+echo "Inspecting engine pod ${ENGINE_POD} logs for JSON events with a non-empty trace_id..."
 
 ENGINE_LOGS="$(
     kubectl -n "${NAMESPACE}" logs "${ENGINE_POD}" --tail=500 2>&1
 )" || fail "kubectl logs failed:
 ${ENGINE_LOGS}"
 
-if ! grep -E '^\{.*"trace_id":"[0-9a-f]{32}"' <<<"${ENGINE_LOGS}" >/dev/null; then
+if ! grep -E '"trace_id":"[0-9a-f]{32}"' <<<"${ENGINE_LOGS}" >/dev/null; then
     fail "no engine log line with a non-empty trace_id (32-hex) found.
 Sample of recent log output:
 $(tail -20 <<<"${ENGINE_LOGS}")"
 fi
 
-TRACE_LINES="$(grep -cE '^\{.*"trace_id":"[0-9a-f]{32}"' <<<"${ENGINE_LOGS}" || true)"
+TRACE_LINES="$(grep -cE '"trace_id":"[0-9a-f]{32}"' <<<"${ENGINE_LOGS}" || true)"
 echo "  ✓ ${TRACE_LINES} engine log line(s) carry a valid trace_id"
 
 echo "✓ Observability surface (ADR-0031 §3 / §5) end-to-end on engine + operator"
