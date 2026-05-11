@@ -24,6 +24,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -32,6 +35,7 @@ import (
 	spectrev1alpha2 "github.com/FabioCaffarello/spectre/operators/control-plane/api/v1alpha2"
 	"github.com/FabioCaffarello/spectre/operators/control-plane/internal/db"
 	"github.com/FabioCaffarello/spectre/operators/control-plane/internal/runner"
+	"github.com/FabioCaffarello/spectre/operators/control-plane/internal/telemetry"
 	enginev1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/engine/v1alpha1"
 )
 
@@ -95,6 +99,16 @@ type ScrapeJobReconciler struct {
 	// the runner". ADR-0023 §6 still mandates Postgres in production
 	// — the operator binary refuses to start without it.
 	DB db.Pool
+
+	// Metrics is the operator-side telemetry handle for ADR-0031
+	// §5.2 recordings. Production wires this from the
+	// `telemetry.Register` return value at startup; envtest leaves
+	// it nil and the reconciler skips emission. The reconciler
+	// only emits `EngineDialFailuresTotal` here — the
+	// `spectre_operator_scrapejobs_total{phase}` gauge is
+	// populated by a separate prometheus.Collector that lists
+	// from the cache on every scrape.
+	Metrics *telemetry.Metrics
 }
 
 // +kubebuilder:rbac:groups=spectre.io,resources=scrapejobs,verbs=get;list;watch;create;update;patch;delete
@@ -105,10 +119,31 @@ type ScrapeJobReconciler struct {
 // ADR-0019 §4 (state machine), §5 (JobRunner seam), and the R3.2
 // addendum (EngineRef resolution + OutputSink enforcement).
 func (r *ScrapeJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	// ADR-0031 §4.2 root span. The engine's `engine.run_job` span
+	// extracts this as parent via the W3C `traceparent` propagator
+	// otelgrpc injects on the EngineClientRunner dial. SpanKind
+	// `Internal` matches the OTel semantic convention for
+	// reconciler-style background work (no inbound RPC, no
+	// outbound RPC at this level — the runner span is the dial).
+	ctx, span := otel.Tracer(telemetry.TracerName).Start(
+		ctx,
+		"operator.reconcile_scrapejob",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(
+			attribute.String("scrapejob.namespace", req.Namespace),
+			attribute.String("scrapejob.name", req.Name),
+		),
+	)
+	defer span.End()
+
 	var job spectrev1alpha2.ScrapeJob
 	if err := r.Get(ctx, req.NamespacedName, &job); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	// `job_id` lands on the span once the resource is fetched. ADR-
+	// 0019 §4: `ScrapeJob.UID` is a Kubernetes-issued RFC 4122 UUID
+	// that doubles as the engine-side `jobs.id` (ADR-0023 §2).
+	span.SetAttributes(attribute.String("job_id", string(job.UID)))
 
 	switch job.Status.Phase {
 	case "":
@@ -194,6 +229,15 @@ func (r *ScrapeJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		now := metav1.Now()
 		if runErr != nil {
+			// ADR-0031 §5.2: count dial-level failures separately from
+			// engine-reported failures so the operator dashboard can
+			// distinguish "engine unreachable" (dial counter ticks)
+			// from "engine ran the job and reported a failure" (dial
+			// counter steady, Status.Phase=Failed).
+			var dialErr *runner.DialError
+			if r.Metrics != nil && errors.As(runErr, &dialErr) {
+				r.Metrics.EngineDialFailuresTotal.Inc()
+			}
 			job.Status.Phase = spectrev1alpha2.ScrapeJobPhaseFailed
 			job.Status.Error = runErr.Error()
 		} else {
