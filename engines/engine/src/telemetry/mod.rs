@@ -27,6 +27,7 @@
 //! matures. The JSON stdout layer for `tracing-subscriber` lives
 //! in Cluster D.
 
+pub mod logs;
 pub mod metrics;
 pub mod propagation;
 mod server;
