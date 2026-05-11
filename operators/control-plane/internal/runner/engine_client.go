@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
@@ -51,6 +52,14 @@ type EngineClientRunner struct {
 	// to 127.0.0.1:8090 (the engine's canonical port — ADR-0021 §4
 	// enacted by ADR-0025 §7).
 	EngineEndpoint string
+
+	// Credentials are the gRPC transport credentials the dial
+	// uses. Nil falls back to `insecure.NewCredentials()` so
+	// existing fixtures keep working unchanged. W3.3 first auth
+	// PR populates this from `internal/tls.NewClientCredentials`
+	// when `SPECTRE_TLS_*_PATH` env vars are configured (ADR-0032
+	// §4.1); the chart's `certManager.enabled: true` path wires it.
+	Credentials credentials.TransportCredentials
 
 	// dialFunc is the gRPC dial seam. Production code leaves this
 	// nil and uses defaultDial; tests inject a bufconn-backed
@@ -119,7 +128,13 @@ func (r *EngineClientRunner) Run(
 
 	dial := r.dialFunc
 	if dial == nil {
-		dial = defaultDial
+		creds := r.Credentials
+		if creds == nil {
+			creds = insecure.NewCredentials()
+		}
+		dial = func(ctx context.Context, endpoint string) (*grpc.ClientConn, error) {
+			return dialWithCredentials(ctx, endpoint, creds)
+		}
 	}
 
 	conn, err := dial(ctx, r.EngineEndpoint)
@@ -195,19 +210,24 @@ func (r *EngineClientRunner) Run(
 	}
 }
 
-// defaultDial is the production gRPC dial. Plain-text transport per
-// ADR-0022 §6 — TLS / mTLS is deferred to v1alpha2; in v1alpha1 the
-// operator-engine traffic runs on a private network namespace
-// (Compose / Kubernetes Pod network) where plain-text is acceptable.
+// dialWithCredentials is the production gRPC dial. Honours the
+// caller-supplied `credentials.TransportCredentials` — insecure
+// in the default v1alpha1 posture, mTLS via `internal/tls` when
+// `certManager.enabled: true` in the chart (ADR-0032 §4.1).
 //
 // W3.1 Cluster E adds the OpenTelemetry gRPC stats handler so the
 // outgoing RunJob RPC carries the active span's `traceparent`
 // metadata per ADR-0031 §4.1. The handler also emits client-side
 // spans wrapping each RPC — the engine receives both a propagated
 // trace context AND a parent span name set by `otelgrpc`.
-func defaultDial(ctx context.Context, endpoint string) (*grpc.ClientConn, error) {
+//
+// W3.3 retired the unconditional `insecure.NewCredentials()` from
+// the original `defaultDial`. The dial signature is unchanged
+// (the bufconn fixtures inject their own dialer via `dialFunc`)
+// — only the production path now switches credentials.
+func dialWithCredentials(_ context.Context, endpoint string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
 	return grpc.NewClient(endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	)
 }
