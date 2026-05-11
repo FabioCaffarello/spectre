@@ -58,6 +58,15 @@ DEFAULT_AUTHORITY = "localhost"
 
 PORT_ENV_VAR = "SPECTRE_ADAPTER_GRPC_PORT"
 INSTANCE_ID_ENV_VAR = "SPECTRE_ADAPTER_INSTANCE_ID"
+# W3.2 Cluster E follow-up: the adapter's Prometheus `/metrics`
+# sidecar (ADR-0031 §3.3) defaults to a fixed port 9090. The
+# restart-invalidation conformance test spawns two adapter
+# instances concurrently; both binding 9090 surfaces
+# ``OSError: [Errno 98] Address already in use`` from the
+# second instance. Harness allocates a per-instance ephemeral
+# port and exports it so the adapters land on distinct
+# sidecar ports.
+METRICS_PORT_ENV_VAR = "SPECTRE_METRICS_PORT"
 
 
 def _allocate_free_port() -> int:
@@ -101,6 +110,9 @@ class DriverHarness:
     cwd: Path | None = None
     extra_env: dict[str, str] = field(default_factory=dict)
     port: int = field(default_factory=_allocate_free_port)
+    # W3.2 Cluster E follow-up: distinct sidecar port per harness
+    # instance so two concurrent adapters don't fight over 9090.
+    metrics_port: int = field(default_factory=_allocate_free_port)
     ready_timeout_s: float = DEFAULT_READY_TIMEOUT_S
     shutdown_timeout_s: float = DEFAULT_SHUTDOWN_TIMEOUT_S
     # R4.3 / ADR-0023 §5: setting ``instance_id_override`` exports
@@ -163,6 +175,7 @@ class DriverHarness:
             **os.environ,
             **self.extra_env,
             PORT_ENV_VAR: str(self.port),
+            METRICS_PORT_ENV_VAR: str(self.metrics_port),
         }
         if self.instance_id_override is not None:
             env[INSTANCE_ID_ENV_VAR] = self.instance_id_override

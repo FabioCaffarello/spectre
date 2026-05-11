@@ -147,12 +147,21 @@ ${ADAPTER_METRICS}"
     # series name with `{kind="..."}` label to confirm the
     # adapter's instrument-registration end-to-end without
     # requiring a workload-specific observation count.
-    needle="spectre_adapter_sessions_active{kind=\"${kind_label}\"}"
-    if ! grep -qF "${needle}" <<<"${ADAPTER_METRICS}"; then
-        fail "${adapter}-adapter /metrics missing ${needle}:
+    #
+    # The label set is matched permissively: the Playwright
+    # `@opentelemetry/exporter-prometheus` exporter injects an
+    # `otel_scope_name` label alongside the canonical `kind`
+    # (the curl-impersonate + SeleniumBase adapters use
+    # `prometheus/client_golang` + `prometheus_client` directly
+    # and emit a tighter label set). The regex matches
+    # `{...kind="<lang>"...}` regardless of attribute order or
+    # additional exporter-injected labels.
+    pattern="^spectre_adapter_sessions_active\{[^}]*kind=\"${kind_label}\"[^}]*\}"
+    if ! grep -qE "${pattern}" <<<"${ADAPTER_METRICS}"; then
+        fail "${adapter}-adapter /metrics missing spectre_adapter_sessions_active{kind=\"${kind_label}\"}:
 ${ADAPTER_METRICS}"
     fi
-    echo "  ✓ ${needle}"
+    echo "  ✓ spectre_adapter_sessions_active{kind=\"${kind_label}\"}"
 done
 
 # --- 5. Trace topology end-to-end ---------------------------------------
