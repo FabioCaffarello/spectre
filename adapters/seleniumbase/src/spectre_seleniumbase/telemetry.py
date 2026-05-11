@@ -120,6 +120,17 @@ def register_metrics(registry: CollectorRegistry) -> AdapterMetrics:
         labelnames=["kind", "capability"],
         registry=registry,
     )
+    # W3.2 Cluster E follow-up: ``prometheus_client.Gauge`` (and
+    # the other ``*Vec``-flavoured types) only emit sample lines
+    # for label combinations the adapter has actually observed.
+    # Without an Initialize RPC the gauge would surface as
+    # ``# HELP`` / ``# TYPE`` declarations only, no value line —
+    # invisible to a steady-state scrape assertion. Touch the
+    # ``{kind=KIND}`` child once at registration so the gauge
+    # exports ``spectre_adapter_sessions_active{kind="seleniumbase"} 0``
+    # from process start.
+    sessions_active.labels(kind=KIND)
+
     return AdapterMetrics(
         sessions_active=sessions_active,
         initialize_duration=initialize_duration,
