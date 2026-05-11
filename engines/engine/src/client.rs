@@ -30,12 +30,35 @@
 
 use std::time::Duration;
 
+use opentelemetry::trace::{FutureExt as _, SpanKind, TraceContextExt as _, Tracer as _};
+use opentelemetry::{Context as OtelContext, global};
 use tonic::Request;
 use tonic::transport::{Channel, Endpoint};
 
 use crate::error::EngineError;
 use crate::proto;
 use crate::proto::driver_client::DriverClient;
+use crate::telemetry::propagation;
+
+/// `OTel` tracer name used for client-side spans per ADR-0031 §4.3.
+const TRACER_NAME: &str = "spectre-engine";
+
+/// Build a fresh client-kind span for a single adapter RPC. Returns
+/// the wrapping context the caller threads through
+/// [`opentelemetry::trace::FutureExt::with_context`] so the per-RPC
+/// span is current when `propagation::inject_current` runs.
+///
+/// Span naming follows ADR-0031 §4.3's RPC convention —
+/// `<package>.<service>/<rpc>` — using the driver protocol's proto
+/// path `spectre.driver.v1alpha1.Driver`.
+fn client_span(rpc: &'static str) -> OtelContext {
+    let tracer = global::tracer(TRACER_NAME);
+    let span = tracer
+        .span_builder(rpc)
+        .with_kind(SpanKind::Client)
+        .start(&tracer);
+    OtelContext::current_with_span(span)
+}
 
 /// Default connect timeout for [`Client::dial`]. Picked to be
 /// generous over a Compose / Kubernetes service boundary while still
@@ -99,19 +122,26 @@ impl Client {
         config: proto::SessionConfig,
         requested_capabilities: Vec<String>,
     ) -> Result<InitializeOutcome, EngineError> {
-        let mut client = DriverClient::new(self.channel.clone());
-        let req = Request::new(proto::InitializeRequest {
-            protocol_version: proto::PROTOCOL_VERSION.to_owned(),
-            session: Some(config),
-            requested_capabilities,
-        });
-        let resp = client.initialize(req).await?.into_inner();
-        check_driver_error(resp.error.as_ref())?;
-        let caps = resp.capabilities.unwrap_or_default();
-        Ok(InitializeOutcome {
-            session_id: resp.session_id,
-            capability_names: caps.names,
-        })
+        let ctx = client_span("spectre.driver.v1alpha1.Driver/Initialize");
+        let channel = self.channel.clone();
+        async move {
+            let mut client = DriverClient::new(channel);
+            let mut req = Request::new(proto::InitializeRequest {
+                protocol_version: proto::PROTOCOL_VERSION.to_owned(),
+                session: Some(config),
+                requested_capabilities,
+            });
+            propagation::inject_current(req.metadata_mut());
+            let resp = client.initialize(req).await?.into_inner();
+            check_driver_error(resp.error.as_ref())?;
+            let caps = resp.capabilities.unwrap_or_default();
+            Ok(InitializeOutcome {
+                session_id: resp.session_id,
+                capability_names: caps.names,
+            })
+        }
+        .with_context(ctx)
+        .await
     }
 
     /// Send `Navigate` for the given session.
@@ -125,16 +155,25 @@ impl Client {
         url: &str,
         wait_until: proto::WaitCondition,
     ) -> Result<(), EngineError> {
-        let mut client = DriverClient::new(self.channel.clone());
-        let req = Request::new(proto::NavigateRequest {
-            session_id: session_id.to_owned(),
-            url: url.to_owned(),
-            wait: wait_until as i32,
-            timeout: None,
-        });
-        let resp = client.navigate(req).await?.into_inner();
-        check_driver_error(resp.error.as_ref())?;
-        Ok(())
+        let ctx = client_span("spectre.driver.v1alpha1.Driver/Navigate");
+        let channel = self.channel.clone();
+        let session_id = session_id.to_owned();
+        let url = url.to_owned();
+        async move {
+            let mut client = DriverClient::new(channel);
+            let mut req = Request::new(proto::NavigateRequest {
+                session_id,
+                url,
+                wait: wait_until as i32,
+                timeout: None,
+            });
+            propagation::inject_current(req.metadata_mut());
+            let resp = client.navigate(req).await?.into_inner();
+            check_driver_error(resp.error.as_ref())?;
+            Ok(())
+        }
+        .with_context(ctx)
+        .await
     }
 
     /// Send `Query` and return the matched `ElementRef`s.
@@ -149,16 +188,25 @@ impl Client {
         kind: proto::SelectorKind,
         limit: u32,
     ) -> Result<Vec<proto::ElementRef>, EngineError> {
-        let mut client = DriverClient::new(self.channel.clone());
-        let req = Request::new(proto::QueryRequest {
-            session_id: session_id.to_owned(),
-            selector: selector.to_owned(),
-            kind: kind as i32,
-            limit,
-        });
-        let resp = client.query(req).await?.into_inner();
-        check_driver_error(resp.error.as_ref())?;
-        Ok(resp.elements)
+        let ctx = client_span("spectre.driver.v1alpha1.Driver/Query");
+        let channel = self.channel.clone();
+        let session_id = session_id.to_owned();
+        let selector = selector.to_owned();
+        async move {
+            let mut client = DriverClient::new(channel);
+            let mut req = Request::new(proto::QueryRequest {
+                session_id,
+                selector,
+                kind: kind as i32,
+                limit,
+            });
+            propagation::inject_current(req.metadata_mut());
+            let resp = client.query(req).await?.into_inner();
+            check_driver_error(resp.error.as_ref())?;
+            Ok(resp.elements)
+        }
+        .with_context(ctx)
+        .await
     }
 
     /// Send `Extract` against a single `ElementRef` and return its
@@ -173,22 +221,30 @@ impl Client {
         element: proto::ElementRef,
         fields: Vec<proto::Field>,
     ) -> Result<Vec<(String, String)>, EngineError> {
-        let mut client = DriverClient::new(self.channel.clone());
-        let req = Request::new(proto::ExtractRequest {
-            session_id: session_id.to_owned(),
-            element: Some(element),
-            fields,
-        });
-        let resp = client.extract(req).await?.into_inner();
-        check_driver_error(resp.error.as_ref())?;
-        let entries = resp
-            .values
-            .map(|v| v.fields)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| (e.name, e.json_value))
-            .collect();
-        Ok(entries)
+        let ctx = client_span("spectre.driver.v1alpha1.Driver/Extract");
+        let channel = self.channel.clone();
+        let session_id = session_id.to_owned();
+        async move {
+            let mut client = DriverClient::new(channel);
+            let mut req = Request::new(proto::ExtractRequest {
+                session_id,
+                element: Some(element),
+                fields,
+            });
+            propagation::inject_current(req.metadata_mut());
+            let resp = client.extract(req).await?.into_inner();
+            check_driver_error(resp.error.as_ref())?;
+            let entries = resp
+                .values
+                .map(|v| v.fields)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|e| (e.name, e.json_value))
+                .collect();
+            Ok(entries)
+        }
+        .with_context(ctx)
+        .await
     }
 
     /// Send `Close` for the given session.
@@ -197,13 +253,19 @@ impl Client {
     ///
     /// Same as [`Self::initialize`].
     pub async fn close(&self, session_id: &str) -> Result<(), EngineError> {
-        let mut client = DriverClient::new(self.channel.clone());
-        let req = Request::new(proto::CloseRequest {
-            session_id: session_id.to_owned(),
-        });
-        let resp = client.close(req).await?.into_inner();
-        check_driver_error(resp.error.as_ref())?;
-        Ok(())
+        let ctx = client_span("spectre.driver.v1alpha1.Driver/Close");
+        let channel = self.channel.clone();
+        let session_id = session_id.to_owned();
+        async move {
+            let mut client = DriverClient::new(channel);
+            let mut req = Request::new(proto::CloseRequest { session_id });
+            propagation::inject_current(req.metadata_mut());
+            let resp = client.close(req).await?.into_inner();
+            check_driver_error(resp.error.as_ref())?;
+            Ok(())
+        }
+        .with_context(ctx)
+        .await
     }
 }
 

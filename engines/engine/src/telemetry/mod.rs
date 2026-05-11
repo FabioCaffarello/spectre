@@ -28,6 +28,7 @@
 //! in Cluster D.
 
 pub mod metrics;
+pub mod propagation;
 mod server;
 
 use std::net::SocketAddr;
@@ -40,6 +41,7 @@ use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use prometheus::Registry;
 use tokio::task::JoinHandle;
@@ -110,16 +112,15 @@ impl TelemetryConfig {
 
 /// Live telemetry handles owned by the engine binary.
 ///
-/// Holds the meter provider, the optional tracer provider, the
-/// shared metric struct call sites record into, and the join
-/// handle of the background sidecar task. Drop / shutdown is
-/// graceful: [`Self::shutdown`] aborts the sidecar then flushes
-/// the providers.
+/// Holds the meter provider, the tracer provider, the shared metric
+/// struct call sites record into, and the join handle of the
+/// background sidecar task. Drop / shutdown is graceful:
+/// [`Self::shutdown`] aborts the sidecar then flushes the providers.
 pub struct Telemetry {
     /// Engine metric instruments shared with call sites
     /// (server / executor / client).
     pub metrics: Arc<EngineMetrics>,
-    tracer_provider: Option<SdkTracerProvider>,
+    tracer_provider: SdkTracerProvider,
     meter_provider: SdkMeterProvider,
     sidecar: JoinHandle<()>,
 }
@@ -191,28 +192,46 @@ impl Telemetry {
         ));
         opentelemetry::global::set_meter_provider(meter_provider.clone());
 
-        let tracer_provider = if let Some(endpoint) = config.otlp_endpoint.as_deref() {
+        // W3C Trace Context propagator goes global unconditionally —
+        // ADR-0031 §4.1 requires `traceparent` extraction / injection
+        // on every gRPC boundary, regardless of whether the deployment
+        // pushes spans to a collector. With no exporter, spans still
+        // generate valid IDs and propagate downstream; the collector
+        // path simply has no consumer.
+        opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+
+        // The tracer provider is always real — never a no-op — so
+        // generated span IDs are valid even without an OTLP endpoint
+        // configured. The exporter attaches only when configured;
+        // without it, spans complete and drop with no export side
+        // effect. This is the same shape the propagator path needs:
+        // a deployment with no collector still preserves trace_id
+        // through the engine.
+        let mut tracer_builder = SdkTracerProvider::builder().with_resource(resource);
+        let exporter_status = if let Some(endpoint) = config.otlp_endpoint.as_deref() {
             let exporter = opentelemetry_otlp::SpanExporter::builder()
                 .with_tonic()
                 .with_endpoint(endpoint)
                 .with_timeout(Duration::from_secs(5))
                 .build()
                 .context("otlp span exporter init")?;
-            let provider = SdkTracerProvider::builder()
-                .with_batch_exporter(exporter)
-                .with_resource(resource)
-                .build();
-            opentelemetry::global::set_tracer_provider(provider.clone());
-            info!(endpoint, "otlp trace exporter ready");
-            Some(provider)
+            tracer_builder = tracer_builder.with_batch_exporter(exporter);
+            Some(endpoint.to_owned())
         } else {
-            info!(
-                "OTEL_EXPORTER_OTLP_ENDPOINT unset; traces dropped \
-                 (set OTEL_EXPORTER_OTLP_ENDPOINT to enable OTLP/gRPC \
-                 push per ADR-0031 §2.2)"
-            );
             None
         };
+        let tracer_provider = tracer_builder.build();
+        opentelemetry::global::set_tracer_provider(tracer_provider.clone());
+        if let Some(endpoint) = exporter_status {
+            info!(endpoint = %endpoint, "otlp trace exporter ready");
+        } else {
+            info!(
+                "OTEL_EXPORTER_OTLP_ENDPOINT unset; spans generate \
+                 valid IDs and propagate, but are not exported (set \
+                 OTEL_EXPORTER_OTLP_ENDPOINT to enable OTLP/gRPC push \
+                 per ADR-0031 §2.2)"
+            );
+        }
 
         let sidecar = server::spawn(config.metrics_addr, registry).await?;
         info!(addr = %config.metrics_addr, "metrics sidecar listening");
@@ -241,10 +260,8 @@ impl Telemetry {
         if let Err(e) = self.meter_provider.shutdown() {
             warn!(error = %e, "meter provider shutdown failed");
         }
-        if let Some(provider) = self.tracer_provider {
-            if let Err(e) = provider.shutdown() {
-                warn!(error = %e, "tracer provider shutdown failed");
-            }
+        if let Err(e) = self.tracer_provider.shutdown() {
+            warn!(error = %e, "tracer provider shutdown failed");
         }
     }
 }

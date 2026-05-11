@@ -56,6 +56,8 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
+use opentelemetry::trace::{FutureExt as _, SpanKind, TraceContextExt as _, Tracer as _};
+use opentelemetry::{Context as OtelContext, KeyValue, global};
 use tokio::sync::mpsc;
 use tokio_stream::Stream;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -75,7 +77,12 @@ use crate::error::EngineError;
 use crate::kafka::KafkaProducer;
 use crate::output::OutputSink;
 use crate::s3::S3Uploader;
+use crate::telemetry::propagation;
 use crate::webhook::WebhookClient;
+
+/// `opentelemetry::global::tracer` name used by the engine's span
+/// emissions per ADR-0031 §4.3.
+const TRACER_NAME: &str = "spectre-engine";
 
 /// Reusable factory for the fully-configured tonic service stack.
 /// Wraps the engine in an `Arc` (so the streaming task can hold it
@@ -153,6 +160,46 @@ impl EngineService for EngineServiceImpl {
         &self,
         request: Request<RunJobRequest>,
     ) -> Result<Response<Self::RunJobStream>, Status> {
+        // ADR-0031 §4.1: extract the W3C `traceparent` parent context
+        // from incoming gRPC metadata. Missing / invalid headers yield
+        // an empty context; the new span below becomes a fresh root.
+        let parent_ctx = propagation::extract_parent(request.metadata());
+
+        // Open the root span for this RunJob. ADR-0031 §4.2 places
+        // `engine.run_job` directly below the caller's span (typically
+        // `operator.reconcile_scrapejob`); §4.3 names it. SpanKind
+        // `Server` follows OTel RPC semantic conventions for the
+        // gRPC handler-side span.
+        //
+        // The async body wraps with `with_context(run_ctx)` instead of
+        // holding a `_run_guard = ctx.attach()` across awaits — the
+        // `ContextGuard` is `!Send`, which would violate tonic's
+        // `Send`-bounded handler future.
+        let tracer = global::tracer(TRACER_NAME);
+        let run_span = tracer
+            .span_builder("engine.run_job")
+            .with_kind(SpanKind::Server)
+            .start_with_context(&tracer, &parent_ctx);
+        let run_ctx = OtelContext::current_with_span(run_span);
+        let task_ctx = run_ctx.clone();
+        self.run_job_inner(request, task_ctx)
+            .with_context(run_ctx)
+            .await
+    }
+}
+
+impl EngineServiceImpl {
+    /// Body of `Engine.run_job` extracted so the surrounding handler
+    /// can wrap it in [`opentelemetry::trace::FutureExt::with_context`]
+    /// — the `OTel` context guard is `!Send` and cannot be held across
+    /// the awaits inside this body, so the wrapper attaches /
+    /// detaches the context on every poll instead.
+    async fn run_job_inner(
+        &self,
+        request: Request<RunJobRequest>,
+        task_ctx: OtelContext,
+    ) -> Result<Response<<Self as EngineService>::RunJobStream>, Status> {
+        let tracer = global::tracer(TRACER_NAME);
         let RunJobRequest {
             job_dsl,
             job_id,
@@ -161,6 +208,7 @@ impl EngineService for EngineServiceImpl {
             s3: s3_config,
             webhook: webhook_config,
         } = request.into_inner();
+
         // Empty defaults to "stdout" so clients that predate R4.2
         // (notably the engine's own integration tests and any
         // hand-written grpcurl call) continue to work without
@@ -189,10 +237,13 @@ impl EngineService for EngineServiceImpl {
         // Parse + plan eagerly so the most common configuration
         // mistakes (malformed YAML, unknown driver) surface as a
         // synchronous gRPC error, not a `Failed` event the client
-        // has to dig out of the stream.
-        let job: Job = Engine::parse_job(&job_dsl)
+        // has to dig out of the stream. Each step gets its own span
+        // per ADR-0031 §4.3 (non-RPC operation naming pattern
+        // `<service>.<operation>`).
+        let job: Job = tracer
+            .in_span("engine.parse_dsl", |_cx| Engine::parse_job(&job_dsl))
             .map_err(|e| Status::invalid_argument(format!("parse: {e}")))?;
-        let plan = Engine::plan_job(&job);
+        let plan = tracer.in_span("engine.generate_plan", |_cx| Engine::plan_job(&job));
 
         // Persist the `jobs` row before opening the stream. A
         // Postgres failure here is reported synchronously as
@@ -211,6 +262,15 @@ impl EngineService for EngineServiceImpl {
         .await
         .map_err(|e| Status::internal(format!("postgres insert_job: {e}")))?;
 
+        // Record `job_id` on the run span now that we know the UUID
+        // (ADR-0031 §3.4 + §4.x: `job_id` is a cross-cutting attribute
+        // surfaced on every span and event inside the job context).
+        // `Context::current()` is the run_ctx the surrounding
+        // `with_context` wrapper attached.
+        OtelContext::current()
+            .span()
+            .set_attribute(KeyValue::new("job_id", job_uuid.to_string()));
+
         info!(
             job_id = %job_uuid,
             driver = %plan.driver,
@@ -227,21 +287,29 @@ impl EngineService for EngineServiceImpl {
         let (response_tx, response_rx) =
             mpsc::unbounded_channel::<Result<RunJobResponse, Status>>();
 
-        tokio::spawn(stream_run_job(StreamRunJobArgs {
-            engine,
-            pool,
-            kafka,
-            s3,
-            webhook,
-            plan,
-            job_uuid,
-            driver,
-            output_sink_kind,
-            kafka_topic,
-            s3_config,
-            webhook_config,
-            response_tx,
-        }));
+        // Carry the run span's OTel context into the spawned task so
+        // every child span (`engine.execute_plan`, adapter RPC spans)
+        // inherits the run_job span as parent. `with_context` wraps
+        // the spawned future so the context attaches / detaches on
+        // each poll — no `!Send` guard across awaits.
+        tokio::spawn(
+            stream_run_job(StreamRunJobArgs {
+                engine,
+                pool,
+                kafka,
+                s3,
+                webhook,
+                plan,
+                job_uuid,
+                driver,
+                output_sink_kind,
+                kafka_topic,
+                s3_config,
+                webhook_config,
+                response_tx,
+            })
+            .with_context(task_ctx),
+        );
 
         Ok(Response::new(Box::pin(UnboundedReceiverStream::new(
             response_rx,
@@ -370,13 +438,30 @@ async fn stream_run_job(args: StreamRunJobArgs) {
 
     let (row_tx, mut row_rx) = mpsc::unbounded_channel::<serde_json::Value>();
 
+    // The `engine.execute_plan` span (ADR-0031 §4.2) wraps the
+    // executor's lifetime so child adapter RPC spans inherit it as
+    // parent. The span enters the spawned task's context via
+    // `with_context`; the drainer loop below stays under the
+    // `engine.run_job` span (its caller-side parent) since the row
+    // loop is not part of the executor's driver-loop work — it
+    // serialises and dispatches rows that already left the executor.
+    let tracer = global::tracer(TRACER_NAME);
+    let execute_span = tracer
+        .span_builder("engine.execute_plan")
+        .with_kind(SpanKind::Internal)
+        .start(&tracer);
+    let executor_ctx = OtelContext::current_with_span(execute_span);
+
     // Executor task: owns the sink (and therefore `row_tx`), so the
     // channel closes when the executor returns and the drainer's
     // `recv()` returns `None`.
-    let executor_handle = tokio::spawn(async move {
-        let mut sink = ChannelSink::new(row_tx);
-        engine.run_plan_with_sink(&plan, &mut sink).await
-    });
+    let executor_handle = tokio::spawn(
+        async move {
+            let mut sink = ChannelSink::new(row_tx);
+            engine.run_plan_with_sink(&plan, &mut sink).await
+        }
+        .with_context(executor_ctx),
+    );
 
     let persist_rows = output_sink_kind == "stdout";
     let publish_kafka = output_sink_kind == "kafka";
@@ -409,6 +494,15 @@ async fn stream_run_job(args: StreamRunJobArgs) {
     };
 
     while let Some(value) = row_rx.recv().await {
+        // ADR-0031 §4.2 lists a per-row `engine.assemble_row` span;
+        // its OTel-direct form would need a `Context::attach()`
+        // guard held across the awaits inside the loop body, which
+        // is `!Send` and incompatible with the multi-thread tokio
+        // scheduler. Cluster D installs the `tracing-opentelemetry`
+        // bridge — at that point `tracing::info_span!` becomes an
+        // OTel span, child of `engine.execute_plan` via tracing's
+        // own span tree, no !Send guard required. Per-row span lands
+        // with that bridge.
         if persist_rows {
             if let Err(e) = db_jobs::record_job_row(&pool, job_uuid, row_index, &value).await {
                 warn!(
