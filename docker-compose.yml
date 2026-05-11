@@ -73,6 +73,21 @@
 # `SPECTRE_REDIS_URL`, and `SPECTRE_KAFKA_BROKERS` from Kubernetes
 # Secrets per ADR-0023 §10 / §12. Do not reuse these values
 # anywhere persistent.
+#
+# W3.3 mTLS posture (ADR-0032): the Compose stack stays plaintext.
+# The chart's `certManager.enabled: false` default is the v1alpha1
+# operator → engine baseline; cert-manager itself is a Kubernetes-
+# native controller with no Compose equivalent, and provisioning a
+# parallel certificate workflow for Compose would diverge from the
+# canonical k8s shape ADR-0036 §5.5 codifies. Contributors who need
+# to exercise the mTLS path run the chart in `kind` (the W3.3
+# mtls-smoke workflow's local reproduction:
+# `tools/test/verify-mtls-handshake.sh`); the Compose path stays
+# zero-config plaintext on purpose. Same posture is expected for
+# every Wave 5+ infra-service: Compose plaintext, k8s mTLS-capable.
+# No `SPECTRE_TLS_*` env vars below — the per-language detectors
+# (engine `TlsConfig::from_env`, operator `tls.DetectMode`) treat
+# all three unset as `Plaintext` and bind the v1alpha1 dial path.
 
 services:
   postgres:
