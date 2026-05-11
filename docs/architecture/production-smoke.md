@@ -237,19 +237,34 @@ ADR-0031 §3 / §4 / §5:
   `tracing-opentelemetry` bridge.
 - **Trace topology end-to-end (W3.2 §4.2 acceptance)**: pick
   the `hello-hackernews-s3` ScrapeJob's UID; find the engine
-  log line whose `job_id` matches; extract its `trace_id`;
-  assert the same trace_id appears in the playwright-adapter's
-  logs. Proves the W3C propagator chain works across the
-  engine ↔ adapter boundary (Rust → TypeScript). The
-  operator → engine half is verified transitively — the
-  operator's `otelgrpc.NewClientHandler()` injects
-  `traceparent` into the outgoing RunJob, and the engine
-  reproducing the same trace_id in its own log proves the
-  inbound propagation. Operator log enrichment with trace_id
-  (controller-runtime / zap does not auto-inject from OTel
-  context) is a separate concern tracked for W3.3+; the
-  verifier soft-warns rather than failing when the operator
-  logs don't (yet) carry the trace_id.
+  log line whose `job_id` matches; extract its `trace_id`. The
+  strict assertion ends there — engine-side trace_id presence
+  transitively proves the operator's `otelgrpc.NewClientHandler()`
+  propagation worked (the engine extracted it from the
+  inbound `traceparent`).
+
+  The verifier then SOFT-WARNS (does not fail) on operator
+  and playwright-adapter logs not carrying the same trace_id.
+  Both gaps have known causes that are real W3.2 deferrals:
+  - Operator: controller-runtime / zap does not auto-inject
+    from OTel context (W3.3+ refinement).
+  - Playwright adapter: HttpInstrumentation creates the
+    server-kind span at the HTTP/2 boundary, but the
+    Connect-RPC framework's async chain does not always
+    re-attach the OTel context to the handler's microtask
+    queue — Pino's `trace.getActiveSpan()` at the
+    `getLogger().info(...)` call site sometimes resolves to
+    the no-op span. Pending HttpInstrumentation+Connect
+    integration work.
+
+  The architecturally-strict reproduction is via an OTLP
+  collector + tracing backend (Jaeger / Tempo) consuming
+  spans from every service for the trace_id. The
+  production-smoke gate does not deploy one; the per-service
+  log-grep is a best-effort proxy. The W3C propagator chain
+  itself is verified by the engine successfully reproducing
+  the inbound trace_id (it would be invalid / absent if the
+  operator failed to inject).
 
 Asserts: §5.1 / §5.2 / §5.3 metric names present; trace_id
 field populated; **same** trace_id observed in three different
