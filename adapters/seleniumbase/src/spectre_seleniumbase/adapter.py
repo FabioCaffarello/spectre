@@ -21,20 +21,25 @@ from __future__ import annotations
 
 import os
 import signal
-import sys
 import threading
 import uuid
 from concurrent import futures
 from typing import Any
 
 import grpc
+import structlog
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
+from opentelemetry.instrumentation.grpc import server_interceptor
+from prometheus_client import CollectorRegistry, start_http_server
 from spectre.driver.v1alpha1 import driver_pb2_grpc
 
 from spectre_seleniumbase import PROTOCOL_VERSION, __version__
+from spectre_seleniumbase.logging import configure as configure_logging
 from spectre_seleniumbase.redis_client import RedisClient
 from spectre_seleniumbase.server import DriverServicer, _default_driver_factory
 from spectre_seleniumbase.sessions import SessionManager
+from spectre_seleniumbase.telemetry import init as init_telemetry
+from spectre_seleniumbase.telemetry import register_metrics
 
 SHUTDOWN_DEADLINE_S = 5.0
 MAX_WORKERS = 4
@@ -42,11 +47,16 @@ MAX_WORKERS = 4
 PORT_ENV_VAR = "SPECTRE_ADAPTER_GRPC_PORT"
 REDIS_URL_ENV_VAR = "SPECTRE_REDIS_URL"
 INSTANCE_ID_ENV_VAR = "SPECTRE_ADAPTER_INSTANCE_ID"
+METRICS_PORT_ENV_VAR = "SPECTRE_METRICS_PORT"
 
 # Local-dev default; ADR-0023 §9 (Compose) and ``.env.example``
 # both surface this URL. Production deployments must set the env
 # var explicitly.
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
+
+# ADR-0031 §3.3 uniform metrics port honoured when
+# ``SPECTRE_METRICS_PORT`` is unset (local-dev convenience).
+DEFAULT_METRICS_PORT = 9090
 
 
 def identity() -> str:
@@ -90,6 +100,28 @@ def resolve_redis_url(env: dict[str, str]) -> str:
     return raw
 
 
+def resolve_metrics_port(env: dict[str, str]) -> int:
+    """Resolve the Prometheus ``/metrics`` sidecar bind port.
+
+    Defaults to 9090 per ADR-0031 §3.3 uniform port. The chart +
+    Compose populate ``SPECTRE_METRICS_PORT`` from the
+    ``observability.metricsPort`` value so production deployments
+    can drift the port in one place.
+    """
+    raw = env.get(METRICS_PORT_ENV_VAR, "")
+    if not raw:
+        return DEFAULT_METRICS_PORT
+    try:
+        port = int(raw)
+    except ValueError as err:
+        raise SystemExit(
+            f"{METRICS_PORT_ENV_VAR} must be a port number, got {raw!r}",
+        ) from err
+    if not 0 <= port <= 65535:
+        raise SystemExit(f"{METRICS_PORT_ENV_VAR} must be between 0 and 65535, got {port}")
+    return port
+
+
 def resolve_instance_id(env: dict[str, str]) -> str:
     """Return the adapter's process-startup UUID.
 
@@ -110,6 +142,7 @@ def resolve_instance_id(env: dict[str, str]) -> str:
 def _create_server(
     sessions: SessionManager,
     port: int,
+    metrics: Any | None = None,
 ) -> grpc.Server:
     """Build a gRPC server bound to ``0.0.0.0:<port>``.
 
@@ -118,9 +151,23 @@ def _create_server(
     overall service ('') from process startup; the conformance
     harness polls until that response arrives, and production
     health probes consume the same endpoint.
+
+    W3.2 Cluster B: the server installs
+    ``opentelemetry.instrumentation.grpc.server_interceptor`` so
+    every incoming RPC extracts the W3C ``traceparent`` from
+    metadata and opens a server-kind span the per-RPC handlers
+    inherit as parent. ``metrics`` is the ``AdapterMetrics`` handle
+    the DriverServicer records ADR-0031 §5.3 instruments into;
+    ``None`` disables emission (used by tests).
     """
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=MAX_WORKERS))
-    driver_pb2_grpc.add_DriverServicer_to_server(DriverServicer(sessions), server)
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=MAX_WORKERS),
+        interceptors=[server_interceptor()],  # type: ignore[no-untyped-call]
+    )
+    driver_pb2_grpc.add_DriverServicer_to_server(
+        DriverServicer(sessions, metrics=metrics),
+        server,
+    )
 
     health_servicer = health.HealthServicer()
     health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
@@ -148,34 +195,55 @@ def serve(
     clean process exit rather than a partially-initialised
     server.
     """
+    # W3.2 Cluster B: configure JSON stdout logging + OTel
+    # foundation BEFORE any startup work so the redis-dial + sweep
+    # messages emit in the canonical ADR-0031 §3.4 schema.
+    configure_logging(__version__)
+    log = structlog.get_logger()
+
+    tracer_provider = init_telemetry(__version__)
+
     resolved_redis_url = redis_url or resolve_redis_url(dict(os.environ))
     resolved_instance_id = instance_id or resolve_instance_id(dict(os.environ))
+
+    # Prometheus `/metrics` sidecar on `SPECTRE_METRICS_PORT`
+    # (default 9090 per ADR-0031 §3.3). The metrics registry is
+    # passed to the servicer so per-RPC handlers can record §5.3
+    # instruments.
+    metrics_registry = CollectorRegistry()
+    metrics = register_metrics(metrics_registry)
+    metrics_port = resolve_metrics_port(dict(os.environ))
+    start_http_server(metrics_port, registry=metrics_registry)
+    log.info("metrics sidecar listening", metrics_port=metrics_port)
 
     redis = RedisClient.from_url(resolved_redis_url)
     try:
         redis.ping()
     except Exception as exc:  # noqa: BLE001 — any redis failure → fail fast
-        sys.stderr.write(
-            f"redis ping failed at {resolved_redis_url}: {exc}\n",
-        )
-        sys.stderr.flush()
+        log.error("redis ping failed", redis_url=resolved_redis_url, error=str(exc))
         raise SystemExit(1) from exc
 
-    sys.stderr.write(
-        f"redis ready at {resolved_redis_url} (adapter_instance_id={resolved_instance_id})\n",
+    log.info(
+        "redis ready",
+        redis_url=resolved_redis_url,
+        adapter_instance_id=resolved_instance_id,
     )
-    sys.stderr.flush()
 
     sessions = SessionManager(
         factory=factory or _default_driver_factory,
         redis=redis,
         instance_id=resolved_instance_id,
     )
-    server = _create_server(sessions, port)
+    server = _create_server(sessions, port, metrics=metrics)
     server.start()
 
-    sys.stderr.write(f"{identity()} listening on 0.0.0.0:{port}\n")
-    sys.stderr.flush()
+    log.info(
+        "adapter listening",
+        binary="spectre-seleniumbase",
+        version=__version__,
+        protocol=PROTOCOL_VERSION,
+        grpc_port=port,
+    )
 
     stop_event = threading.Event()
 
@@ -183,8 +251,7 @@ def serve(
         if stop_event.is_set():
             return
         stop_event.set()
-        sys.stderr.write(f"received signal {signum}, shutting down\n")
-        sys.stderr.flush()
+        log.info("shutting down", signal=signum)
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
@@ -194,6 +261,7 @@ def serve(
     server.stop(SHUTDOWN_DEADLINE_S).wait()
     sessions.close_all()
     redis.disconnect()
+    tracer_provider.shutdown()
 
 
 def main(argv: list[str] | None = None) -> None:

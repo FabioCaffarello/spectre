@@ -47,6 +47,29 @@ dependencies = [
     # adapter_instance_id against the stored value and surfaces
     # foreign-instance sessions as gRPC UNAVAILABLE.
     "redis>=5.0",
+    # OpenTelemetry SDK + OTLP/gRPC exporter (W3.2 Cluster B per
+    # ADR-0031 §3.5). The trace provider always registers a W3C
+    # propagator; the OTLP exporter attaches only when
+    # `OTEL_EXPORTER_OTLP_ENDPOINT` is set (optional-exporter
+    # pattern shared with engine + operator + curl-impersonate).
+    "opentelemetry-api>=1.27,<2",
+    "opentelemetry-sdk>=1.27,<2",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27,<2",
+    # gRPC server-side instrumentation. Provides a server
+    # interceptor that extracts the W3C `traceparent` from
+    # incoming metadata and opens a server-kind span the per-RPC
+    # handlers inherit as parent.
+    "opentelemetry-instrumentation-grpc>=0.48b0,<1",
+    # Prometheus `/metrics` endpoint (ADR-0031 §3.3 uniform port).
+    # The adapter binds this on a sidecar HTTP port via
+    # `prometheus_client.start_http_server` rather than the OTel
+    # meter — parity with the curl-impersonate adapter.
+    "prometheus-client>=0.20",
+    # structlog drives the JSON-line stdout logging the eleven
+    # mandatory fields ADR-0031 §3.4 codifies. Cross-service
+    # cross-language schema match with the engine
+    # `tracing-subscriber` layer + curl-impersonate slog handler.
+    "structlog>=24.4",
 ]
 
 [tool.uv.sources]

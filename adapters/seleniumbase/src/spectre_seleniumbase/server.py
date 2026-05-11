@@ -352,8 +352,33 @@ def _default_driver_factory() -> Any:
 class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
     """gRPC service implementing the v1alpha1 Driver protocol."""
 
-    def __init__(self, sessions: SessionManager) -> None:
+    def __init__(
+        self,
+        sessions: SessionManager,
+        metrics: Any | None = None,
+    ) -> None:
         self._sessions = sessions
+        # W3.2 Cluster B: ``metrics`` is an
+        # ``spectre_seleniumbase.telemetry.AdapterMetrics`` handle;
+        # ``None`` disables emission (tests pass ``None`` so the
+        # existing suite is unchanged).
+        self._metrics = metrics
+
+    # --- §5.3 recorders ------------------------------------------------
+
+    def _record_navigate_duration(self, start: float, result: str) -> None:
+        if self._metrics is None:
+            return
+        self._metrics.navigate_duration.labels(kind="seleniumbase", result=result).observe(
+            time.monotonic() - start,
+        )
+
+    def _record_extract_duration(self, start: float, result: str) -> None:
+        if self._metrics is None:
+            return
+        self._metrics.extract_duration.labels(kind="seleniumbase", result=result).observe(
+            time.monotonic() - start,
+        )
 
     # ------------------------------------------------------------------
     # Initialize
@@ -363,7 +388,22 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
         request: driver_pb2.InitializeRequest,
         context: grpc.ServicerContext,
     ) -> driver_pb2.InitializeResponse:
-        del request  # ADR-0009 §1: Initialize ignores the request payload.
+        start = time.monotonic()
+        # W3.2 Cluster B: every requested capability not in the
+        # adapter manifest increments
+        # ``capability_violations_total`` with the offending name.
+        # The Initialize still succeeds with the adapter's actual
+        # manifest so the caller can negotiate gracefully; the
+        # counter is the auditable signal.
+        if self._metrics is not None:
+            manifest = set(CAPABILITY_NAMES)
+            for requested in request.requested_capabilities:
+                if requested not in manifest:
+                    self._metrics.capability_violations_total.labels(
+                        kind="seleniumbase",
+                        capability=requested,
+                    ).inc()
+
         session_id = str(uuid.uuid4())
         # ADR-0023 §6 makes Redis required: a metadata-write failure
         # surfaces at the transport layer so the caller sees the
@@ -378,6 +418,13 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
                 f"{REDIS_UNAVAILABLE_PREFIX}; cannot persist session metadata: {exc}",
             )
             return driver_pb2.InitializeResponse()
+
+        if self._metrics is not None:
+            self._metrics.initialize_duration.labels(kind="seleniumbase").observe(
+                time.monotonic() - start,
+            )
+            self._metrics.sessions_active.labels(kind="seleniumbase").inc()
+
         capabilities = capabilities_pb2.Capabilities(
             names=list(CAPABILITY_NAMES),
             driver_version=DRIVER_VERSION,
@@ -392,6 +439,22 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
     # Navigate
 
     def Navigate(  # noqa: N802
+        self,
+        request: driver_pb2.NavigateRequest,
+        context: grpc.ServicerContext,
+    ) -> driver_pb2.NavigateResponse:
+        # W3.2 Cluster B: wrap the existing body so the §5.3
+        # duration histogram is observed once per RPC with the
+        # canonical ``result`` label derived from the in-band
+        # DriverError. The handler's existing structure is
+        # preserved verbatim under ``_navigate_impl``.
+        start = time.monotonic()
+        response = self._navigate_impl(request, context)
+        result = "failure" if response.HasField("error") else "success"
+        self._record_navigate_duration(start, result)
+        return response
+
+    def _navigate_impl(
         self,
         request: driver_pb2.NavigateRequest,
         context: grpc.ServicerContext,
@@ -529,6 +592,19 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
     # Extract
 
     def Extract(  # noqa: N802
+        self,
+        request: extraction_pb2.ExtractRequest,
+        context: grpc.ServicerContext,
+    ) -> extraction_pb2.ExtractResponse:
+        # W3.2 Cluster B: wraps ``_extract_impl`` with the §5.3
+        # duration recorder. See ``Navigate`` for the rationale.
+        start = time.monotonic()
+        response = self._extract_impl(request, context)
+        result = "failure" if response.HasField("error") else "success"
+        self._record_extract_duration(start, result)
+        return response
+
+    def _extract_impl(
         self,
         request: extraction_pb2.ExtractRequest,
         context: grpc.ServicerContext,
@@ -760,6 +836,8 @@ class DriverServicer(driver_pb2_grpc.DriverServicer):  # type: ignore[misc]
                 ),
             )
         self._sessions.close_session(request.session_id)
+        if self._metrics is not None:
+            self._metrics.sessions_active.labels(kind="seleniumbase").dec()
         return driver_pb2.CloseResponse()
 
 
