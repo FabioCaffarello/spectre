@@ -17,6 +17,35 @@
 import pino, { type Logger } from "pino";
 import { trace } from "@opentelemetry/api";
 
+// Module-singleton logger. `main()` initialises it via
+// `setLogger(createLogger(ADAPTER_VERSION))` before spawning the
+// gRPC server; the RPC handlers in `server.ts` reach the same
+// instance via `getLogger()`. Without the singleton each
+// importer would have to thread the logger through
+// `createDriverService(sessions, metrics, logger)` — workable
+// but verbose for a single shared dependency.
+let cachedLogger: Logger | undefined;
+
+/** Install the process-wide logger instance. Called once from `main()`. */
+export function setLogger(logger: Logger): void {
+  cachedLogger = logger;
+}
+
+/**
+ * Return the process-wide logger. Falls back to a default-version
+ * logger when called before `setLogger` (e.g., from a unit test
+ * that imports `server.ts` directly without going through
+ * `index.ts::main`). The fallback path still emits the canonical
+ * eleven-field JSON schema; only `service_version` defaults to
+ * `"0.0.0"`.
+ */
+export function getLogger(): Logger {
+  if (!cachedLogger) {
+    cachedLogger = createLogger("0.0.0");
+  }
+  return cachedLogger;
+}
+
 /**
  * Configure a Pino logger writing one JSON line per event to
  * `stdout` with the eleven canonical fields stamped at every

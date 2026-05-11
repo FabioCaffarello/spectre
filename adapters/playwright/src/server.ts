@@ -71,6 +71,7 @@ import {
   UnknownSessionError,
 } from "./sessions.js";
 import { type AdapterMetrics, KIND as METRIC_KIND } from "./telemetry.js";
+import { getLogger } from "./logging.js";
 import type { Histogram } from "@opentelemetry/api";
 
 /**
@@ -374,6 +375,14 @@ export const createDriverService = (
   },
   async navigate(req: NavigateRequest): Promise<NavigateResponse> {
     return timed(metrics?.navigateDuration, async () => {
+      // W3.2 Cluster E follow-up: emit one info log per Navigate
+      // RPC inside the server-kind span the HttpInstrumentation
+      // auto-opens. Pino's `formatters.log` reads
+      // `trace.getActiveSpan()?.spanContext()` at call time, so
+      // this line surfaces the trace_id propagated from the engine
+      // — the proof point the production-smoke trace-topology
+      // assertion grep's on.
+      getLogger().info({ session_id: req.sessionId, url: req.url }, "navigate");
       if (!req.sessionId) {
         return errorResponse(
           DriverError_Code.INVALID_ARGUMENT,

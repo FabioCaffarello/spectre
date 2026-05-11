@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { resolve as resolvePath } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { createLogger } from "./logging.js";
+import { createLogger, setLogger } from "./logging.js";
 import { file_spectre_driver_v1alpha1_driver } from "./proto/spectre/driver/v1alpha1/driver_pb.js";
 import { RedisClient } from "./redis.js";
 import { defaultBrowserFactory, startServer } from "./server.js";
@@ -96,6 +96,7 @@ async function main(): Promise<void> {
   // PrometheusExporter self-hosts the `/metrics` HTTP server on
   // `SPECTRE_METRICS_PORT` (default 9090 per ADR-0031 §3.3).
   const log = createLogger(ADAPTER_VERSION);
+  setLogger(log);
   const telemetry = await initTelemetry({
     serviceVersion: ADAPTER_VERSION,
     metricsPort: resolveMetricsPort(process.env),
