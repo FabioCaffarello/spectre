@@ -25,7 +25,9 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	enginev1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/engine/v1alpha1"
 )
@@ -153,6 +155,23 @@ func (r *EngineClientRunner) Run(
 		if recvErr != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return rows, ctxErr
+			}
+			// W3.1 Cluster G follow-up: with `otelgrpc.NewClientHandler`
+			// in the dial options the gRPC stream surfaces context
+			// cancellation as a status-coded recv error before
+			// `ctx.Err()` propagates locally (the stats handler
+			// observes the RST_STREAM ahead of the outer context's
+			// own Done channel). Map the canonical status codes back
+			// to their `context` sentinels so the reconciler's
+			// `errors.Is(err, context.DeadlineExceeded)` /
+			// `errors.Is(err, context.Canceled)` checks remain stable.
+			if s, ok := status.FromError(recvErr); ok {
+				switch s.Code() {
+				case codes.DeadlineExceeded:
+					return rows, context.DeadlineExceeded
+				case codes.Canceled:
+					return rows, context.Canceled
+				}
 			}
 			return rows, fmt.Errorf("engine client runner: recv: %w", recvErr)
 		}
