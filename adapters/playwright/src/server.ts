@@ -70,6 +70,33 @@ import {
   SessionManager,
   UnknownSessionError,
 } from "./sessions.js";
+import { type AdapterMetrics, KIND as METRIC_KIND } from "./telemetry.js";
+import type { Histogram } from "@opentelemetry/api";
+
+/**
+ * Record the wrapped handler's duration with the canonical
+ * `result` label derived from the in-band `DriverError`. Mirror
+ * of the SeleniumBase `_navigate_impl` / `_extract_impl` wrapper
+ * pattern: the handler body stays unchanged with `return`
+ * statements; the timing wrapper handles label derivation.
+ */
+async function timed<T extends { error?: unknown }>(
+  histogram: Histogram | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const start = process.hrtime.bigint();
+  let resp: T | undefined;
+  try {
+    resp = await fn();
+    return resp;
+  } finally {
+    if (histogram) {
+      const seconds = Number(process.hrtime.bigint() - start) / 1_000_000_000;
+      const result = resp?.error ? "failure" : "success";
+      histogram.record(seconds, { kind: METRIC_KIND, result });
+    }
+  }
+}
 
 export interface DriverServiceImpl {
   initialize(req: InitializeRequest): Promise<InitializeResponse>;
@@ -292,8 +319,27 @@ const unknownSessionResponse = (sessionId: string): string =>
 
 export const createDriverService = (
   sessions: SessionManager,
+  metrics?: AdapterMetrics,
 ): DriverServiceImpl => ({
-  async initialize(_req: InitializeRequest): Promise<InitializeResponse> {
+  async initialize(req: InitializeRequest): Promise<InitializeResponse> {
+    const start = process.hrtime.bigint();
+    // W3.2 Cluster A: every requested capability not in the adapter
+    // manifest increments `capability_violations_total` with the
+    // offending name. The Initialize still succeeds with the
+    // adapter's actual manifest so the caller can negotiate
+    // gracefully; the counter is the auditable signal.
+    if (metrics) {
+      const manifest = new Set<string>(CAPABILITY_NAMES);
+      for (const requested of req.requestedCapabilities ?? []) {
+        if (!manifest.has(requested)) {
+          metrics.capabilityViolationsTotal.add(1, {
+            kind: METRIC_KIND,
+            capability: requested,
+          });
+        }
+      }
+    }
+
     const sessionId = randomUUID();
     // ADR-0023 §6 makes Redis required: if the metadata write fails
     // we surface the failure at the transport layer so the caller
@@ -309,6 +355,13 @@ export const createDriverService = (
         Code.Unavailable,
       );
     }
+    if (metrics) {
+      metrics.sessionsActive.add(1, { kind: METRIC_KIND });
+      metrics.initializeDuration.record(
+        Number(process.hrtime.bigint() - start) / 1_000_000_000,
+        { kind: METRIC_KIND },
+      );
+    }
     const capabilities = create(CapabilitiesSchema, {
       names: [...CAPABILITY_NAMES],
       driverVersion: DRIVER_VERSION,
@@ -320,72 +373,75 @@ export const createDriverService = (
     });
   },
   async navigate(req: NavigateRequest): Promise<NavigateResponse> {
-    if (!req.sessionId) {
-      return errorResponse(
-        DriverError_Code.INVALID_ARGUMENT,
-        "session_id is required",
-      );
-    }
-    const gate = await gateSession(sessions, req.sessionId);
-    if (gate.kind === "unknown") {
-      return errorResponse(
-        DriverError_Code.INVALID_ARGUMENT,
-        unknownSessionResponse(req.sessionId),
-      );
-    }
-    if (!req.url) {
-      return errorResponse(
-        DriverError_Code.INVALID_ARGUMENT,
-        "url is required",
-      );
-    }
-    if (!isValidNavigationUrl(req.url)) {
-      return errorResponse(
-        DriverError_Code.INVALID_ARGUMENT,
-        `url must be an absolute http(s) URL, got ${JSON.stringify(req.url)}`,
-      );
-    }
-
-    const timeoutMs = durationToMs(req.timeout) ?? DEFAULT_NAVIGATE_TIMEOUT_MS;
-    const waitUntil = waitConditionToPlaywright(req.wait);
-
-    let page;
-    try {
-      page = await sessions.getOrCreatePage(req.sessionId);
-    } catch (err) {
-      if (err instanceof UnknownSessionError) {
-        return errorResponse(DriverError_Code.INVALID_ARGUMENT, err.message);
+    return timed(metrics?.navigateDuration, async () => {
+      if (!req.sessionId) {
+        return errorResponse(
+          DriverError_Code.INVALID_ARGUMENT,
+          "session_id is required",
+        );
       }
-      const mapped = playwrightErrorToDriverError(err);
-      return errorResponse(mapped.code, mapped.message);
-    }
+      const gate = await gateSession(sessions, req.sessionId);
+      if (gate.kind === "unknown") {
+        return errorResponse(
+          DriverError_Code.INVALID_ARGUMENT,
+          unknownSessionResponse(req.sessionId),
+        );
+      }
+      if (!req.url) {
+        return errorResponse(
+          DriverError_Code.INVALID_ARGUMENT,
+          "url is required",
+        );
+      }
+      if (!isValidNavigationUrl(req.url)) {
+        return errorResponse(
+          DriverError_Code.INVALID_ARGUMENT,
+          `url must be an absolute http(s) URL, got ${JSON.stringify(req.url)}`,
+        );
+      }
 
-    const start = process.hrtime.bigint();
-    try {
-      const response = await page.goto(req.url, {
-        waitUntil,
-        timeout: timeoutMs,
-      });
-      // Strict ElementRef invalidation: any successful navigation
-      // bumps the session's generation counter. Refs allocated in
-      // a prior generation become stale and Extract will reject
-      // them with CODE_INVALID_ARGUMENT. See ADR-0010.
-      sessions.bumpGeneration(req.sessionId);
-      const elapsedMs = Number(process.hrtime.bigint() - start) / 1_000_000;
-      return create(NavigateResponseSchema, {
-        finalUrl: response?.url() ?? page.url(),
-        statusCode: response?.status() ?? 0,
-        elapsed: msToDuration(Math.round(elapsedMs)),
-      });
-    } catch (err) {
-      const mapped = playwrightErrorToDriverError(err);
-      return create(NavigateResponseSchema, {
-        elapsed: msToDuration(
-          Math.round(Number(process.hrtime.bigint() - start) / 1_000_000),
-        ),
-        error: { code: mapped.code, message: mapped.message },
-      });
-    }
+      const timeoutMs =
+        durationToMs(req.timeout) ?? DEFAULT_NAVIGATE_TIMEOUT_MS;
+      const waitUntil = waitConditionToPlaywright(req.wait);
+
+      let page;
+      try {
+        page = await sessions.getOrCreatePage(req.sessionId);
+      } catch (err) {
+        if (err instanceof UnknownSessionError) {
+          return errorResponse(DriverError_Code.INVALID_ARGUMENT, err.message);
+        }
+        const mapped = playwrightErrorToDriverError(err);
+        return errorResponse(mapped.code, mapped.message);
+      }
+
+      const start = process.hrtime.bigint();
+      try {
+        const response = await page.goto(req.url, {
+          waitUntil,
+          timeout: timeoutMs,
+        });
+        // Strict ElementRef invalidation: any successful navigation
+        // bumps the session's generation counter. Refs allocated in
+        // a prior generation become stale and Extract will reject
+        // them with CODE_INVALID_ARGUMENT. See ADR-0010.
+        sessions.bumpGeneration(req.sessionId);
+        const elapsedMs = Number(process.hrtime.bigint() - start) / 1_000_000;
+        return create(NavigateResponseSchema, {
+          finalUrl: response?.url() ?? page.url(),
+          statusCode: response?.status() ?? 0,
+          elapsed: msToDuration(Math.round(elapsedMs)),
+        });
+      } catch (err) {
+        const mapped = playwrightErrorToDriverError(err);
+        return create(NavigateResponseSchema, {
+          elapsed: msToDuration(
+            Math.round(Number(process.hrtime.bigint() - start) / 1_000_000),
+          ),
+          error: { code: mapped.code, message: mapped.message },
+        });
+      }
+    });
   },
   async query(req: QueryRequest): Promise<QueryResponse> {
     if (!req.sessionId) {
@@ -446,89 +502,91 @@ export const createDriverService = (
     }
   },
   async extract(req: ExtractRequest): Promise<ExtractResponse> {
-    if (!req.sessionId) {
-      return extractError(
-        DriverError_Code.INVALID_ARGUMENT,
-        "session_id is required",
-      );
-    }
-    const gate = await gateSession(sessions, req.sessionId);
-    if (gate.kind === "unknown") {
-      return extractError(
-        DriverError_Code.INVALID_ARGUMENT,
-        unknownSessionResponse(req.sessionId),
-      );
-    }
-    const opaqueId = req.element?.opaqueId ?? "";
-    if (!opaqueId) {
-      return extractError(
-        DriverError_Code.INVALID_ARGUMENT,
-        "element.opaque_id is required",
-      );
-    }
-    if (req.fields.length === 0) {
-      return extractError(
-        DriverError_Code.INVALID_ARGUMENT,
-        "at least one field is required",
-      );
-    }
-
-    // Capability gating: the runtime check fires before any DOM
-    // work so an under-declared driver fails the request whole,
-    // not partway. See ADR-0010, decision 3.
-    for (const field of req.fields) {
-      const missing = missingCapabilityForMode(field.mode, CAPABILITY_NAMES);
-      if (missing) {
+    return timed(metrics?.extractDuration, async () => {
+      if (!req.sessionId) {
         return extractError(
-          DriverError_Code.CAPABILITY_MISSING,
-          `MODE_EVAL requires the ${missing} capability`,
+          DriverError_Code.INVALID_ARGUMENT,
+          "session_id is required",
         );
       }
-    }
-
-    const lookup = sessions.lookupRef(req.sessionId, opaqueId);
-    if (lookup.status === "stale") {
-      return extractError(
-        DriverError_Code.INVALID_ARGUMENT,
-        STALE_NAVIGATE_MESSAGE,
-      );
-    }
-    if (lookup.status === "unknown" || !lookup.locator) {
-      return extractError(
-        DriverError_Code.INVALID_ARGUMENT,
-        UNKNOWN_REF_MESSAGE,
-      );
-    }
-    const locator = lookup.locator;
-
-    const entries: { name: string; jsonValue: string }[] = [];
-    for (const field of req.fields) {
-      try {
-        const value = await readField(
-          locator,
-          field.name,
-          field.mode,
-          field.arg,
+      const gate = await gateSession(sessions, req.sessionId);
+      if (gate.kind === "unknown") {
+        return extractError(
+          DriverError_Code.INVALID_ARGUMENT,
+          unknownSessionResponse(req.sessionId),
         );
-        entries.push({
-          name: field.name,
-          jsonValue: JSON.stringify(value),
-        });
-      } catch (err) {
-        if (err instanceof ProtocolError) {
-          return extractError(err.code, err.message);
+      }
+      const opaqueId = req.element?.opaqueId ?? "";
+      if (!opaqueId) {
+        return extractError(
+          DriverError_Code.INVALID_ARGUMENT,
+          "element.opaque_id is required",
+        );
+      }
+      if (req.fields.length === 0) {
+        return extractError(
+          DriverError_Code.INVALID_ARGUMENT,
+          "at least one field is required",
+        );
+      }
+
+      // Capability gating: the runtime check fires before any DOM
+      // work so an under-declared driver fails the request whole,
+      // not partway. See ADR-0010, decision 3.
+      for (const field of req.fields) {
+        const missing = missingCapabilityForMode(field.mode, CAPABILITY_NAMES);
+        if (missing) {
+          return extractError(
+            DriverError_Code.CAPABILITY_MISSING,
+            `MODE_EVAL requires the ${missing} capability`,
+          );
         }
-        const mapped = playwrightErrorToDriverError(err);
-        return extractError(mapped.code, mapped.message);
       }
-    }
 
-    return create(ExtractResponseSchema, {
-      values: create(ExtractedValuesSchema, {
-        fields: entries.map((entry) =>
-          create(ExtractedValues_EntrySchema, entry),
-        ),
-      }),
+      const lookup = sessions.lookupRef(req.sessionId, opaqueId);
+      if (lookup.status === "stale") {
+        return extractError(
+          DriverError_Code.INVALID_ARGUMENT,
+          STALE_NAVIGATE_MESSAGE,
+        );
+      }
+      if (lookup.status === "unknown" || !lookup.locator) {
+        return extractError(
+          DriverError_Code.INVALID_ARGUMENT,
+          UNKNOWN_REF_MESSAGE,
+        );
+      }
+      const locator = lookup.locator;
+
+      const entries: { name: string; jsonValue: string }[] = [];
+      for (const field of req.fields) {
+        try {
+          const value = await readField(
+            locator,
+            field.name,
+            field.mode,
+            field.arg,
+          );
+          entries.push({
+            name: field.name,
+            jsonValue: JSON.stringify(value),
+          });
+        } catch (err) {
+          if (err instanceof ProtocolError) {
+            return extractError(err.code, err.message);
+          }
+          const mapped = playwrightErrorToDriverError(err);
+          return extractError(mapped.code, mapped.message);
+        }
+      }
+
+      return create(ExtractResponseSchema, {
+        values: create(ExtractedValuesSchema, {
+          fields: entries.map((entry) =>
+            create(ExtractedValues_EntrySchema, entry),
+          ),
+        }),
+      });
     });
   },
   async screenshot(req: ScreenshotRequest): Promise<ScreenshotResponse> {
@@ -661,6 +719,9 @@ export const createDriverService = (
       );
     }
     await sessions.closeSession(req.sessionId);
+    if (metrics) {
+      metrics.sessionsActive.add(-1, { kind: METRIC_KIND });
+    }
     return create(CloseResponseSchema);
   },
 });
@@ -710,6 +771,10 @@ export interface StartServerOptions {
   // default browser factory (or `browserFactory` if supplied).
   redis?: RedisClientLike;
   instanceId?: string;
+  // W3.2 Cluster A: the §5.3 metric handles
+  // `createDriverService` records into. `undefined` disables
+  // emission (used by tests).
+  metrics?: AdapterMetrics;
 }
 
 export async function startServer(
@@ -732,7 +797,7 @@ export async function startServer(
       instanceId: options.instanceId,
     });
   }
-  const impl = createDriverService(sessions);
+  const impl = createDriverService(sessions, options.metrics);
 
   const handler = connectNodeAdapter({ routes: driverRoutes(impl) });
   const server = http2.createServer(handler);
