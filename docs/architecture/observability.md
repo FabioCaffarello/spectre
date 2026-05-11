@@ -300,7 +300,33 @@ Implementation lands at **Wave 9** alongside cost-tracker
    Filter spans where the slow service appears; inspect attributes
 ```
 
-## §8 — Reference materials
+## §8 — Implementation status
+
+ADR-0031 §9 sequences the framework's per-service rollout across
+Wave 3 onwards. Status as of 2026-05-11:
+
+| Wave | Scope | Status |
+|------|-------|--------|
+| W3.1 | Engine OTel SDK + `/metrics` sidecar + W3C propagation + JSON stdout logs + §5.1 metrics. Operator metrics + `operator.reconcile_scrapejob` span + JSON zap encoder + otelgrpc on the engine dial. Chart: `observability:` block + uniform port 9090 + ServiceMonitor template + optional `opentelemetry-collector` subchart. | ✅ landed |
+| W3.2 | Adapter OTel integration (Playwright / SeleniumBase / curl-impersonate): per-language SDK init, OTLP trace export, Prometheus `/metrics` per ADR-0031 §5.3, structured JSON logs, driver-side span surface mirroring the engine's RPC client spans. | ⏳ planned |
+| W3.3 | Operator ↔ engine mTLS per ADR-0032; chart `_helpers.tpl` certificate template + `cert-manager.enabled` flag. | ⏳ planned |
+| W3.4 | Engine ↔ adapter mTLS; per-language reload plumbing in `sdks/<lang>/common/`. | ⏳ planned |
+| W5+ | Per-infra-service instrumentation per ADR-0031 §5.4 + §9. | future |
+| W9 | Quality metrics §6 + cost-tracker / audit-log services per ADR-0031 §7-§8. | future |
+
+W3.1 deferrals worth highlighting:
+
+- `spectre_engine_circuit_breaker_state{service,state}` (§5.1)
+  is reserved for Wave 5 when the circuit breaker materialises
+  per ADR-0037 §5.3. Registering an empty gauge would surface
+  no samples in `/metrics`; the instrument lands when the
+  breaker emits its first observation.
+- `spectre_operator_scrapebatches_total{phase}` (§5.2) lands
+  with the `ScrapeBatch` CRD in Wave 6 per ADR-0033.
+- The `tenant_id` field §3.4 codifies is always emitted as
+  `null` in v1alpha1; multi-tenancy is v1beta1 scope.
+
+## §9 — Reference materials
 
 ### ADRs
 

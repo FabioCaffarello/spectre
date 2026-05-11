@@ -173,3 +173,39 @@ multi-step navigation, schema declaration, transforms) are
 v1alpha1-shaped Driver Protocol calls. See
 [`dsl-evolution.md`](dsl-evolution.md) +
 [ADR-0035](../adr/0035-dsl-evolution-driver-abstraction.md).
+
+**W3.1 (2026-05-11) observability landing** — the engine
+binary gains an OpenTelemetry SDK foundation per
+[ADR-0031](../adr/0031-observability-framework.md). Concrete
+changes:
+
+- `src/telemetry/` module hosts `Telemetry::init` (sets the
+  global W3C `TraceContextPropagator`, registers an
+  `SdkTracerProvider` always — OTLP exporter attaches only
+  when `OTEL_EXPORTER_OTLP_ENDPOINT` is set —, and registers
+  the §5.1 metric handles).
+- An axum `:9090/metrics` sidecar serves OpenMetrics text.
+  Port read from `SPECTRE_METRICS_PORT` (default `9090`).
+- `engine.run_job` server-kind span opens at `RunJob` entry,
+  extracting any parent context from the gRPC metadata.
+  Child spans `engine.parse_dsl` / `engine.generate_plan` /
+  `engine.execute_plan` / `engine.assemble_row` plus the
+  five `spectre.driver.v1alpha1.Driver/<Rpc>` client spans
+  inherit it.
+- `tracing_subscriber` writes one JSON line per event to
+  stdout with the eleven mandatory fields from ADR-0031 §3.4
+  (`trace_id` / `span_id` read from the active OTel context).
+
+The five metric instruments §5.1 lands record at:
+
+| Metric | Recording site |
+|---|---|
+| `spectre_engine_jobs_active` | `server.rs::run_job_inner` accept / `stream_run_job` exit |
+| `spectre_engine_jobs_completed_total{result}` | terminal-event dispatch |
+| `spectre_engine_step_duration_seconds` | per `PlanStep` iteration in `executor.rs::run_inner` |
+| `spectre_engine_step_service_call_duration_seconds{service}` | per `client.rs` RPC method |
+| `spectre_engine_rows_emitted_total{sink}` | per row in `stream_run_job` drain loop |
+
+`spectre_engine_circuit_breaker_state` (the sixth §5.1
+metric) is reserved for Wave 5 when the circuit breaker
+materialises per ADR-0037 §5.3.

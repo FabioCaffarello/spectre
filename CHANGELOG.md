@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Engine + operator OpenTelemetry observability foundation —
+  W3.1 (first PR of Wave 3, ADR-0031 first implementation
+  landing).** Engine binary gains an OpenTelemetry SDK stack:
+  the `:9090/metrics` Prometheus sidecar (axum-served), W3C
+  Trace Context propagation across the engine ↔ adapter gRPC
+  boundary, the five ADR-0031 §5.1 metric instruments (jobs
+  active / completed / step duration / step service-call
+  duration / rows emitted), and a custom
+  `tracing-subscriber` JSON stdout layer emitting the eleven
+  mandatory fields ADR-0031 §3.4 codifies (with
+  `trace_id` / `span_id` read from the active OTel context).
+  Operator (Go control-plane) gains an
+  `operator.reconcile_scrapejob` root span with the
+  `otelgrpc` interceptor on the engine dial, three custom
+  `spectre_operator_*` metric series (the
+  `scrapejobs_total{phase}` gauge driven by a cache-listing
+  collector), and a switch to zap's production JSON encoder
+  with static `service` + `service_version` fields. Chart
+  ships a uniform `:9090` metrics port for engine +
+  control-plane, an optional Prometheus Operator
+  `ServiceMonitor`, and the new
+  `opentelemetry-collector@0.111.0` subchart gated on
+  `opentelemetry-collector.enabled` (default off).
+  Production-smoke gate gains
+  `tools/test/verify-observability.sh` asserting the
+  `spectre_*` metric names surface in `/metrics` and at
+  least one engine log line carries a non-empty `trace_id`.
+  The sixth §5.1 metric (`circuit_breaker_state`) is reserved
+  for Wave 5 with the breaker landing per ADR-0037 §5.3;
+  `spectre_operator_scrapebatches_total` for Wave 6 with the
+  ScrapeBatch CRD per ADR-0033.
+
+### Changed
+
+- **Operator flag defaults flip — `--metrics-bind-address`
+  from `"0"` (disabled) to `":9090"` and `--metrics-secure`
+  from `true` (HTTPS with auto-cert) to `false` (HTTP plain).**
+  Transport security defers to W3.3's service-to-service mTLS
+  per [ADR-0032](docs/adr/0032-service-to-service-mtls.md);
+  the chart sources the port from
+  `observability.metricsPort` so engine + operator cannot
+  drift. Operators that prefer HTTPS continue to opt in via
+  `--metrics-secure=true` and the existing
+  `--metrics-cert-*` flag set.
+- **Engine log output moves from stderr text format to
+  stdout JSON.** `tracing-subscriber::fmt::compact()` stderr
+  console encoder replaced by a JSON-line stdout formatter
+  per ADR-0031 §3.4 / §3.5; `RUST_LOG` filtering preserved.
+  Downstream collectors (Loki / Vector / Fluent Bit /
+  OpenObserve) parse the new format natively.
+- **Operator log output switches to zap's production JSON
+  encoder.** The kubebuilder dev-mode console encoder
+  (`zap.Options{Development: true}`) is replaced by JSON +
+  ms timestamps with `service` / `service_version` stamped
+  as static fields. Override via `--zap-devel=true` for
+  local-dev console output.
+
 ## [0.1.0-alpha.2] - 2026-05-08
 
 **All-multi-arch milestone.** First release where every
