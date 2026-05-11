@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Three adapter OpenTelemetry observability — W3.2 (second
+  PR of Wave 3, completing ADR-0031 §5.3's adapter metric
+  taxonomy + §4.2's trace topology end-to-end).** Each of the
+  three reference adapters gains the canonical surface
+  adapted to its language:
+  - **curl-impersonate (Go)** — `go.opentelemetry.io/otel` +
+    `otelgrpc.NewServerHandler()` + `prometheus/client_golang`
+    `/metrics` + `slog` JSON handler with the eleven §3.4
+    fields.
+  - **SeleniumBase (Python)** — `opentelemetry-sdk` +
+    `opentelemetry-instrumentation-grpc` server interceptor +
+    `prometheus_client.start_http_server` + `structlog`
+    processor chain (`event` → `message` rename matches engine
+    + curl-impersonate output byte-for-byte).
+  - **Playwright (TypeScript)** — `@opentelemetry/sdk-node` +
+    `HttpInstrumentation` (auto-instruments the
+    `@connectrpc/connect-node` HTTP/2 transport so every
+    Connect RPC opens a server-kind span with the extracted
+    `traceparent` as parent) + `@opentelemetry/exporter-
+    prometheus` (self-hosted `/metrics`) + Pino JSON.
+  Five §5.3 metric series per adapter
+  (`spectre_adapter_sessions_active{kind}`,
+  `*_initialize_duration_seconds{kind}`,
+  `*_navigate_duration_seconds{kind,result}`,
+  `*_extract_duration_seconds{kind,result}`,
+  `*_capability_violations_total{kind,capability}`); `kind`
+  values are `playwright` / `seleniumbase` /
+  `curl_impersonate` (snake_case per §3.4). Chart wires
+  `metrics` named port to each adapter Service + Deployment;
+  the W3.1 ServiceMonitor selector extends from two to five
+  components. Compose stack maps host ports `9095:9090`
+  (playwright) / `9096:9090` (seleniumbase) / `9097:9090`
+  (curl-impersonate) — `9092-9094` would collide with kafka.
+  `tools/test/verify-observability.sh` extends with adapter
+  `/metrics` scrapes and a trace-topology assertion: pick a
+  Completed ScrapeJob, extract its `trace_id` from the engine
+  log line that carries the matching `job_id`, and verify the
+  same trace_id surfaces in operator + playwright-adapter
+  logs (proving the W3C propagator chain works across the
+  three language boundaries Go → Rust → TypeScript).
+
 - **Engine + operator OpenTelemetry observability foundation —
   W3.1 (first PR of Wave 3, ADR-0031 first implementation
   landing).** Engine binary gains an OpenTelemetry SDK stack:
@@ -65,6 +106,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ms timestamps with `service` / `service_version` stamped
   as static fields. Override via `--zap-devel=true` for
   local-dev console output.
+- **Three adapter log outputs switch from stderr text to
+  stdout JSON.** Playwright (Pino), SeleniumBase (structlog),
+  and curl-impersonate (slog) all emit one JSON line per
+  event with the eleven mandatory ADR-0031 §3.4 fields. The
+  field shape matches the engine + operator output
+  byte-for-byte so cross-service log correlation works
+  without per-language jq massaging.
+- **Playwright adapter `server.New` accepts an `AdapterMetrics`
+  argument** (`undefined` disables emission for tests).
+  Equivalent shapes land in `DriverServicer.__init__`
+  (SeleniumBase) and `server.New(..., metrics)`
+  (curl-impersonate). Existing test suites pass `null` /
+  `None` / `nil` for the new arg.
 
 ## [0.1.0-alpha.2] - 2026-05-08
 

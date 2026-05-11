@@ -43,7 +43,7 @@
 # `build:` directives — bake is the canonical build path; a
 # missing image surfaces immediately as "image not found".
 #
-# Port reservations (ADR-0025 §7 + ADR-0021 §4):
+# Port reservations (ADR-0025 §7 + ADR-0021 §4 + ADR-0031 §3.3):
 #   8090 — engine                      (Compose-internal `engine:8090`)
 #   8091 — playwright-adapter          (`playwright-adapter:8091`)
 #   8092 — seleniumbase-adapter        (`seleniumbase-adapter:8092`)
@@ -53,6 +53,14 @@
 #   9092 — kafka broker (Compose-internal `kafka:9092`, host 9092)
 #   5432 — postgres
 #   6379 — redis
+#
+# ADR-0031 §3.3 metrics-port allocations (in-container is uniform
+# 9090; host-port mappings spread to avoid kafka@9092 collision):
+#   9090 — engine                      (W3.1 Cluster G)
+#   9091 — operator                    (W3.1 Cluster G)
+#   9095 — playwright-adapter          (W3.2 Cluster D)
+#   9096 — seleniumbase-adapter        (W3.2 Cluster D)
+#   9097 — curl-impersonate-adapter    (W3.2 Cluster D)
 #
 # Usage:
 #   docker compose --profile full up -d   # start (recommended)
@@ -336,8 +344,17 @@ services:
     environment:
       SPECTRE_ADAPTER_GRPC_PORT: "8091"
       SPECTRE_REDIS_URL: "redis://redis:6379/0"
+      # W3.2 Cluster D: ADR-0031 §3.3 uniform `:9090` metrics port
+      # inside the container. Host-port mapping skips 9092 (kafka
+      # already owns it for client traffic) and lands on 9095 so the
+      # three adapters cluster at 9095-9097 in stable per-language
+      # order. See the port reservations block at the top of this
+      # file for the full allocation table.
+      SPECTRE_METRICS_PORT: "9090"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
     ports:
       - "8091:8091"
+      - "9095:9090"
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'cat < /dev/tcp/127.0.0.1/8091' >/dev/null 2>&1 || exit 1"]
       interval: 5s
@@ -367,8 +384,11 @@ services:
       SPECTRE_ADAPTER_GRPC_PORT: "8092"
       SPECTRE_REDIS_URL: "redis://redis:6379/0"
       SPECTRE_SELENIUMBASE_CONTAINER: "1"
+      SPECTRE_METRICS_PORT: "9090"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
     ports:
       - "8092:8092"
+      - "9096:9090"
     shm_size: "1gb"
     healthcheck:
       test:
@@ -395,8 +415,11 @@ services:
     environment:
       SPECTRE_ADAPTER_GRPC_PORT: "8093"
       SPECTRE_REDIS_URL: "redis://redis:6379/0"
+      SPECTRE_METRICS_PORT: "9090"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
     ports:
       - "8093:8093"
+      - "9097:9090"
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 8093 || exit 1"]
       interval: 5s

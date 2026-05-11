@@ -38,7 +38,7 @@ const queryFixtureHTML = `<!doctype html><html><body>
 func newServerWithFetcher(t *testing.T, fetcher Fetcher) (*Server, *sessions.Manager) {
 	t.Helper()
 	mgr := newTestManager(t, testInstanceID)
-	return New(mgr, fetcher, "curl_chrome116"), mgr
+	return New(mgr, fetcher, "curl_chrome116", nil), mgr
 }
 
 // newTestManager builds a Manager backed by a real

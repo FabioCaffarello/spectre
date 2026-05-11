@@ -22,10 +22,12 @@ import { fileURLToPath } from "node:url";
 import { resolve as resolvePath } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { createLogger, setLogger } from "./logging.js";
 import { file_spectre_driver_v1alpha1_driver } from "./proto/spectre/driver/v1alpha1/driver_pb.js";
 import { RedisClient } from "./redis.js";
 import { defaultBrowserFactory, startServer } from "./server.js";
 import { SessionManager } from "./sessions.js";
+import { initTelemetry, resolveMetricsPort } from "./telemetry.js";
 
 export const PROTOCOL_VERSION: string =
   file_spectre_driver_v1alpha1_driver.proto.package;
@@ -88,6 +90,22 @@ export function resolveInstanceId(env: NodeJS.ProcessEnv): string {
 }
 
 async function main(): Promise<void> {
+  // W3.2 Cluster A: configure Pino JSON stdout + init OTel SDK
+  // BEFORE any other startup work so the redis-dial + sweep
+  // messages emit in the canonical ADR-0031 §3.4 schema. The
+  // PrometheusExporter self-hosts the `/metrics` HTTP server on
+  // `SPECTRE_METRICS_PORT` (default 9090 per ADR-0031 §3.3).
+  const log = createLogger(ADAPTER_VERSION);
+  setLogger(log);
+  const telemetry = await initTelemetry({
+    serviceVersion: ADAPTER_VERSION,
+    metricsPort: resolveMetricsPort(process.env),
+  });
+  log.info(
+    { metrics_port: resolveMetricsPort(process.env) },
+    "telemetry ready",
+  );
+
   const port = resolvePort(process.env);
   const redisUrl = resolveRedisUrl(process.env);
   const instanceId = resolveInstanceId(process.env);
@@ -96,13 +114,18 @@ async function main(): Promise<void> {
   try {
     await redis.ping();
   } catch (err) {
-    process.stderr.write(
-      `redis ping failed at ${redisUrl}: ${String(err instanceof Error ? err.message : err)}\n`,
+    log.error(
+      {
+        redis_url: redisUrl,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      "redis ping failed",
     );
     process.exit(1);
   }
-  process.stderr.write(
-    `redis ready at ${redisUrl} (adapter_instance_id=${instanceId})\n`,
+  log.info(
+    { redis_url: redisUrl, adapter_instance_id: instanceId },
+    "redis ready",
   );
 
   const sessions = new SessionManager({
@@ -111,23 +134,33 @@ async function main(): Promise<void> {
     instanceId,
   });
 
-  const handle = await startServer(port, { sessions });
+  const handle = await startServer(port, {
+    sessions,
+    metrics: telemetry.metrics,
+  });
 
-  process.stderr.write(
-    `${identity()} listening on ${handle.host}:${handle.port}\n`,
+  log.info(
+    {
+      binary: "spectre-playwright",
+      version: ADAPTER_VERSION,
+      protocol: PROTOCOL_VERSION,
+      grpc_port: handle.port,
+    },
+    "adapter listening",
   );
 
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals): void => {
     if (shuttingDown) return;
     shuttingDown = true;
-    process.stderr.write(`received ${signal}, shutting down\n`);
+    log.info({ signal }, "shutting down");
     handle
       .shutdown()
       .then(() => redis.disconnect())
+      .then(() => telemetry.shutdown())
       .then(() => process.exit(0))
       .catch((err: unknown) => {
-        process.stderr.write(`shutdown error: ${String(err)}\n`);
+        log.error({ error: String(err) }, "shutdown error");
         process.exit(1);
       });
   };
