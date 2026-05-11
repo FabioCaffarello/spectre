@@ -68,6 +68,20 @@ tonic-health = { version = "0.13", default-features = false }
 # consume. The 2.x line aligns with rustls 0.23 which tonic 0.13
 # brings transitively via `tls-ring`.
 rustls-pemfile = "2"
+# rustls 0.23 itself is pulled directly so we can call
+# `rustls::crypto::ring::default_provider().install_default()` at
+# the top of `main()`. rustls 0.23's auto-detection of the
+# process-level CryptoProvider bails when multiple consumers
+# (sqlx + reqwest + aws-sdk-s3 + tonic via tls-ring) sit in the
+# same build — `Server::tls_config(...)` then panics on the first
+# handshake. Explicit `install_default` resolves it. We match
+# tonic's `tls-ring` feature with the `ring` provider here so the
+# same crypto stack serves the whole binary.
+#
+# `default-features = false` strips the `aws-lc-rs` default
+# (avoids dragging in a second crypto provider that would re-trip
+# the ambiguity).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 
 # Tokio runtime: async I/O, signal handling, timeouts, channels, and
 # the multi-threaded scheduler the engine binary uses. The `process`

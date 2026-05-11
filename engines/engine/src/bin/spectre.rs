@@ -33,7 +33,7 @@ use spectre_engine::registry::AdapterRegistry;
 use spectre_engine::s3::{S3Error, S3Uploader};
 use spectre_engine::server::engine_server;
 use spectre_engine::telemetry::{Telemetry, TelemetryConfig, logs};
-use spectre_engine::tls::{TlsConfig, TlsMode, build_server_tls_config};
+use spectre_engine::tls::{TlsConfig, TlsMode, build_server_tls_config, install_crypto_provider};
 use spectre_engine::webhook::WebhookClient;
 use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
 use tonic::transport::Server;
@@ -48,6 +48,13 @@ const PORT_ENV: &str = "SPECTRE_ENGINE_PORT";
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> ExitCode {
+    // W3.3 follow-up: install rustls's process-level CryptoProvider
+    // before any TLS-using code initialises. rustls 0.23's
+    // auto-detection bails when multiple consumers (sqlx + reqwest +
+    // aws-sdk-s3 + tonic via tls-ring) are present in the build,
+    // panicking on the first `tonic::Server::tls_config(...)` call.
+    // Surfaced as a CrashLoopBackOff in mtls-smoke round 1.
+    install_crypto_provider();
     init_tracing();
 
     match run().await {

@@ -70,9 +70,28 @@ pub fn build_server_tls_config(
     let identity = Identity::from_pem(&cert_pem, &key_pem);
     let ca = Certificate::from_pem(&ca_pem);
 
-    Ok(ServerTlsConfig::new()
-        .identity(identity)
-        .client_ca_root(ca))
+    Ok(ServerTlsConfig::new().identity(identity).client_ca_root(ca))
+}
+
+/// Install rustls's process-level `CryptoProvider` so subsequent
+/// TLS handshakes (tonic's server-side path; reqwest's webhook
+/// client; aws-sdk-s3's signed-request stack) can locate a
+/// crypto backend.
+///
+/// rustls 0.23 requires `CryptoProvider::install_default()` to
+/// run before any TLS code touches the global slot. With multiple
+/// rustls consumers in the engine binary (sqlx, reqwest,
+/// aws-sdk-s3, and tonic via the `tls-ring` feature) auto-
+/// detection bails with the message about the process-level
+/// `CryptoProvider` being indeterminable. The documented call-to-
+/// action is to install the provider explicitly. `ring` matches
+/// the `tls-ring` tonic feature added in W3.3 (Cluster B).
+///
+/// `install_default` returns `Err` if a provider was already
+/// installed; we ignore the error so re-invocations are safe. In
+/// practice this function runs once at startup.
+pub fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 #[cfg(test)]
@@ -94,8 +113,8 @@ mod tests {
         let missing = dir.path().join("does-not-exist.crt");
         let other = write_file(&dir, "other.pem", b"placeholder");
 
-        let err = build_server_tls_config(&missing, &other, &other)
-            .expect_err("missing cert must fail");
+        let err =
+            build_server_tls_config(&missing, &other, &other).expect_err("missing cert must fail");
         match err {
             LoadError::Io { role, path, .. } => {
                 assert_eq!(role, "cert");
