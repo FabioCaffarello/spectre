@@ -277,6 +277,15 @@ tonic-build = { version = "0.13", default-features = false, features = ["prost"]
 # deterministic JSONL output path.
 tempfile = "3"
 
+# rcgen generates self-signed PKI material natively in Rust for
+# `tests/tls_integration.rs` (W3.3). Replaces an earlier
+# `openssl req -x509 -addext ...` invocation that produced X.509 v1
+# CAs on Ubuntu CI's OpenSSL 3.0 (passed locally on macOS OpenSSL 3.6,
+# where the same flags emitted v3) — rustls/webpki rejects v1 CAs
+# with `UnsupportedCertVersion`. rcgen always emits v3 with the
+# right extensions, eliminating the toolchain skew.
+rcgen = "0.13"
+
 # axum was a dev-dependency for `tests/webhook_integration.rs`
 # (R5.1 — ADR-0024 §4). W3.1 promoted it to a regular dependency
 # for the metrics sidecar; the [dependencies] declaration above

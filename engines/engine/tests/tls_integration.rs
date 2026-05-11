@@ -3,9 +3,12 @@
 //! Integration test for the mTLS server-side path (W3.3).
 //!
 //! Generates a self-signed CA + server cert + client cert via
-//! `openssl` (assumed present on every CI runner), boots a tonic
-//! `Server` with the engine's `build_server_tls_config`, dials it
-//! from a tonic client over verified mTLS, and asserts:
+//! `rcgen` (a Rust-native PKI generator — replaces an earlier
+//! `openssl req` invocation that surfaced OpenSSL-version-
+//! sensitive X.509 v1-vs-v3 behaviour between macOS dev and
+//! Ubuntu CI), boots a tonic `Server` with the engine's
+//! `build_server_tls_config`, dials it from a tonic client over
+//! verified mTLS, and asserts:
 //!
 //! 1. A client presenting the CA-signed client cert can complete
 //!    the gRPC health check.
@@ -20,188 +23,79 @@
 #![cfg(test)]
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::process::Command;
 use std::time::Duration;
 
-use spectre_engine::tls::{build_server_tls_config, install_crypto_provider};
-use tempfile::TempDir;
+use rcgen::{
+    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
+    KeyUsagePurpose,
+};
+use spectre_engine::tls::install_crypto_provider;
 use tokio::net::TcpListener;
-use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity, Server};
+use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity, Server, ServerTlsConfig};
 use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_client::HealthClient;
 
-/// Generate a self-signed CA + server cert + client cert via
-/// `openssl`. Returns the temp directory plus the three server-
-/// side paths and the two client-side paths (cert + key).
-#[allow(clippy::too_many_lines)]
-fn generate_mtls_pki(server_cn: &str) -> (TempDir, ServerPaths, ClientMaterial) {
-    let dir = TempDir::new().expect("tempdir");
-    let p = dir.path();
-    let ca_key = p.join("ca.key");
-    let ca_crt = p.join("ca.crt");
-    let server_key = p.join("server.key");
-    let server_csr = p.join("server.csr");
-    let server_crt = p.join("server.crt");
-    let server_ext = p.join("server.ext");
-    let client_key = p.join("client.key");
-    let client_csr = p.join("client.csr");
-    let client_crt = p.join("client.crt");
-
-    // 1. CA: self-signed root, ECDSA P-256, 1-day lifetime.
-    run_openssl(&[
-        "ecparam",
-        "-name",
-        "prime256v1",
-        "-genkey",
-        "-noout",
-        "-out",
-        ca_key.to_str().unwrap(),
-    ]);
-    // The CA cert must be X.509 v3 with `basicConstraints=CA:TRUE`
-    // or rustls/webpki rejects it with `UnsupportedCertVersion`.
-    // `openssl req -x509` without extensions emits v1 on some
-    // toolchains (Ubuntu CI's openssl 3.0 surfaced this where the
-    // macOS 3.6 dev environment did not). `-addext` (openssl
-    // 1.1.1+) injects the extensions so the cert ends up v3.
-    run_openssl(&[
-        "req",
-        "-new",
-        "-x509",
-        "-key",
-        ca_key.to_str().unwrap(),
-        "-out",
-        ca_crt.to_str().unwrap(),
-        "-days",
-        "1",
-        "-subj",
-        "/CN=spectre-test-ca",
-        "-addext",
-        "basicConstraints=critical,CA:TRUE",
-        "-addext",
-        "keyUsage=critical,keyCertSign,cRLSign",
-    ]);
-
-    // 2. Server cert with SAN matching server_cn.
-    run_openssl(&[
-        "ecparam",
-        "-name",
-        "prime256v1",
-        "-genkey",
-        "-noout",
-        "-out",
-        server_key.to_str().unwrap(),
-    ]);
-    run_openssl(&[
-        "req",
-        "-new",
-        "-key",
-        server_key.to_str().unwrap(),
-        "-out",
-        server_csr.to_str().unwrap(),
-        "-subj",
-        &format!("/CN={server_cn}"),
-    ]);
-    std::fs::write(
-        &server_ext,
-        format!(
-            "subjectAltName=DNS:{server_cn},DNS:localhost,IP:127.0.0.1\n\
-             extendedKeyUsage=serverAuth\n"
-        ),
-    )
-    .unwrap();
-    run_openssl(&[
-        "x509",
-        "-req",
-        "-in",
-        server_csr.to_str().unwrap(),
-        "-CA",
-        ca_crt.to_str().unwrap(),
-        "-CAkey",
-        ca_key.to_str().unwrap(),
-        "-CAcreateserial",
-        "-out",
-        server_crt.to_str().unwrap(),
-        "-days",
-        "1",
-        "-extfile",
-        server_ext.to_str().unwrap(),
-    ]);
-
-    // 3. Client cert (CN doesn't need to match anything for the
-    //    test; server's `client_ca_root` validates the chain).
-    run_openssl(&[
-        "ecparam",
-        "-name",
-        "prime256v1",
-        "-genkey",
-        "-noout",
-        "-out",
-        client_key.to_str().unwrap(),
-    ]);
-    run_openssl(&[
-        "req",
-        "-new",
-        "-key",
-        client_key.to_str().unwrap(),
-        "-out",
-        client_csr.to_str().unwrap(),
-        "-subj",
-        "/CN=spectre-test-client",
-    ]);
-    run_openssl(&[
-        "x509",
-        "-req",
-        "-in",
-        client_csr.to_str().unwrap(),
-        "-CA",
-        ca_crt.to_str().unwrap(),
-        "-CAkey",
-        ca_key.to_str().unwrap(),
-        "-CAcreateserial",
-        "-out",
-        client_crt.to_str().unwrap(),
-        "-days",
-        "1",
-    ]);
-
-    let server_paths = ServerPaths {
-        cert: server_crt.clone(),
-        key: server_key.clone(),
-        ca: ca_crt.clone(),
-    };
-    let client_material = ClientMaterial {
-        cert_pem: std::fs::read(&client_crt).unwrap(),
-        key_pem: std::fs::read(&client_key).unwrap(),
-        ca_pem: std::fs::read(&ca_crt).unwrap(),
-    };
-    (dir, server_paths, client_material)
-}
-
-struct ServerPaths {
-    cert: PathBuf,
-    key: PathBuf,
-    ca: PathBuf,
-}
-
+/// Generated PEM material from a self-signed CA → server + client
+/// leaf pair. The same `ca_pem` is used by both the server (as
+/// the trust bundle for verifying the incoming client cert) and
+/// the client (as the trust bundle for verifying the server cert).
 #[allow(clippy::struct_field_names)]
-struct ClientMaterial {
-    cert_pem: Vec<u8>,
-    key_pem: Vec<u8>,
-    ca_pem: Vec<u8>,
+struct MtlsPki {
+    ca_pem: String,
+    server_cert_pem: String,
+    server_key_pem: String,
+    client_cert_pem: String,
+    client_key_pem: String,
 }
 
-fn run_openssl(args: &[&str]) {
-    let output = Command::new("openssl")
-        .args(args)
-        .output()
-        .expect("openssl invocation failed");
-    assert!(
-        output.status.success(),
-        "openssl {:?} failed: stderr={}",
-        args,
-        String::from_utf8_lossy(&output.stderr)
-    );
+fn generate_mtls_pki(server_cn: &str) -> MtlsPki {
+    // 1. Self-signed CA. Always X.509 v3 with the required
+    //    `basicConstraints=CA:TRUE` + `keyCertSign` usages —
+    //    rcgen never emits v1, so the toolchain-skew that broke
+    //    the openssl path is gone.
+    let mut ca_params = CertificateParams::default();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params
+        .distinguished_name
+        .push(DnType::CommonName, "spectre-test-ca");
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    let ca_key = KeyPair::generate().expect("ca keypair");
+    let ca_cert = ca_params.self_signed(&ca_key).expect("ca self-sign");
+
+    // 2. Server leaf cert — SAN list includes the requested CN
+    //    (`localhost` in the test) so the client's
+    //    `domain_name(...)` SNI / SAN check succeeds.
+    let mut server_params = CertificateParams::new(vec![server_cn.to_string()]).expect("san");
+    server_params
+        .distinguished_name
+        .push(DnType::CommonName, server_cn);
+    server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    let server_key = KeyPair::generate().expect("server keypair");
+    let server_cert = server_params
+        .signed_by(&server_key, &ca_cert, &ca_key)
+        .expect("server sign");
+
+    // 3. Client leaf cert. The CN doesn't have to match anything
+    //    in particular; the server validates the chain back to
+    //    the CA via `client_ca_root`. ExtendedKeyUsage=ClientAuth
+    //    is what some strict implementations enforce.
+    let mut client_params = CertificateParams::default();
+    client_params
+        .distinguished_name
+        .push(DnType::CommonName, "spectre-test-client");
+    client_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    let client_key = KeyPair::generate().expect("client keypair");
+    let client_cert = client_params
+        .signed_by(&client_key, &ca_cert, &ca_key)
+        .expect("client sign");
+
+    MtlsPki {
+        ca_pem: ca_cert.pem(),
+        server_cert_pem: server_cert.pem(),
+        server_key_pem: server_key.serialize_pem(),
+        client_cert_pem: client_cert.pem(),
+        client_key_pem: client_key.serialize_pem(),
+    }
 }
 
 async fn pick_port() -> u16 {
@@ -211,12 +105,17 @@ async fn pick_port() -> u16 {
     port
 }
 
-/// Spawn a tonic `Server` with the engine's `build_server_tls_config`
-/// and a `tonic_health` service. Returns the bind address and a
-/// shutdown handle (drop = stop).
-async fn spawn_engine_like_server(server_paths: &ServerPaths) -> SocketAddr {
-    let tls = build_server_tls_config(&server_paths.cert, &server_paths.key, &server_paths.ca)
-        .expect("build_server_tls_config");
+/// Spawn a tonic `Server` with a `ServerTlsConfig` matching the
+/// shape the engine builds via `build_server_tls_config` (same
+/// `Identity::from_pem` + `Certificate::from_pem` + `client_ca_root`
+/// chain), plus a `tonic_health` service. Returns the bind address.
+async fn spawn_engine_like_server(pki: &MtlsPki) -> SocketAddr {
+    let identity = Identity::from_pem(
+        pki.server_cert_pem.as_bytes(),
+        pki.server_key_pem.as_bytes(),
+    );
+    let ca = Certificate::from_pem(pki.ca_pem.as_bytes());
+    let tls = ServerTlsConfig::new().identity(identity).client_ca_root(ca);
 
     let port = pick_port().await;
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
@@ -241,11 +140,14 @@ async fn spawn_engine_like_server(server_paths: &ServerPaths) -> SocketAddr {
 #[tokio::test]
 async fn mtls_round_trip_health_check_succeeds() {
     install_crypto_provider();
-    let (_dir, server_paths, client_material) = generate_mtls_pki("localhost");
-    let addr = spawn_engine_like_server(&server_paths).await;
+    let pki = generate_mtls_pki("localhost");
+    let addr = spawn_engine_like_server(&pki).await;
 
-    let identity = Identity::from_pem(&client_material.cert_pem, &client_material.key_pem);
-    let ca = Certificate::from_pem(&client_material.ca_pem);
+    let identity = Identity::from_pem(
+        pki.client_cert_pem.as_bytes(),
+        pki.client_key_pem.as_bytes(),
+    );
+    let ca = Certificate::from_pem(pki.ca_pem.as_bytes());
     let tls_config = ClientTlsConfig::new()
         .domain_name("localhost")
         .ca_certificate(ca)
@@ -273,12 +175,12 @@ async fn mtls_round_trip_health_check_succeeds() {
 #[tokio::test]
 async fn mtls_rejects_client_without_certificate() {
     install_crypto_provider();
-    let (_dir, server_paths, client_material) = generate_mtls_pki("localhost");
-    let addr = spawn_engine_like_server(&server_paths).await;
+    let pki = generate_mtls_pki("localhost");
+    let addr = spawn_engine_like_server(&pki).await;
 
     // No client identity — trust the CA so the server cert
     // verifies, but DO NOT present a client cert.
-    let ca = Certificate::from_pem(&client_material.ca_pem);
+    let ca = Certificate::from_pem(pki.ca_pem.as_bytes());
     let tls_config = ClientTlsConfig::new()
         .domain_name("localhost")
         .ca_certificate(ca);
