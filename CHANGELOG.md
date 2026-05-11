@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Operator ↔ engine mTLS — W3.3 (first auth PR of Wave 3,
+  ADR-0032 §4.1 wiring landed end-to-end).** The chart's new
+  `certManager.enabled` flag (default `false` — v1alpha1
+  plaintext posture preserved) gates per-service `Certificate`
+  resources rendered via `_helpers.tpl::spectre.certificate`.
+  When enabled, cert-manager issues `<fullname>-engine-cert`
+  and `<fullname>-control-plane-cert` against the configured
+  `issuerRef` (default `spectre-selfsigned`, a CA ClusterIssuer
+  that operators can swap for Vault / ACME / internal CA);
+  the chart mounts each Secret at `/etc/spectre/tls/` and emits
+  `SPECTRE_TLS_{CERT,KEY,CA}_PATH` env vars consumed by both
+  binaries. Engine (`engines/engine/src/tls/`) detects the env
+  contract at startup via `TlsConfig::from_env` (all-three-set
+  → mTLS, all-three-unset → plaintext, partial → fail-fast)
+  and switches `tonic::Server` into client-cert-required TLS
+  via `ServerTlsConfig::client_ca_root`. Operator
+  (`operators/control-plane/internal/tls/`) symmetrically
+  detects the contract via `tls.DetectMode` and builds gRPC
+  client credentials via `NewClientCredentials`; mTLS mode
+  uses `credentials.NewTLS` of a `tls.Config` whose
+  `GetClientCertificate` hook reloads the client key pair on
+  the 30-second cadence per ADR-0032 §5.1 (Go).
+  `build/helm/test/{values-ci-mtls,cluster-issuer-ci}.yaml`
+  bootstrap the SelfSigned → CA → CA-Issuer chain for the
+  `mtls-smoke.yml` daily gate.
+  `tools/test/verify-mtls-{handshake,rejects-plaintext}.sh`
+  assert the positive + negative cases.
+  `docs/architecture/authentication.md` records the
+  operational shape. Chart's control-plane Deployment now sets
+  `SPECTRE_ENGINE_ENDPOINT` to the in-cluster engine Service
+  DNS so the dial target matches the cert's SAN list (was
+  silently falling back to `127.0.0.1:8090` which never
+  reached the engine from a Pod; W3.3 surfaces it). Compose
+  stays plaintext on purpose (cert-manager is k8s-native; no
+  Compose equivalent). cargo dep: `tonic` features
+  `+tls-ring`, `rustls-pemfile = "2"`.
+  PR #TBD; ADR-0032 §4.1 + §5.1.
+
 - **Three adapter OpenTelemetry observability — W3.2 (second
   PR of Wave 3, completing ADR-0031 §5.3's adapter metric
   taxonomy + §4.2's trace topology end-to-end).** Each of the
