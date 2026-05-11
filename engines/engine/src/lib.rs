@@ -69,6 +69,7 @@ pub mod registry;
 pub mod s3;
 pub mod server;
 pub mod telemetry;
+pub mod tls;
 pub mod webhook;
 
 mod engine;

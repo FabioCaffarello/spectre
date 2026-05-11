@@ -33,6 +33,7 @@ use spectre_engine::registry::AdapterRegistry;
 use spectre_engine::s3::{S3Error, S3Uploader};
 use spectre_engine::server::engine_server;
 use spectre_engine::telemetry::{Telemetry, TelemetryConfig, logs};
+use spectre_engine::tls::{TlsConfig, TlsMode, build_server_tls_config};
 use spectre_engine::webhook::WebhookClient;
 use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
 use tonic::transport::Server;
@@ -58,6 +59,13 @@ async fn main() -> ExitCode {
     }
 }
 
+// W3.3 added the TLS detection + `apply_tls_mode` call which
+// pushed `run()` over the pedantic 100-line threshold. The
+// existing init sequence (telemetry / postgres / kafka / s3 /
+// webhook / registry / health) is already factored as one
+// linear startup script; extracting further is refactor scope
+// that does not belong to W3.3.
+#[allow(clippy::too_many_lines)]
 async fn run() -> Result<()> {
     let port = parse_port()?;
     let addr: SocketAddr = format!("0.0.0.0:{port}")
@@ -174,14 +182,29 @@ async fn run() -> Result<()> {
         .set_service_status("spectre.engine.v1alpha1.Engine", ServingStatus::Serving)
         .await;
 
+    // ADR-0032 §4.1 first auth PR: detect mTLS env contract before
+    // binding. `Plaintext` keeps the v1alpha1 posture so deployments
+    // without cert-manager continue to work unchanged. `Mutual` loads
+    // the chart-mounted credentials and switches `tonic::Server` into
+    // client-cert-required TLS. Partial env state is a fail-fast
+    // startup error (the chart cannot produce it; hand-rolled
+    // deployments learn from the misconfig in the Pod's Events stream).
+    let tls_config = TlsConfig::from_env().context("tls: env contract invalid")?;
+    let mut server_builder = apply_tls_mode(Server::builder(), &tls_config.mode)?;
+    let tls_mode_label = match &tls_config.mode {
+        TlsMode::Plaintext => "plaintext",
+        TlsMode::Mutual { .. } => "mutual",
+    };
+
     info!(
         version = ENGINE_VERSION,
         protocol = PROTOCOL_VERSION,
         addr = %addr,
+        tls_mode = tls_mode_label,
         "spectre engine listening"
     );
 
-    let serve_result = Server::builder()
+    let serve_result = server_builder
         .add_service(svc)
         .add_service(health_service)
         .serve_with_shutdown(addr, shutdown_signal())
@@ -197,6 +220,32 @@ async fn run() -> Result<()> {
     serve_result?;
     info!("spectre engine shut down");
     Ok(())
+}
+
+fn apply_tls_mode(server: Server, mode: &TlsMode) -> Result<Server> {
+    match mode {
+        TlsMode::Plaintext => {
+            info!("tls mode: plaintext (v1alpha1 posture; certManager.enabled=false in chart)");
+            Ok(server)
+        }
+        TlsMode::Mutual {
+            cert_path,
+            key_path,
+            ca_path,
+        } => {
+            let tls = build_server_tls_config(cert_path, key_path, ca_path)
+                .context("tls: build ServerTlsConfig from PEM material")?;
+            info!(
+                cert_path = %cert_path.display(),
+                key_path = %key_path.display(),
+                ca_path = %ca_path.display(),
+                "tls mode: mutual (mTLS); client certificates required"
+            );
+            server
+                .tls_config(tls)
+                .context("tls: tonic rejected ServerTlsConfig")
+        }
+    }
 }
 
 fn parse_port() -> Result<u16> {
