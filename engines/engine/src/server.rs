@@ -77,6 +77,7 @@ use crate::error::EngineError;
 use crate::kafka::KafkaProducer;
 use crate::output::OutputSink;
 use crate::s3::S3Uploader;
+use crate::telemetry::EngineMetrics;
 use crate::telemetry::propagation;
 use crate::webhook::WebhookClient;
 
@@ -107,8 +108,11 @@ pub fn engine_server(
     kafka: Option<Arc<KafkaProducer>>,
     s3: Option<Arc<S3Uploader>>,
     webhook: Arc<WebhookClient>,
+    metrics: Arc<EngineMetrics>,
 ) -> EngineServer<EngineServiceImpl> {
-    EngineServer::new(EngineServiceImpl::new(engine, db, kafka, s3, webhook))
+    EngineServer::new(EngineServiceImpl::new(
+        engine, db, kafka, s3, webhook, metrics,
+    ))
 }
 
 /// Implementation of `spectre.engine.v1alpha1.Engine`. Holds an
@@ -124,14 +128,16 @@ pub struct EngineServiceImpl {
     kafka: Option<Arc<KafkaProducer>>,
     s3: Option<Arc<S3Uploader>>,
     webhook: Arc<WebhookClient>,
+    metrics: Arc<EngineMetrics>,
 }
 
 impl EngineServiceImpl {
     /// Construct a service implementation wrapping `engine`,
     /// holding a [`Database`] handle for ADR-0023 §2 persistence,
     /// the optional sink-level state ([`KafkaProducer`],
-    /// [`S3Uploader`]) for ADR-0023 §3 + ADR-0024 §3, and the
-    /// always-present [`WebhookClient`] for ADR-0024 §4.
+    /// [`S3Uploader`]) for ADR-0023 §3 + ADR-0024 §3, the
+    /// always-present [`WebhookClient`] for ADR-0024 §4, and the
+    /// shared [`EngineMetrics`] handle for ADR-0031 §5.1 recordings.
     #[must_use]
     pub fn new(
         engine: Engine,
@@ -139,6 +145,7 @@ impl EngineServiceImpl {
         kafka: Option<Arc<KafkaProducer>>,
         s3: Option<Arc<S3Uploader>>,
         webhook: Arc<WebhookClient>,
+        metrics: Arc<EngineMetrics>,
     ) -> Self {
         Self {
             engine: Arc::new(engine),
@@ -146,6 +153,7 @@ impl EngineServiceImpl {
             kafka,
             s3,
             webhook,
+            metrics,
         }
     }
 }
@@ -283,9 +291,18 @@ impl EngineServiceImpl {
         let kafka = self.kafka.clone();
         let s3 = self.s3.clone();
         let webhook = Arc::clone(&self.webhook);
+        let metrics = Arc::clone(&self.metrics);
         let driver = plan.driver.clone();
         let (response_tx, response_rx) =
             mpsc::unbounded_channel::<Result<RunJobResponse, Status>>();
+
+        // `spectre_engine_jobs_active` (ADR-0031 §5.1): increment now
+        // that the job is past pre-flight (parse + plan + insert all
+        // succeeded). `stream_run_job` always decrements on exit so
+        // the gauge balances on every path including panics — the
+        // executor task's panic surfaces as an `Internal` outcome,
+        // not an early return.
+        metrics.jobs_active.add(1, &[]);
 
         // Carry the run span's OTel context into the spawned task so
         // every child span (`engine.execute_plan`, adapter RPC spans)
@@ -299,6 +316,7 @@ impl EngineServiceImpl {
                 kafka,
                 s3,
                 webhook,
+                metrics,
                 plan,
                 job_uuid,
                 driver,
@@ -328,6 +346,7 @@ struct StreamRunJobArgs {
     kafka: Option<Arc<KafkaProducer>>,
     s3: Option<Arc<S3Uploader>>,
     webhook: Arc<WebhookClient>,
+    metrics: Arc<EngineMetrics>,
     plan: crate::plan::Plan,
     job_uuid: Uuid,
     driver: String,
@@ -351,6 +370,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         kafka,
         s3,
         webhook,
+        metrics,
         plan,
         job_uuid,
         driver,
@@ -371,6 +391,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         if kafka.is_none() {
             terminate_with_failure(
                 &pool,
+                &metrics,
                 job_uuid,
                 "KAFKA_UNAVAILABLE",
                 "kafka producer is not available; set SPECTRE_KAFKA_BROKERS \
@@ -383,6 +404,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         if kafka_topic.trim().is_empty() {
             terminate_with_failure(
                 &pool,
+                &metrics,
                 job_uuid,
                 "KAFKA_TOPIC_REQUIRED",
                 "kafka_topic is empty; set ScrapeJob.spec.outputSink.kafka.topic",
@@ -395,6 +417,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         if s3.is_none() {
             terminate_with_failure(
                 &pool,
+                &metrics,
                 job_uuid,
                 "S3_UNAVAILABLE",
                 "s3 uploader is not available; set SPECTRE_S3_ENDPOINT (or rely on \
@@ -411,6 +434,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         if bucket.trim().is_empty() || key.trim().is_empty() {
             terminate_with_failure(
                 &pool,
+                &metrics,
                 job_uuid,
                 "S3_FIELD_REQUIRED",
                 "s3 bucket and key must be non-empty; set \
@@ -426,6 +450,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         if url.trim().is_empty() {
             terminate_with_failure(
                 &pool,
+                &metrics,
                 job_uuid,
                 "WEBHOOK_FIELD_REQUIRED",
                 "webhook url is empty; set ScrapeJob.spec.outputSink.webhook.url",
@@ -455,10 +480,13 @@ async fn stream_run_job(args: StreamRunJobArgs) {
     // Executor task: owns the sink (and therefore `row_tx`), so the
     // channel closes when the executor returns and the drainer's
     // `recv()` returns `None`.
+    let executor_metrics = Arc::clone(&metrics);
     let executor_handle = tokio::spawn(
         async move {
             let mut sink = ChannelSink::new(row_tx);
-            engine.run_plan_with_sink(&plan, &mut sink).await
+            engine
+                .run_plan_with_sink(&plan, &mut sink, &executor_metrics)
+                .await
         }
         .with_context(executor_ctx),
     );
@@ -485,7 +513,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         match webhook_session_for(&webhook, webhook_config.as_ref(), job_uuid, &driver) {
             Ok(sess) => Some(sess),
             Err((code, msg)) => {
-                terminate_with_failure(&pool, job_uuid, &code, &msg, &response_tx).await;
+                terminate_with_failure(&pool, &metrics, job_uuid, &code, &msg, &response_tx).await;
                 return;
             }
         }
@@ -586,6 +614,13 @@ async fn stream_run_job(args: StreamRunJobArgs) {
             let _ = response_tx.send(Ok(RunJobResponse {
                 event: Some(run_job_response::Event::Row(Row { json_line })),
             }));
+            // `spectre_engine_rows_emitted_total{sink}` (ADR-0031
+            // §5.1): one increment per row reaching the gRPC stream.
+            // Tied to `is_none()` because a sink error short-circuits
+            // forwarding — rows after that point are not "emitted".
+            metrics
+                .rows_emitted_total
+                .add(1, &[KeyValue::new("sink", output_sink_kind.clone())]);
         }
         row_index = row_index.saturating_add(1);
     }
@@ -679,6 +714,20 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         outcome
     };
 
+    // `spectre_engine_jobs_completed_total{result}` (ADR-0031 §5.1):
+    // record the terminal result label *before* dispatching the gRPC
+    // event so the gauge balance survives even when the response_tx
+    // send fails (client closed the stream).
+    let result_label = if final_outcome.is_ok() {
+        "success"
+    } else {
+        "failure"
+    };
+    metrics
+        .jobs_completed_total
+        .add(1, &[KeyValue::new("result", result_label)]);
+    metrics.jobs_active.add(-1, &[]);
+
     let event = build_terminal_event(&pool, job_uuid, final_outcome).await;
 
     if response_tx
@@ -765,8 +814,14 @@ async fn build_terminal_event(
 /// terminal Failed event with the supplied code + message. Used
 /// for the kafka admission shortcuts that fail before the executor
 /// runs.
+///
+/// Records the matching `spectre_engine_jobs_active` decrement and
+/// `spectre_engine_jobs_completed_total{result="failure"}` increment
+/// per ADR-0031 §5.1 — every early-return path that bypassed the
+/// main outcome handler still balances the gauge.
 async fn terminate_with_failure(
     pool: &sqlx::PgPool,
+    metrics: &EngineMetrics,
     job_uuid: Uuid,
     code: &str,
     message: &str,
@@ -791,6 +846,10 @@ async fn terminate_with_failure(
             error_message: message.to_owned(),
         })),
     }));
+    metrics.jobs_active.add(-1, &[]);
+    metrics
+        .jobs_completed_total
+        .add(1, &[KeyValue::new("result", "failure")]);
 }
 
 /// Output sink that forwards each row as a `serde_json::Value` on an

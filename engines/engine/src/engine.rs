@@ -11,6 +11,8 @@
 //! The engine is stateless across calls in v1alpha1; PostgreSQL-backed
 //! state lands in R4.2.
 
+use std::sync::Arc;
+
 use tracing::{debug, info};
 
 use crate::client::Client;
@@ -20,6 +22,7 @@ use crate::executor::Executor;
 use crate::output::OutputSink;
 use crate::plan::{Plan, plan as plan_job};
 use crate::registry::AdapterRegistry;
+use crate::telemetry::EngineMetrics;
 
 /// Top-level engine. Hold one per process; cheap to clone (it
 /// carries the registry by value, which is itself a small `HashMap`).
@@ -87,6 +90,7 @@ impl Engine {
         &self,
         plan: &Plan,
         sink: &mut dyn OutputSink,
+        metrics: &Arc<EngineMetrics>,
     ) -> Result<usize, EngineError> {
         let endpoint = self.registry.resolve(&plan.driver)?;
         info!(
@@ -97,6 +101,42 @@ impl Engine {
         );
         debug!(?plan, "compiled plan");
         let client = Client::dial(endpoint).await?;
-        Executor::run(plan, &client, sink).await
+        Executor::run(plan, &client, sink, metrics, service_label(&plan.driver)).await
+    }
+}
+
+/// Normalise the DSL driver name into the canonical `service` metric
+/// label per ADR-0031 §3.4 (`lower_snake_case`). The mapping is fixed
+/// for v1alpha1 (three adapters); new drivers add cases here.
+fn service_label(driver: &str) -> &'static str {
+    match driver {
+        "playwright" => "playwright",
+        "seleniumbase" => "seleniumbase",
+        "curl-impersonate" => "curl_impersonate",
+        _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::service_label;
+
+    #[test]
+    fn service_label_normalises_hyphenated_driver_name() {
+        // ADR-0031 §3.4: metric labels are `lower_snake_case`. The
+        // hyphen in the DSL driver name must become an underscore.
+        assert_eq!(service_label("curl-impersonate"), "curl_impersonate");
+    }
+
+    #[test]
+    fn service_label_passes_through_lowercase_alpha_names() {
+        assert_eq!(service_label("playwright"), "playwright");
+        assert_eq!(service_label("seleniumbase"), "seleniumbase");
+    }
+
+    #[test]
+    fn service_label_falls_back_for_unregistered_driver() {
+        assert_eq!(service_label("future-driver"), "unknown");
+        assert_eq!(service_label(""), "unknown");
     }
 }

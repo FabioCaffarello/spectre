@@ -155,7 +155,14 @@ async fn run() -> Result<()> {
     log_registry(&registry);
 
     let engine = Engine::with_registry(registry);
-    let svc = engine_server(engine, db, kafka, s3, webhook);
+    let svc = engine_server(
+        engine,
+        db,
+        kafka,
+        s3,
+        webhook,
+        Arc::clone(&telemetry.metrics),
+    );
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter

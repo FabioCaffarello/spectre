@@ -13,7 +13,10 @@
 //! happy-path close is also explicit so its result can be surfaced.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Instant;
 
+use opentelemetry::KeyValue;
 use serde_json::Value as Json;
 use tracing::{debug, info, warn};
 
@@ -22,6 +25,7 @@ use crate::error::EngineError;
 use crate::output::OutputSink;
 use crate::plan::{Plan, PlanStep, validate_capabilities};
 use crate::proto;
+use crate::telemetry::EngineMetrics;
 
 /// Drives a [`Plan`] against a connected [`Client`], writing one row
 /// per element to `sink`.
@@ -29,6 +33,14 @@ pub struct Executor;
 
 impl Executor {
     /// Run the plan, return the total number of rows written.
+    ///
+    /// Records per-step duration via
+    /// `spectre_engine_step_duration_seconds` (one observation per
+    /// `PlanStep` iteration) and per-RPC duration via
+    /// `spectre_engine_step_service_call_duration_seconds{service}`
+    /// (one observation per adapter call — `ExtractEach` contributes
+    /// N observations against one step-duration observation).
+    /// Both per ADR-0031 §5.1.
     ///
     /// # Errors
     ///
@@ -39,6 +51,8 @@ impl Executor {
         plan: &Plan,
         client: &Client,
         sink: &mut dyn OutputSink,
+        metrics: &Arc<EngineMetrics>,
+        service_label: &'static str,
     ) -> Result<usize, EngineError> {
         let mut session: Option<String> = None;
         let mut last_query: Vec<proto::ElementRef> = Vec::new();
@@ -48,6 +62,8 @@ impl Executor {
             plan,
             client,
             sink,
+            metrics,
+            service_label,
             &mut session,
             &mut last_query,
             &mut rows_written,
@@ -56,7 +72,13 @@ impl Executor {
 
         // Always close, regardless of outcome.
         if let Some(id) = session.as_deref() {
-            if let Err(e) = client.close(id).await {
+            let start = Instant::now();
+            let close_result = client.close(id).await;
+            metrics.step_service_call_duration_seconds.record(
+                start.elapsed().as_secs_f64(),
+                &[KeyValue::new("service", service_label)],
+            );
+            if let Err(e) = close_result {
                 warn!(error = %e, "best-effort Close after error failed");
             }
         }
@@ -66,23 +88,32 @@ impl Executor {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_inner(
     plan: &Plan,
     client: &Client,
     sink: &mut dyn OutputSink,
+    metrics: &Arc<EngineMetrics>,
+    service_label: &'static str,
     session: &mut Option<String>,
     last_query: &mut Vec<proto::ElementRef>,
     rows_written: &mut usize,
 ) -> Result<(), EngineError> {
+    let service_attrs = [KeyValue::new("service", service_label)];
     for step in &plan.steps {
+        let step_start = Instant::now();
         match step {
             PlanStep::Initialize { config } => {
+                let call_start = Instant::now();
                 let outcome = client
                     .initialize(
                         config.clone(),
                         plan.required_capabilities.iter().cloned().collect(),
                     )
                     .await?;
+                metrics
+                    .step_service_call_duration_seconds
+                    .record(call_start.elapsed().as_secs_f64(), &service_attrs);
                 debug!(
                     session_id = %outcome.session_id,
                     declared = ?outcome.capability_names,
@@ -93,7 +124,11 @@ async fn run_inner(
             }
             PlanStep::Navigate { url, wait_until } => {
                 let id = require_session(session.as_deref())?;
+                let call_start = Instant::now();
                 client.navigate(id, url, *wait_until).await?;
+                metrics
+                    .step_service_call_duration_seconds
+                    .record(call_start.elapsed().as_secs_f64(), &service_attrs);
                 last_query.clear();
             }
             PlanStep::Query {
@@ -102,7 +137,11 @@ async fn run_inner(
                 limit,
             } => {
                 let id = require_session(session.as_deref())?;
+                let call_start = Instant::now();
                 let elements = client.query(id, selector, *kind, *limit).await?;
+                metrics
+                    .step_service_call_duration_seconds
+                    .record(call_start.elapsed().as_secs_f64(), &service_attrs);
                 debug!(
                     selector = %selector,
                     matched = elements.len(),
@@ -118,7 +157,11 @@ async fn run_inner(
                 }
                 let elements = std::mem::take(last_query);
                 for element in elements {
+                    let call_start = Instant::now();
                     let entries = client.extract(id, element, fields.clone()).await?;
+                    metrics
+                        .step_service_call_duration_seconds
+                        .record(call_start.elapsed().as_secs_f64(), &service_attrs);
                     let row = entries_to_row(&entries);
                     sink.write_row(&row)?;
                     *rows_written += 1;
@@ -126,10 +169,17 @@ async fn run_inner(
             }
             PlanStep::Close => {
                 if let Some(id) = session.take() {
+                    let call_start = Instant::now();
                     client.close(&id).await?;
+                    metrics
+                        .step_service_call_duration_seconds
+                        .record(call_start.elapsed().as_secs_f64(), &service_attrs);
                 }
             }
         }
+        metrics
+            .step_duration_seconds
+            .record(step_start.elapsed().as_secs_f64(), &[]);
     }
     info!(rows = *rows_written, "plan complete");
     Ok(())
