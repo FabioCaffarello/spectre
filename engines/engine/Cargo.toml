@@ -163,6 +163,60 @@ aws-config = { version = "1", default-features = false, features = [
 ] }
 aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
 
+# OpenTelemetry observability (W3.1 — ADR-0031). The five-crate
+# stack (opentelemetry / opentelemetry_sdk / opentelemetry-otlp /
+# opentelemetry-prometheus / opentelemetry-semantic-conventions)
+# plus tracing-opentelemetry must move in lock-step on the 0.32.x
+# line — all six publish from the `open-telemetry/opentelemetry-rust`
+# tree and pin against each other internally. Bumps follow that
+# repo's release cadence.
+#
+# `default-features = false` where the SDK supports it: ADR-0031
+# §2.4 defers OTel logs to v1beta1 (Rust support is incomplete);
+# the logs SDK is intentionally NOT pulled in here. Logs continue
+# to flow through tracing-subscriber's JSON stdout layer (Cluster D).
+#
+# Feature choices:
+#
+# - `trace` + `metrics` on the API/SDK: the two signals W3.1 emits.
+# - `rt-tokio` on the SDK: integrates batch span processors with the
+#   engine's tokio runtime.
+# - `grpc-tonic` on the OTLP exporter: matches the platform's gRPC
+#   posture (ADR-0022) + reuses the tonic 0.13 stack already in
+#   the tree.
+# - `prometheus-encoding` on opentelemetry-prometheus: enables
+#   text encoding of OTel meter readings into the prometheus
+#   Registry shared with process-collector below.
+opentelemetry = { version = "0.32", default-features = false, features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "grpc-tonic"] }
+opentelemetry-prometheus = { version = "0.32", default-features = false, features = ["prometheus-encoding"] }
+opentelemetry-semantic-conventions = "0.32"
+
+# tracing-opentelemetry bridges `tracing::span!` macros to OTel
+# spans and surfaces the active span's trace_id/span_id in
+# tracing events — the engine's JSON log layer (Cluster D) reads
+# these fields from the span context per ADR-0031 §3.4.
+tracing-opentelemetry = "0.32"
+
+# Prometheus crate: provides the `Registry` opentelemetry-prometheus
+# exports into, the `TextEncoder` for serving `/metrics` in
+# OpenMetrics text format, and the process collector emitting the
+# OTel-standard `process_*` metrics ADR-0031 §5.5 mandates
+# (`process_cpu_seconds_total`, `process_resident_memory_bytes`,
+# `process_open_fds`, ...). The `process` feature is Unix-only
+# (auto-disabled on non-Unix targets; engine ships Linux-only).
+prometheus = { version = "0.14", default-features = false, features = ["process"] }
+
+# axum drives the `:9090` `/metrics` sidecar HTTP server (R7.1 ADR-
+# 0031 §3.3 uniform port; W3.1 first landing). tonic 0.13's router
+# feature already pulls axum transitively; promoting it to a direct
+# dep pins the version we serve `/metrics` from and aligns with the
+# dev-dependency posture used in `tests/webhook_integration.rs`.
+# The minimal feature set keeps the binary footprint comparable to
+# the transitive pull.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+
 # HTTP webhook client (R5.1 — ADR-0024 §4). reqwest is the
 # de-facto Rust HTTP client; rustls-tls-native-roots picks up the
 # OS trust store so corporate proxies / private CAs work without
@@ -188,13 +242,11 @@ tonic-build = { version = "0.13", default-features = false, features = ["prost"]
 # deterministic JSONL output path.
 tempfile = "3"
 
-# axum drives the in-process test server used by
-# `tests/webhook_integration.rs` (R5.1 — ADR-0024 §4). The engine's
-# tonic 0.13 already pulls hyper transitively, so axum's added
-# build cost is small. wiremock was evaluated and rejected —
-# heavier abstraction, less control over the exact status sequence
-# the retry test needs.
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+# axum was a dev-dependency for `tests/webhook_integration.rs`
+# (R5.1 — ADR-0024 §4). W3.1 promoted it to a regular dependency
+# for the metrics sidecar; the [dependencies] declaration above
+# satisfies the test crate's usage too — Cargo unifies features
+# across dev + runtime.
 
 [lints.rust]
 unsafe_code = "forbid"

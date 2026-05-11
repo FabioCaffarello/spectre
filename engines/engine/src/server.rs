@@ -56,11 +56,13 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
+use opentelemetry::trace::{FutureExt as _, SpanKind, TraceContextExt as _, Tracer as _};
+use opentelemetry::{Context as OtelContext, KeyValue, global};
 use tokio::sync::mpsc;
 use tokio_stream::Stream;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{Request, Response, Status};
-use tracing::{error, info, warn};
+use tracing::{Instrument as _, error, info, warn};
 use uuid::Uuid;
 
 use crate::db::{Database, jobs as db_jobs};
@@ -75,7 +77,13 @@ use crate::error::EngineError;
 use crate::kafka::KafkaProducer;
 use crate::output::OutputSink;
 use crate::s3::S3Uploader;
+use crate::telemetry::EngineMetrics;
+use crate::telemetry::propagation;
 use crate::webhook::WebhookClient;
+
+/// `opentelemetry::global::tracer` name used by the engine's span
+/// emissions per ADR-0031 §4.3.
+const TRACER_NAME: &str = "spectre-engine";
 
 /// Reusable factory for the fully-configured tonic service stack.
 /// Wraps the engine in an `Arc` (so the streaming task can hold it
@@ -100,8 +108,11 @@ pub fn engine_server(
     kafka: Option<Arc<KafkaProducer>>,
     s3: Option<Arc<S3Uploader>>,
     webhook: Arc<WebhookClient>,
+    metrics: Arc<EngineMetrics>,
 ) -> EngineServer<EngineServiceImpl> {
-    EngineServer::new(EngineServiceImpl::new(engine, db, kafka, s3, webhook))
+    EngineServer::new(EngineServiceImpl::new(
+        engine, db, kafka, s3, webhook, metrics,
+    ))
 }
 
 /// Implementation of `spectre.engine.v1alpha1.Engine`. Holds an
@@ -117,14 +128,16 @@ pub struct EngineServiceImpl {
     kafka: Option<Arc<KafkaProducer>>,
     s3: Option<Arc<S3Uploader>>,
     webhook: Arc<WebhookClient>,
+    metrics: Arc<EngineMetrics>,
 }
 
 impl EngineServiceImpl {
     /// Construct a service implementation wrapping `engine`,
     /// holding a [`Database`] handle for ADR-0023 §2 persistence,
     /// the optional sink-level state ([`KafkaProducer`],
-    /// [`S3Uploader`]) for ADR-0023 §3 + ADR-0024 §3, and the
-    /// always-present [`WebhookClient`] for ADR-0024 §4.
+    /// [`S3Uploader`]) for ADR-0023 §3 + ADR-0024 §3, the
+    /// always-present [`WebhookClient`] for ADR-0024 §4, and the
+    /// shared [`EngineMetrics`] handle for ADR-0031 §5.1 recordings.
     #[must_use]
     pub fn new(
         engine: Engine,
@@ -132,6 +145,7 @@ impl EngineServiceImpl {
         kafka: Option<Arc<KafkaProducer>>,
         s3: Option<Arc<S3Uploader>>,
         webhook: Arc<WebhookClient>,
+        metrics: Arc<EngineMetrics>,
     ) -> Self {
         Self {
             engine: Arc::new(engine),
@@ -139,6 +153,7 @@ impl EngineServiceImpl {
             kafka,
             s3,
             webhook,
+            metrics,
         }
     }
 }
@@ -153,6 +168,46 @@ impl EngineService for EngineServiceImpl {
         &self,
         request: Request<RunJobRequest>,
     ) -> Result<Response<Self::RunJobStream>, Status> {
+        // ADR-0031 §4.1: extract the W3C `traceparent` parent context
+        // from incoming gRPC metadata. Missing / invalid headers yield
+        // an empty context; the new span below becomes a fresh root.
+        let parent_ctx = propagation::extract_parent(request.metadata());
+
+        // Open the root span for this RunJob. ADR-0031 §4.2 places
+        // `engine.run_job` directly below the caller's span (typically
+        // `operator.reconcile_scrapejob`); §4.3 names it. SpanKind
+        // `Server` follows OTel RPC semantic conventions for the
+        // gRPC handler-side span.
+        //
+        // The async body wraps with `with_context(run_ctx)` instead of
+        // holding a `_run_guard = ctx.attach()` across awaits — the
+        // `ContextGuard` is `!Send`, which would violate tonic's
+        // `Send`-bounded handler future.
+        let tracer = global::tracer(TRACER_NAME);
+        let run_span = tracer
+            .span_builder("engine.run_job")
+            .with_kind(SpanKind::Server)
+            .start_with_context(&tracer, &parent_ctx);
+        let run_ctx = OtelContext::current_with_span(run_span);
+        let task_ctx = run_ctx.clone();
+        self.run_job_inner(request, task_ctx)
+            .with_context(run_ctx)
+            .await
+    }
+}
+
+impl EngineServiceImpl {
+    /// Body of `Engine.run_job` extracted so the surrounding handler
+    /// can wrap it in [`opentelemetry::trace::FutureExt::with_context`]
+    /// — the `OTel` context guard is `!Send` and cannot be held across
+    /// the awaits inside this body, so the wrapper attaches /
+    /// detaches the context on every poll instead.
+    async fn run_job_inner(
+        &self,
+        request: Request<RunJobRequest>,
+        task_ctx: OtelContext,
+    ) -> Result<Response<<Self as EngineService>::RunJobStream>, Status> {
+        let tracer = global::tracer(TRACER_NAME);
         let RunJobRequest {
             job_dsl,
             job_id,
@@ -161,6 +216,7 @@ impl EngineService for EngineServiceImpl {
             s3: s3_config,
             webhook: webhook_config,
         } = request.into_inner();
+
         // Empty defaults to "stdout" so clients that predate R4.2
         // (notably the engine's own integration tests and any
         // hand-written grpcurl call) continue to work without
@@ -189,10 +245,13 @@ impl EngineService for EngineServiceImpl {
         // Parse + plan eagerly so the most common configuration
         // mistakes (malformed YAML, unknown driver) surface as a
         // synchronous gRPC error, not a `Failed` event the client
-        // has to dig out of the stream.
-        let job: Job = Engine::parse_job(&job_dsl)
+        // has to dig out of the stream. Each step gets its own span
+        // per ADR-0031 §4.3 (non-RPC operation naming pattern
+        // `<service>.<operation>`).
+        let job: Job = tracer
+            .in_span("engine.parse_dsl", |_cx| Engine::parse_job(&job_dsl))
             .map_err(|e| Status::invalid_argument(format!("parse: {e}")))?;
-        let plan = Engine::plan_job(&job);
+        let plan = tracer.in_span("engine.generate_plan", |_cx| Engine::plan_job(&job));
 
         // Persist the `jobs` row before opening the stream. A
         // Postgres failure here is reported synchronously as
@@ -211,6 +270,15 @@ impl EngineService for EngineServiceImpl {
         .await
         .map_err(|e| Status::internal(format!("postgres insert_job: {e}")))?;
 
+        // Record `job_id` on the run span now that we know the UUID
+        // (ADR-0031 §3.4 + §4.x: `job_id` is a cross-cutting attribute
+        // surfaced on every span and event inside the job context).
+        // `Context::current()` is the run_ctx the surrounding
+        // `with_context` wrapper attached.
+        OtelContext::current()
+            .span()
+            .set_attribute(KeyValue::new("job_id", job_uuid.to_string()));
+
         info!(
             job_id = %job_uuid,
             driver = %plan.driver,
@@ -223,25 +291,43 @@ impl EngineService for EngineServiceImpl {
         let kafka = self.kafka.clone();
         let s3 = self.s3.clone();
         let webhook = Arc::clone(&self.webhook);
+        let metrics = Arc::clone(&self.metrics);
         let driver = plan.driver.clone();
         let (response_tx, response_rx) =
             mpsc::unbounded_channel::<Result<RunJobResponse, Status>>();
 
-        tokio::spawn(stream_run_job(StreamRunJobArgs {
-            engine,
-            pool,
-            kafka,
-            s3,
-            webhook,
-            plan,
-            job_uuid,
-            driver,
-            output_sink_kind,
-            kafka_topic,
-            s3_config,
-            webhook_config,
-            response_tx,
-        }));
+        // `spectre_engine_jobs_active` (ADR-0031 §5.1): increment now
+        // that the job is past pre-flight (parse + plan + insert all
+        // succeeded). `stream_run_job` always decrements on exit so
+        // the gauge balances on every path including panics — the
+        // executor task's panic surfaces as an `Internal` outcome,
+        // not an early return.
+        metrics.jobs_active.add(1, &[]);
+
+        // Carry the run span's OTel context into the spawned task so
+        // every child span (`engine.execute_plan`, adapter RPC spans)
+        // inherits the run_job span as parent. `with_context` wraps
+        // the spawned future so the context attaches / detaches on
+        // each poll — no `!Send` guard across awaits.
+        tokio::spawn(
+            stream_run_job(StreamRunJobArgs {
+                engine,
+                pool,
+                kafka,
+                s3,
+                webhook,
+                metrics,
+                plan,
+                job_uuid,
+                driver,
+                output_sink_kind,
+                kafka_topic,
+                s3_config,
+                webhook_config,
+                response_tx,
+            })
+            .with_context(task_ctx),
+        );
 
         Ok(Response::new(Box::pin(UnboundedReceiverStream::new(
             response_rx,
@@ -260,6 +346,7 @@ struct StreamRunJobArgs {
     kafka: Option<Arc<KafkaProducer>>,
     s3: Option<Arc<S3Uploader>>,
     webhook: Arc<WebhookClient>,
+    metrics: Arc<EngineMetrics>,
     plan: crate::plan::Plan,
     job_uuid: Uuid,
     driver: String,
@@ -283,6 +370,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         kafka,
         s3,
         webhook,
+        metrics,
         plan,
         job_uuid,
         driver,
@@ -303,6 +391,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         if kafka.is_none() {
             terminate_with_failure(
                 &pool,
+                &metrics,
                 job_uuid,
                 "KAFKA_UNAVAILABLE",
                 "kafka producer is not available; set SPECTRE_KAFKA_BROKERS \
@@ -315,6 +404,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         if kafka_topic.trim().is_empty() {
             terminate_with_failure(
                 &pool,
+                &metrics,
                 job_uuid,
                 "KAFKA_TOPIC_REQUIRED",
                 "kafka_topic is empty; set ScrapeJob.spec.outputSink.kafka.topic",
@@ -327,6 +417,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         if s3.is_none() {
             terminate_with_failure(
                 &pool,
+                &metrics,
                 job_uuid,
                 "S3_UNAVAILABLE",
                 "s3 uploader is not available; set SPECTRE_S3_ENDPOINT (or rely on \
@@ -343,6 +434,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         if bucket.trim().is_empty() || key.trim().is_empty() {
             terminate_with_failure(
                 &pool,
+                &metrics,
                 job_uuid,
                 "S3_FIELD_REQUIRED",
                 "s3 bucket and key must be non-empty; set \
@@ -358,6 +450,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         if url.trim().is_empty() {
             terminate_with_failure(
                 &pool,
+                &metrics,
                 job_uuid,
                 "WEBHOOK_FIELD_REQUIRED",
                 "webhook url is empty; set ScrapeJob.spec.outputSink.webhook.url",
@@ -370,13 +463,33 @@ async fn stream_run_job(args: StreamRunJobArgs) {
 
     let (row_tx, mut row_rx) = mpsc::unbounded_channel::<serde_json::Value>();
 
+    // The `engine.execute_plan` span (ADR-0031 §4.2) wraps the
+    // executor's lifetime so child adapter RPC spans inherit it as
+    // parent. The span enters the spawned task's context via
+    // `with_context`; the drainer loop below stays under the
+    // `engine.run_job` span (its caller-side parent) since the row
+    // loop is not part of the executor's driver-loop work — it
+    // serialises and dispatches rows that already left the executor.
+    let tracer = global::tracer(TRACER_NAME);
+    let execute_span = tracer
+        .span_builder("engine.execute_plan")
+        .with_kind(SpanKind::Internal)
+        .start(&tracer);
+    let executor_ctx = OtelContext::current_with_span(execute_span);
+
     // Executor task: owns the sink (and therefore `row_tx`), so the
     // channel closes when the executor returns and the drainer's
     // `recv()` returns `None`.
-    let executor_handle = tokio::spawn(async move {
-        let mut sink = ChannelSink::new(row_tx);
-        engine.run_plan_with_sink(&plan, &mut sink).await
-    });
+    let executor_metrics = Arc::clone(&metrics);
+    let executor_handle = tokio::spawn(
+        async move {
+            let mut sink = ChannelSink::new(row_tx);
+            engine
+                .run_plan_with_sink(&plan, &mut sink, &executor_metrics)
+                .await
+        }
+        .with_context(executor_ctx),
+    );
 
     let persist_rows = output_sink_kind == "stdout";
     let publish_kafka = output_sink_kind == "kafka";
@@ -400,7 +513,7 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         match webhook_session_for(&webhook, webhook_config.as_ref(), job_uuid, &driver) {
             Ok(sess) => Some(sess),
             Err((code, msg)) => {
-                terminate_with_failure(&pool, job_uuid, &code, &msg, &response_tx).await;
+                terminate_with_failure(&pool, &metrics, job_uuid, &code, &msg, &response_tx).await;
                 return;
             }
         }
@@ -409,90 +522,117 @@ async fn stream_run_job(args: StreamRunJobArgs) {
     };
 
     while let Some(value) = row_rx.recv().await {
-        if persist_rows {
-            if let Err(e) = db_jobs::record_job_row(&pool, job_uuid, row_index, &value).await {
-                warn!(
-                    job_id = %job_uuid,
-                    row_index,
-                    error = %e,
-                    "record_job_row failed; continuing without abort",
-                );
-            }
-        }
-        let json_line = match serde_json::to_string(&value) {
-            Ok(line) => line,
-            Err(e) => {
-                error!(job_id = %job_uuid, error = %e, "row serialisation failed");
-                row_index = row_index.saturating_add(1);
-                continue;
-            }
-        };
-
-        if publish_kafka && sink_publish_error.is_none() {
-            // `kafka` is `Some` here: the pre-flight check above
-            // returned for the `None` case. Publishes are awaited
-            // sequentially per row — librdkafka's internal queue +
-            // delivery futures handle concurrency under the hood.
-            if let Some(producer) = kafka.as_ref() {
-                let timestamp = chrono::Utc::now().to_rfc3339();
-                if let Err(e) = producer
-                    .publish_row(
-                        &kafka_topic,
-                        &job_uuid.to_string(),
-                        row_index,
-                        &driver,
-                        &timestamp,
-                        json_line.as_bytes(),
-                    )
-                    .await
-                {
-                    warn!(
-                        job_id = %job_uuid,
-                        row_index,
-                        topic = %kafka_topic,
-                        error = %e,
-                        "kafka publish failed; aborting drain",
-                    );
-                    sink_publish_error = Some(("KAFKA_PUBLISH_FAILED".to_owned(), e.to_string()));
-                }
-            }
-        }
-
-        if buffer_s3 && sink_publish_error.is_none() {
-            // Append the row to the in-memory JSONL buffer. The
-            // single PutObject runs after the executor finishes
-            // — see end-of-function block. ADR-0024 §3.
-            s3_buffer.extend_from_slice(json_line.as_bytes());
-            s3_buffer.push(b'\n');
-        }
-
-        if publish_webhook && sink_publish_error.is_none() {
-            if let Some(sess) = webhook_session.as_mut() {
-                if let Err(e) = sess.push_row(json_line.clone()).await {
+        // ADR-0031 §4.2 per-row `engine.assemble_row` span. Cluster D
+        // (tracing-opentelemetry bridge) makes this Send-safe across
+        // the loop body's awaits — the tracing `Instrument` adapter
+        // attaches the span on each poll and detaches on yield, so
+        // no `!Send` `ContextGuard` lives across `.await`. The bridge
+        // wires the tracing span to a real OTel span as a child of
+        // `engine.run_job` (the current OTel context attached by
+        // `run_job_inner`'s outer `with_context` wrapper).
+        let row_span = tracing::info_span!(
+            "engine.assemble_row",
+            job_id = %job_uuid,
+            row_index,
+        );
+        async {
+            if persist_rows {
+                if let Err(e) = db_jobs::record_job_row(&pool, job_uuid, row_index, &value).await {
                     warn!(
                         job_id = %job_uuid,
                         row_index,
                         error = %e,
-                        "webhook publish failed; aborting drain",
+                        "record_job_row failed; continuing without abort",
                     );
-                    sink_publish_error = Some(("WEBHOOK_POST_FAILED".to_owned(), e.to_string()));
                 }
             }
-        }
+            let json_line = match serde_json::to_string(&value) {
+                Ok(line) => line,
+                Err(e) => {
+                    error!(job_id = %job_uuid, error = %e, "row serialisation failed");
+                    return;
+                }
+            };
 
-        // Forward the row to the gRPC stream regardless of sink so
-        // the control plane can mirror it into operator stdout for
-        // `kubectl logs` (ADR-0019 §6). Stops forwarding after the
-        // first sink error so the client sees the failure quickly.
-        if sink_publish_error.is_none() {
-            // `is_err()` (client dropped) is acknowledged but not
-            // acted on: we keep draining so the executor doesn't
-            // block and so remaining rows still persist to
-            // `job_rows`.
-            let _ = response_tx.send(Ok(RunJobResponse {
-                event: Some(run_job_response::Event::Row(Row { json_line })),
-            }));
+            if publish_kafka && sink_publish_error.is_none() {
+                // `kafka` is `Some` here: the pre-flight check above
+                // returned for the `None` case. Publishes are awaited
+                // sequentially per row — librdkafka's internal queue +
+                // delivery futures handle concurrency under the hood.
+                if let Some(producer) = kafka.as_ref() {
+                    let timestamp = chrono::Utc::now().to_rfc3339();
+                    if let Err(e) = producer
+                        .publish_row(
+                            &kafka_topic,
+                            &job_uuid.to_string(),
+                            row_index,
+                            &driver,
+                            &timestamp,
+                            json_line.as_bytes(),
+                        )
+                        .await
+                    {
+                        warn!(
+                            job_id = %job_uuid,
+                            row_index,
+                            topic = %kafka_topic,
+                            error = %e,
+                            "kafka publish failed; aborting drain",
+                        );
+                        sink_publish_error =
+                            Some(("KAFKA_PUBLISH_FAILED".to_owned(), e.to_string()));
+                    }
+                }
+            }
+
+            if buffer_s3 && sink_publish_error.is_none() {
+                // Append the row to the in-memory JSONL buffer. The
+                // single PutObject runs after the executor finishes
+                // — see end-of-function block. ADR-0024 §3.
+                s3_buffer.extend_from_slice(json_line.as_bytes());
+                s3_buffer.push(b'\n');
+            }
+
+            if publish_webhook && sink_publish_error.is_none() {
+                if let Some(sess) = webhook_session.as_mut() {
+                    if let Err(e) = sess.push_row(json_line.clone()).await {
+                        warn!(
+                            job_id = %job_uuid,
+                            row_index,
+                            error = %e,
+                            "webhook publish failed; aborting drain",
+                        );
+                        sink_publish_error =
+                            Some(("WEBHOOK_POST_FAILED".to_owned(), e.to_string()));
+                    }
+                }
+            }
+
+            // Forward the row to the gRPC stream regardless of sink
+            // so the control plane can mirror it into operator stdout
+            // for `kubectl logs` (ADR-0019 §6). Stops forwarding
+            // after the first sink error so the client sees the
+            // failure quickly.
+            if sink_publish_error.is_none() {
+                // `is_err()` (client dropped) is acknowledged but
+                // not acted on: we keep draining so the executor
+                // doesn't block and so remaining rows still persist
+                // to `job_rows`.
+                let _ = response_tx.send(Ok(RunJobResponse {
+                    event: Some(run_job_response::Event::Row(Row { json_line })),
+                }));
+                // `spectre_engine_rows_emitted_total{sink}` (ADR-0031
+                // §5.1): one increment per row reaching the gRPC
+                // stream. Tied to `is_none()` because a sink error
+                // short-circuits forwarding — rows after that point
+                // are not "emitted".
+                metrics
+                    .rows_emitted_total
+                    .add(1, &[KeyValue::new("sink", output_sink_kind.clone())]);
+            }
         }
+        .instrument(row_span)
+        .await;
         row_index = row_index.saturating_add(1);
     }
 
@@ -585,6 +725,20 @@ async fn stream_run_job(args: StreamRunJobArgs) {
         outcome
     };
 
+    // `spectre_engine_jobs_completed_total{result}` (ADR-0031 §5.1):
+    // record the terminal result label *before* dispatching the gRPC
+    // event so the gauge balance survives even when the response_tx
+    // send fails (client closed the stream).
+    let result_label = if final_outcome.is_ok() {
+        "success"
+    } else {
+        "failure"
+    };
+    metrics
+        .jobs_completed_total
+        .add(1, &[KeyValue::new("result", result_label)]);
+    metrics.jobs_active.add(-1, &[]);
+
     let event = build_terminal_event(&pool, job_uuid, final_outcome).await;
 
     if response_tx
@@ -671,8 +825,14 @@ async fn build_terminal_event(
 /// terminal Failed event with the supplied code + message. Used
 /// for the kafka admission shortcuts that fail before the executor
 /// runs.
+///
+/// Records the matching `spectre_engine_jobs_active` decrement and
+/// `spectre_engine_jobs_completed_total{result="failure"}` increment
+/// per ADR-0031 §5.1 — every early-return path that bypassed the
+/// main outcome handler still balances the gauge.
 async fn terminate_with_failure(
     pool: &sqlx::PgPool,
+    metrics: &EngineMetrics,
     job_uuid: Uuid,
     code: &str,
     message: &str,
@@ -697,6 +857,10 @@ async fn terminate_with_failure(
             error_message: message.to_owned(),
         })),
     }));
+    metrics.jobs_active.add(-1, &[]);
+    metrics
+        .jobs_completed_total
+        .add(1, &[KeyValue::new("result", "failure")]);
 }
 
 /// Output sink that forwards each row as a `serde_json::Value` on an

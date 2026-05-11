@@ -32,12 +32,15 @@ use spectre_engine::kafka::KafkaProducer;
 use spectre_engine::registry::AdapterRegistry;
 use spectre_engine::s3::{S3Error, S3Uploader};
 use spectre_engine::server::engine_server;
+use spectre_engine::telemetry::{Telemetry, TelemetryConfig, logs};
 use spectre_engine::webhook::WebhookClient;
 use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
 
 const DEFAULT_PORT: u16 = 8090;
 const PORT_ENV: &str = "SPECTRE_ENGINE_PORT";
@@ -60,6 +63,18 @@ async fn run() -> Result<()> {
     let addr: SocketAddr = format!("0.0.0.0:{port}")
         .parse()
         .with_context(|| format!("invalid bind address for port {port}"))?;
+
+    // Observability foundation lands before any external dial so
+    // failed Postgres / Kafka / S3 attempts surface in the metric
+    // and trace streams from the first attempt. ADR-0031 §3.3 makes
+    // the `/metrics` sidecar mandatory — a bind failure on port 9090
+    // (default `SPECTRE_METRICS_PORT`) is a startup error with no
+    // degraded mode.
+    let telemetry_config =
+        TelemetryConfig::from_env(ENGINE_VERSION).context("telemetry: invalid configuration")?;
+    let telemetry = Telemetry::init(telemetry_config)
+        .await
+        .context("telemetry: init failed")?;
 
     // Postgres dial + migrations run before the gRPC service is
     // registered. ADR-0023 §6 + §13: an unreachable database, a
@@ -142,7 +157,14 @@ async fn run() -> Result<()> {
     log_registry(&registry);
 
     let engine = Engine::with_registry(registry);
-    let svc = engine_server(engine, db, kafka, s3, webhook);
+    let svc = engine_server(
+        engine,
+        db,
+        kafka,
+        s3,
+        webhook,
+        Arc::clone(&telemetry.metrics),
+    );
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter
@@ -159,13 +181,20 @@ async fn run() -> Result<()> {
         "spectre engine listening"
     );
 
-    Server::builder()
+    let serve_result = Server::builder()
         .add_service(svc)
         .add_service(health_service)
         .serve_with_shutdown(addr, shutdown_signal())
         .await
-        .context("gRPC server terminated")?;
+        .context("gRPC server terminated");
 
+    // Flush + shutdown telemetry providers before the binary exits so
+    // any buffered traces / metric exports drain. The sidecar abort
+    // closes `/metrics` immediately; tracer / meter shutdown is
+    // best-effort (a SIGKILL still drops in-flight spans).
+    telemetry.shutdown().await;
+
+    serve_result?;
     info!("spectre engine shut down");
     Ok(())
 }
@@ -215,12 +244,37 @@ async fn shutdown_signal() {
 }
 
 fn init_tracing() {
+    // ADR-0031 §3.4: structured JSON lines on stdout with the eleven
+    // mandatory fields. Three layers compose into the global
+    // subscriber:
+    //
+    // - `EnvFilter` — honours `RUST_LOG` for level filtering, with a
+    //   project default that promotes the engine + adapter crates to
+    //   INFO while keeping noisy dependencies (hyper, tonic, sqlx
+    //   query traces) at WARN.
+    // - `logs::build_layer` — the JSON formatter writing one line
+    //   per event to stdout. Reads `opentelemetry::Context::current()`
+    //   for `trace_id` / `span_id` so events inside any of the
+    //   engine's spans (OTel-direct from Cluster B, or `tracing::
+    //   info_span!` via the bridge below) carry the correct ids.
+    // - `tracing_opentelemetry::layer()` — bridges `tracing` spans to
+    //   the global OTel tracer so a `tracing::info_span!` becomes
+    //   an OTel span child of `Context::current().span()`. The
+    //   bridge resolves the tracer lazily via the global slot —
+    //   pre-`Telemetry::init` spans bridge to a noop tracer, post-
+    //   init spans bridge to the real provider. `init_tracing()`
+    //   runs before `Telemetry::init` so the early INFO emissions
+    //   from telemetry startup itself produce JSON lines too.
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("spectre_engine=info,spectre=info"));
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(filter)
-        .with_target(false)
-        .compact()
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(logs::build_layer(SERVICE_NAME, ENGINE_VERSION))
+        .with(tracing_opentelemetry::layer())
         .try_init();
 }
+
+/// `service.name` resource attribute used both in `OTel` resources
+/// (Cluster A) and the JSON `service` field (Cluster D). Sourced
+/// in one place so the value cannot drift.
+const SERVICE_NAME: &str = "spectre-engine";

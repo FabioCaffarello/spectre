@@ -1,0 +1,51 @@
+{{- /*
+ServiceMonitor (Prometheus Operator CRD) — ADR-0031 §3.3 +
+W3.1 Cluster F.
+
+Renders only when `observability.serviceMonitor.enabled: true`.
+Requires `monitoring.coreos.com/v1` CRDs in the cluster
+(`kubectl get crd servicemonitors.monitoring.coreos.com`); the
+chart does NOT install the prometheus-operator subchart — that
+choice is deployment-side per ADR-0031 §11.
+
+Selects the engine + control-plane Services by their
+`app.kubernetes.io/component` label, scraping the `metrics`
+named port that points at `observability.metricsPort` in both
+service templates. The shared port name keeps the selector
+stable even if the value changes.
+*/ -}}
+{{- if .Values.observability.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "spectre.fullname" . }}
+  labels:
+    {{- include "spectre.labels" . | nindent 4 }}
+    {{- with .Values.observability.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - {{ default .Chart.Name .Values.nameOverride }}
+      - key: app.kubernetes.io/instance
+        operator: In
+        values:
+          - {{ .Release.Name }}
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - engine
+          - control-plane
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.observability.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.observability.serviceMonitor.scrapeTimeout }}
+{{- end }}

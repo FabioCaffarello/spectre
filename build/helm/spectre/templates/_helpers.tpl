@@ -169,3 +169,31 @@ externally-managed instance.
   value: {{ .Values.minio.defaultBuckets | quote }}
 {{- end }}
 {{- end }}
+
+{{/*
+spectre.observabilityEnv — ADR-0031 §4.1 + §3.4 env vars injected
+into every Spectre-image container (engine + operator + adapters).
+
+  OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP/gRPC target; empty/unset
+                                 yields a no-op tracer per
+                                 ADR-0031 §2.2 Cluster A pattern.
+  SPECTRE_METRICS_PORT         — uniform sidecar bind (ADR-0031
+                                 §3.3). The engine reads it
+                                 directly; the operator's
+                                 controller-runtime metrics
+                                 server reads it via the
+                                 `--metrics-bind-address` flag
+                                 the chart sets in the operator
+                                 container's args.
+
+The Bitnami subcharts have their own observability surface and
+do NOT consume these envs.
+*/}}
+{{- define "spectre.observabilityEnv" -}}
+{{- with .Values.observability.otlpEndpoint }}
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: {{ . | quote }}
+{{- end }}
+- name: SPECTRE_METRICS_PORT
+  value: {{ .Values.observability.metricsPort | quote }}
+{{- end }}

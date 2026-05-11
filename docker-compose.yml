@@ -308,9 +308,17 @@ services:
       SPECTRE_S3_ACCESS_KEY_ID: "spectre_dev_access"
       SPECTRE_S3_SECRET_ACCESS_KEY: "spectre_dev_secret_key"
       SPECTRE_S3_REGION: "us-east-1"
+      # W3.1 Cluster A + G: the `/metrics` sidecar binds `:9090` per
+      # ADR-0031 §3.3. `OTEL_EXPORTER_OTLP_ENDPOINT` is empty by
+      # default so dev runs do not need a collector; set
+      # `OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317`
+      # (or a sibling Compose service) to enable trace export.
+      SPECTRE_METRICS_PORT: "9090"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
       RUST_LOG: "${RUST_LOG:-info,spectre_engine=debug}"
     ports:
       - "8090:8090"
+      - "9090:9090"
     profiles: ["core", "app", "full"]
 
   # Playwright adapter — TypeScript/Node, Chromium runtime.
@@ -422,10 +430,12 @@ services:
   # `docker compose logs control-plane`. Uncomment a `- "8081:8081"`
   # mapping if needed.
   #
-  # `--metrics-bind-address=0` disables the metrics server (the
-  # kubebuilder default-disable; v1alpha1 adds no Prometheus stack).
-  # `--leader-elect=false` is the dev-default; R7.1's Helm chart
-  # turns it on for production via values.
+  # W3.1 Cluster E + G: the operator's metrics server binds
+  # `:9091` HTTP plain (no auth — deferred to W3.3 mTLS). The
+  # container reuses port 9090 inside the network; the host port
+  # is 9091 to avoid colliding with the engine's `9090:9090` host
+  # mapping above. `--leader-elect=false` is the dev-default;
+  # R7.1's Helm chart turns it on for production via values.
   control-plane:
     image: spectre-control-plane:dev
     container_name: spectre-control-plane
@@ -443,13 +453,17 @@ services:
       SPECTRE_ENGINE_ENDPOINT: "engine:8090"
       SPECTRE_POSTGRES_URL: "postgres://spectre:spectre_dev_password@postgres:5432/spectre"
       KUBECONFIG: "/home/nonroot/.kube/config"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
     volumes:
       - ./build/kind/kubeconfig:/home/nonroot/.kube/config:ro
     command:
       - "--engine-endpoint=engine:8090"
       - "--health-probe-bind-address=:8081"
-      - "--metrics-bind-address=0"
+      - "--metrics-bind-address=:9090"
+      - "--metrics-secure=false"
       - "--leader-elect=false"
+    ports:
+      - "9091:9090"
     profiles: ["app", "full"]
 
 # `default` is Compose's auto-named network — every other service

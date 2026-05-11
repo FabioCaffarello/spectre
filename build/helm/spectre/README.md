@@ -169,6 +169,62 @@ install time. The most-touched keys:
 | `<service>.resources` | Pod resource requests/limits |
 | `<service>.image.tag` | Override image tag (falls back to `.Chart.AppVersion`) |
 | `postgresql.enabled` / `redis.enabled` / `kafka.enabled` / `minio.enabled` | Toggle Bitnami subcharts on/off |
+| `observability.otlpEndpoint` | OTLP/gRPC trace endpoint (empty → no-op tracer) |
+| `observability.metricsPort` | Uniform `:9090` Prometheus port (ADR-0031 §3.3) |
+| `observability.serviceMonitor.enabled` | Render a Prometheus Operator ServiceMonitor |
+| `opentelemetry-collector.enabled` | Install the optional collector subchart |
+
+---
+
+## Observability
+
+The chart wires ADR-0031's observability surface for engine +
+control-plane (W3.1 Cluster F). Adapters extend the same surface
+in W3.2.
+
+**Default (no collector, no ServiceMonitor):**
+
+```bash
+helm install spectre build/helm/spectre/
+# /metrics on port 9090 on both engine + control-plane Services;
+# `kubectl port-forward svc/spectre-engine 9090:9090` then
+# `curl localhost:9090/metrics`. No OTLP push.
+```
+
+**With a co-installed collector:**
+
+```bash
+helm install spectre build/helm/spectre/ \
+  --set opentelemetry-collector.enabled=true \
+  --set observability.otlpEndpoint=spectre-opentelemetry-collector:4317
+```
+
+The subchart's full upstream value surface is reachable under
+the `opentelemetry-collector:` block — see [the upstream
+chart](https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-collector)
+for the documented overrides.
+
+**With Prometheus Operator scrape:**
+
+```bash
+# Requires monitoring.coreos.com/v1 in the cluster
+kubectl get crd servicemonitors.monitoring.coreos.com
+helm install spectre build/helm/spectre/ \
+  --set observability.serviceMonitor.enabled=true \
+  --set observability.serviceMonitor.additionalLabels.release=kube-prometheus-stack
+```
+
+The rendered ServiceMonitor selects engine + control-plane
+Services by their `app.kubernetes.io/component` label and
+scrapes the `metrics` named port — `observability.metricsPort`
+can shift without breaking the selector.
+
+For the metric / trace / log shape engine + operator emit see
+[`docs/architecture/observability.md`](../../../docs/architecture/observability.md);
+ADRs are
+[ADR-0031](../../../docs/adr/0031-observability-framework.md)
+(framework) and [ADR-0032](../../../docs/adr/0032-service-to-service-mtls.md)
+(transport security, W3.3).
 
 ---
 

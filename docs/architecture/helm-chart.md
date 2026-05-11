@@ -310,7 +310,24 @@ What v1alpha2 adds at the subchart layer:
   ADR-0032) materialises in Wave 3.
 - **OpenTelemetry collector subchart reference** —
   optional; deployments without an existing collector wire
-  one in. Lands in Wave 3 per ADR-0031 §2.2.
+  one in. **Landed W3.1** as `opentelemetry-collector`
+  0.111.0 (https://open-telemetry.github.io/opentelemetry-helm-charts)
+  gated on `opentelemetry-collector.enabled` (default
+  `false`) per ADR-0031 §2.2.
+
+**W3.1 (2026-05-11) observability landing** — the chart's
+existing engine + control-plane templates gain a uniform
+metrics port (`observability.metricsPort`, default `9090`)
+per ADR-0031 §3.3, the new `spectre.observabilityEnv`
+helper template injects `OTEL_EXPORTER_OTLP_ENDPOINT` +
+`SPECTRE_METRICS_PORT` into both deployments, the operator's
+args flip to `--metrics-bind-address=:9090 --metrics-secure=false`
+(transport security defers to W3.3 mTLS), and a new
+`templates/servicemonitor.yaml` renders a Prometheus
+Operator `ServiceMonitor` when
+`observability.serviceMonitor.enabled: true`. See the
+chart's README "Observability" section for the three
+install modes.
 
 The CRD lifecycle per §8 + ADR-0030 §8 extends to
 ScrapeBatch (added in Wave 6 per ADR-0033). The R8.1 CRD

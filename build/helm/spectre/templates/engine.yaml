@@ -51,11 +51,15 @@ spec:
             - name: grpc
               containerPort: {{ .Values.engine.service.port }}
               protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.observability.metricsPort }}
+              protocol: TCP
           env:
             - name: SPECTRE_ENGINE_PORT
               value: {{ .Values.engine.service.port | quote }}
             {{- include "spectre.commonEnv" . | nindent 12 }}
             {{- include "spectre.adapterEndpoints" . | nindent 12 }}
+            {{- include "spectre.observabilityEnv" . | nindent 12 }}
             {{- with .Values.engine.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -80,6 +84,16 @@ spec:
       targetPort: grpc
       protocol: TCP
       name: grpc
+    # ADR-0031 §3.3: uniform `:9090` metrics port across the
+    # catalog. The ServiceMonitor template (gated on
+    # `observability.serviceMonitor.enabled`) targets this port
+    # by name; manual scrape configurations should do the same so
+    # the port number can change in one place via
+    # `observability.metricsPort`.
+    - port: {{ .Values.observability.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
   selector:
     {{- include "spectre.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: engine

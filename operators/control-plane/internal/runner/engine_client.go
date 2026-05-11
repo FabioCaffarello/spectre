@@ -23,8 +23,11 @@ import (
 	"io"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	enginev1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/engine/v1alpha1"
 )
@@ -58,6 +61,26 @@ type EngineClientRunner struct {
 
 // Compile-time assertion that the runner satisfies JobRunner.
 var _ JobRunner = (*EngineClientRunner)(nil)
+
+// DialError is the typed error returned when the gRPC channel to
+// the engine cannot be established. The reconciler uses
+// `errors.As(err, &runner.DialError{})` to distinguish dial-level
+// failures (network unreachable, deadline, engine pod not yet
+// serving) from stream-level / engine-reported failures so the
+// `spectre_operator_engine_dial_failures_total` counter (ADR-0031
+// §5.2) is scoped to true transport failures.
+type DialError struct {
+	Endpoint string
+	Cause    error
+}
+
+// Error implements `error`.
+func (e *DialError) Error() string {
+	return fmt.Sprintf("engine client runner: dial %s: %v", e.Endpoint, e.Cause)
+}
+
+// Unwrap exposes the underlying gRPC dial error.
+func (e *DialError) Unwrap() error { return e.Cause }
 
 // Run implements JobRunner. It dials the engine, opens a RunJob
 // stream, copies every Row event into writer, and returns either the
@@ -101,7 +124,7 @@ func (r *EngineClientRunner) Run(
 
 	conn, err := dial(ctx, r.EngineEndpoint)
 	if err != nil {
-		return 0, fmt.Errorf("engine client runner: dial %s: %w", r.EngineEndpoint, err)
+		return 0, &DialError{Endpoint: r.EngineEndpoint, Cause: err}
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -133,6 +156,23 @@ func (r *EngineClientRunner) Run(
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return rows, ctxErr
 			}
+			// W3.1 Cluster G follow-up: with `otelgrpc.NewClientHandler`
+			// in the dial options the gRPC stream surfaces context
+			// cancellation as a status-coded recv error before
+			// `ctx.Err()` propagates locally (the stats handler
+			// observes the RST_STREAM ahead of the outer context's
+			// own Done channel). Map the canonical status codes back
+			// to their `context` sentinels so the reconciler's
+			// `errors.Is(err, context.DeadlineExceeded)` /
+			// `errors.Is(err, context.Canceled)` checks remain stable.
+			if s, ok := status.FromError(recvErr); ok {
+				switch s.Code() {
+				case codes.DeadlineExceeded:
+					return rows, context.DeadlineExceeded
+				case codes.Canceled:
+					return rows, context.Canceled
+				}
+			}
 			return rows, fmt.Errorf("engine client runner: recv: %w", recvErr)
 		}
 
@@ -159,8 +199,15 @@ func (r *EngineClientRunner) Run(
 // ADR-0022 §6 — TLS / mTLS is deferred to v1alpha2; in v1alpha1 the
 // operator-engine traffic runs on a private network namespace
 // (Compose / Kubernetes Pod network) where plain-text is acceptable.
+//
+// W3.1 Cluster E adds the OpenTelemetry gRPC stats handler so the
+// outgoing RunJob RPC carries the active span's `traceparent`
+// metadata per ADR-0031 §4.1. The handler also emits client-side
+// spans wrapping each RPC — the engine receives both a propagated
+// trace context AND a parent span name set by `otelgrpc`.
 func defaultDial(ctx context.Context, endpoint string) (*grpc.ClientConn, error) {
 	return grpc.NewClient(endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	)
 }

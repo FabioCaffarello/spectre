@@ -202,6 +202,34 @@ the same result. They have **internal timeouts** so a
 hanging consumer or unresponsive pod doesn't burn the job's
 30-min ceiling.
 
+### verify-observability.sh
+
+Added in W3.1 (2026-05-11). Asserts the engine + operator
+observability surface lands per ADR-0031 §3 / §5:
+
+- `kubectl exec` against the engine pod + `curl localhost:9090
+  /metrics` returns 200 and the response includes the
+  `spectre_engine_jobs_active`, `spectre_engine_jobs_completed_total`,
+  and `spectre_engine_rows_emitted_total` series (the three
+  guaranteed-to-have-samples instruments after the preceding
+  steps complete three ScrapeJobs).
+- Same against the control-plane pod for
+  `spectre_operator_scrapejobs_total` (W3.1 §5.2 custom) and
+  `controller_runtime_reconcile_total` (controller-runtime
+  default — surfaces alongside the spectre custom on the same
+  endpoint, confirming the metrics server's port flip).
+- `kubectl logs` the engine pod and assert at least one JSON
+  line carries a non-empty `trace_id` (32-hex). That line is
+  the `engine.assemble_row` event emitted per row by the
+  drainer loop under W3.1 Cluster D's `tracing-opentelemetry`
+  bridge.
+
+Asserts: §5.1 / §5.2 metric names present, trace_id field
+populated in at least one log event.
+Does NOT assert: exact scrape values (workload-dependent), span
+tree shape (no trace-backend assertion), tenant_id population
+(always `null` in v1alpha1).
+
 ## §7 — Debugging failures
 
 Common failure modes and their diagnosis:
