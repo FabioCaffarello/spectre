@@ -47,6 +47,7 @@ spec:
       {{- end }}
       securityContext:
         runAsNonRoot: true
+      {{- include "spectre.tlsVolumes" (dict "slot" "control-plane" "context" .) | nindent 6 }}
       containers:
         - name: manager
           image: {{ include "spectre.image" (dict "service" .Values.controlPlane "context" .) }}
@@ -72,9 +73,11 @@ spec:
           env:
             {{- include "spectre.commonEnv" . | nindent 12 }}
             {{- include "spectre.observabilityEnv" . | nindent 12 }}
+            {{- include "spectre.tlsEnv" . | nindent 12 }}
             {{- with .Values.controlPlane.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- include "spectre.tlsVolumeMounts" . | nindent 10 }}
           readinessProbe:
             {{- toYaml .Values.controlPlane.probes.readiness | nindent 12 }}
           livenessProbe:

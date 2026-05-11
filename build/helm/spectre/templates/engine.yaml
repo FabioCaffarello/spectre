@@ -43,6 +43,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- include "spectre.tlsVolumes" (dict "slot" "engine" "context" .) | nindent 6 }}
       containers:
         - name: engine
           image: {{ include "spectre.image" (dict "service" .Values.engine "context" .) }}
@@ -60,9 +61,11 @@ spec:
             {{- include "spectre.commonEnv" . | nindent 12 }}
             {{- include "spectre.adapterEndpoints" . | nindent 12 }}
             {{- include "spectre.observabilityEnv" . | nindent 12 }}
+            {{- include "spectre.tlsEnv" . | nindent 12 }}
             {{- with .Values.engine.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- include "spectre.tlsVolumeMounts" . | nindent 10 }}
           readinessProbe:
             {{- toYaml .Values.engine.probes.readiness | nindent 12 }}
           livenessProbe:

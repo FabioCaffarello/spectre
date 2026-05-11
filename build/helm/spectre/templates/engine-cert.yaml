@@ -1,0 +1,3 @@
+{{- if .Values.engine.enabled }}
+{{ include "spectre.certificate" (dict "slot" "engine" "context" .) }}
+{{- end }}

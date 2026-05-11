@@ -398,6 +398,43 @@ observability:
     additionalLabels: {}
 
 # ---------------------------------------------------------------
+# mTLS — ADR-0032 service-to-service auth
+# (see docs/architecture/authentication.md, docs/adr/0032-service-to-service-mtls.md)
+# ---------------------------------------------------------------
+
+# W3.3 first auth PR landed the operator ↔ engine mTLS wiring;
+# Wave 3 second auth PR (W3.4) extends to engine ↔ adapters; Wave 5+
+# infra-services inherit the canonical shape ADR-0036 §5.5 commits.
+#
+# Default `enabled: false` keeps v1alpha1's plaintext posture per
+# ADR-0032 §2.4 — deployments without cert-manager installed
+# continue to work unchanged. Operators with cert-manager present
+# flip the flag on; the `_helpers.tpl::spectre.certificate`
+# template renders per-service `Certificate` resources, services
+# mount the issued Secrets at `/etc/spectre/tls/`, and the engine +
+# operator switch their gRPC transport to mTLS.
+#
+# Helm cannot dot-traverse keys with hyphens — `.Values.cert-manager`
+# parses as subtraction in Go templates. The chart uses camelCase
+# `certManager` here while ADR-0032 §2.4 prose nominally describes
+# the value tree as `cert-manager` (illustrative, not a constraint).
+certManager:
+  enabled: false
+
+  # cert-manager Issuer reference. The chart does not bundle an
+  # Issuer (per ADR-0032 §3.1 — deployment-side choice). Wire to a
+  # ClusterIssuer (or namespaced Issuer with `kind: Issuer`) that
+  # cert-manager resolves. Common defaults by environment:
+  #   - dev / CI:        kind: ClusterIssuer, name: spectre-selfsigned
+  #   - single-cluster:  kind: ClusterIssuer, name: spectre-internal-ca
+  #   - multi-cluster:   kind: ClusterIssuer, name: vault-ca
+  # build/helm/test/cluster-issuer-ci.yaml ships a SelfSigned
+  # ClusterIssuer for the mtls-smoke workflow.
+  issuerRef:
+    name: spectre-selfsigned
+    kind: ClusterIssuer
+
+# ---------------------------------------------------------------
 # OpenTelemetry Collector subchart (optional)
 # ---------------------------------------------------------------
 
