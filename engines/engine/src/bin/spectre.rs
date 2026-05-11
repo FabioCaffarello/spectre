@@ -32,6 +32,7 @@ use spectre_engine::kafka::KafkaProducer;
 use spectre_engine::registry::AdapterRegistry;
 use spectre_engine::s3::{S3Error, S3Uploader};
 use spectre_engine::server::engine_server;
+use spectre_engine::telemetry::{Telemetry, TelemetryConfig};
 use spectre_engine::webhook::WebhookClient;
 use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
 use tonic::transport::Server;
@@ -60,6 +61,18 @@ async fn run() -> Result<()> {
     let addr: SocketAddr = format!("0.0.0.0:{port}")
         .parse()
         .with_context(|| format!("invalid bind address for port {port}"))?;
+
+    // Observability foundation lands before any external dial so
+    // failed Postgres / Kafka / S3 attempts surface in the metric
+    // and trace streams from the first attempt. ADR-0031 §3.3 makes
+    // the `/metrics` sidecar mandatory — a bind failure on port 9090
+    // (default `SPECTRE_METRICS_PORT`) is a startup error with no
+    // degraded mode.
+    let telemetry_config =
+        TelemetryConfig::from_env(ENGINE_VERSION).context("telemetry: invalid configuration")?;
+    let telemetry = Telemetry::init(telemetry_config)
+        .await
+        .context("telemetry: init failed")?;
 
     // Postgres dial + migrations run before the gRPC service is
     // registered. ADR-0023 §6 + §13: an unreachable database, a
@@ -159,13 +172,20 @@ async fn run() -> Result<()> {
         "spectre engine listening"
     );
 
-    Server::builder()
+    let serve_result = Server::builder()
         .add_service(svc)
         .add_service(health_service)
         .serve_with_shutdown(addr, shutdown_signal())
         .await
-        .context("gRPC server terminated")?;
+        .context("gRPC server terminated");
 
+    // Flush + shutdown telemetry providers before the binary exits so
+    // any buffered traces / metric exports drain. The sidecar abort
+    // closes `/metrics` immediately; tracer / meter shutdown is
+    // best-effort (a SIGKILL still drops in-flight spans).
+    telemetry.shutdown().await;
+
+    serve_result?;
     info!("spectre engine shut down");
     Ok(())
 }
