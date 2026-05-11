@@ -58,6 +58,36 @@
       "properties": {
         "enabled": { "type": "boolean" }
       }
+    },
+    "observability": {
+      "type": "object",
+      "required": ["otlpEndpoint", "metricsPort", "serviceMonitor"],
+      "additionalProperties": false,
+      "properties": {
+        "otlpEndpoint": { "type": "string" },
+        "metricsPort":  { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "serviceMonitor": {
+          "type": "object",
+          "required": ["enabled"],
+          "additionalProperties": false,
+          "properties": {
+            "enabled":          { "type": "boolean" },
+            "interval":         { "type": "string" },
+            "scrapeTimeout":    { "type": "string" },
+            "additionalLabels": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "opentelemetry-collector": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
     }
   },
   "definitions": {

@@ -356,3 +356,92 @@ minio:
   defaultBuckets: spectre-outputs
   persistence:
     size: 10Gi
+
+# ---------------------------------------------------------------
+# Observability — ADR-0031 commitments
+# (see docs/architecture/observability.md, docs/adr/0031-observability-framework.md)
+# ---------------------------------------------------------------
+
+# W3.1 Cluster F landed: the engine sidecar + operator metrics
+# server both bind `:9090` per ADR-0031 §3.3. `otlpEndpoint` opts
+# in to OTLP/gRPC trace push (Cluster A pattern: empty → no-op
+# tracer; spans still get valid IDs and propagate downstream via
+# W3C `traceparent`). `serviceMonitor.enabled` renders a
+# Prometheus Operator ServiceMonitor selecting the engine +
+# control-plane Services on the shared metrics port — requires
+# the `monitoring.coreos.com/v1` CRDs already in the cluster.
+observability:
+  # OTLP/gRPC trace endpoint (host:port or http://host:port).
+  # Empty → no-op tracer; engine + operator still emit spans
+  # with valid IDs that propagate via traceparent, but they are
+  # not exported. Set to the in-cluster collector when the
+  # `opentelemetry-collector` subchart is enabled — e.g.
+  # `"<release>-opentelemetry-collector.<namespace>.svc.cluster.local:4317"`.
+  otlpEndpoint: ""
+
+  # Sidecar / controller-runtime metrics port. The engine binary
+  # honours `SPECTRE_METRICS_PORT`; the operator honours
+  # `--metrics-bind-address=:<port>`. Both default to 9090 per
+  # ADR-0031 §3.3 (uniform across the catalog).
+  metricsPort: 9090
+
+  # ServiceMonitor (Prometheus Operator CRD) renders when
+  # `enabled: true`. Requires `monitoring.coreos.com/v1` in the
+  # cluster — `kubectl get crds | grep servicemonitors` to verify.
+  # Falls back to manual scrape configuration if disabled.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # Additional labels merged onto the ServiceMonitor for
+    # `prometheus-operator`'s `serviceMonitorSelector` matching.
+    additionalLabels: {}
+
+# ---------------------------------------------------------------
+# OpenTelemetry Collector subchart (optional)
+# ---------------------------------------------------------------
+
+# Renders only when `enabled: true`. Deployments that already
+# run a collector keep this `false` and point
+# `observability.otlpEndpoint` at the existing collector. The
+# subchart's full upstream value surface is reachable here — see
+# https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-collector
+# for the documented overrides.
+opentelemetry-collector:
+  enabled: false
+  # Deployment mode (alternatives: `daemonset`, `statefulset`).
+  # `deployment` matches the contrib chart default for the
+  # gateway-style aggregating collector W3.1 expects.
+  mode: deployment
+  # Use the upstream `otelcol-contrib` image which bundles the
+  # extra processors (resourcedetection, attributes) most real
+  # deployments end up needing. The base `otelcol` image works too
+  # — override via `.image.repository` to switch.
+  image:
+    repository: otel/opentelemetry-collector-contrib
+  # Minimal default pipeline: receive OTLP, batch, log to stdout.
+  # Replace with the deployment's actual exporter (Tempo, Jaeger,
+  # Prometheus remote-write, ...) per ADR-0031 §2.2.
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+    exporters:
+      debug:
+        verbosity: basic
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]

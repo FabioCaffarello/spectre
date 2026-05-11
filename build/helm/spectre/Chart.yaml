@@ -34,6 +34,18 @@ dependencies:
     version: 14.7.0
     repository: https://charts.bitnami.com/bitnami
     condition: minio.enabled
+  # OpenTelemetry Collector subchart (W3.1 Cluster F per ADR-0031
+  # §2.2). Optional — `opentelemetry-collector.enabled: false` by
+  # default. Deployments that already run a collector wire the
+  # endpoint via `observability.otlpEndpoint`; deployments without
+  # one flip this conditional on and the collector lands as part
+  # of the release. Pinning follows ADR-0030 §4 (bumps require an
+  # amendment); the chart's upstream tracks the contrib collector
+  # release line.
+  - name: opentelemetry-collector
+    version: 0.111.0
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+    condition: opentelemetry-collector.enabled
 
 home: https://github.com/FabioCaffarello/spectre
 sources:

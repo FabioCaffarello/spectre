@@ -52,15 +52,26 @@ spec:
           image: {{ include "spectre.image" (dict "service" .Values.controlPlane "context" .) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: [/manager]
+          # W3.1 Cluster E + F: the operator's metrics server binds
+          # `:9090` HTTP (no auth — defers to W3.3 mTLS per
+          # ADR-0032). The chart sources the port from the shared
+          # `observability.metricsPort` value so engine + operator
+          # cannot drift.
           args:
             - --leader-elect
             - --health-probe-bind-address=:{{ .Values.controlPlane.service.port }}
+            - --metrics-bind-address=:{{ .Values.observability.metricsPort }}
+            - --metrics-secure=false
           ports:
             - name: probe
               containerPort: {{ .Values.controlPlane.service.port }}
               protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.observability.metricsPort }}
+              protocol: TCP
           env:
             {{- include "spectre.commonEnv" . | nindent 12 }}
+            {{- include "spectre.observabilityEnv" . | nindent 12 }}
             {{- with .Values.controlPlane.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -89,6 +100,10 @@ spec:
       targetPort: probe
       protocol: TCP
       name: probe
+    - port: {{ .Values.observability.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
   selector:
     {{- include "spectre.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: control-plane
