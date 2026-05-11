@@ -58,6 +58,12 @@ fn generate_mtls_pki(server_cn: &str) -> (TempDir, ServerPaths, ClientMaterial) 
         "-out",
         ca_key.to_str().unwrap(),
     ]);
+    // The CA cert must be X.509 v3 with `basicConstraints=CA:TRUE`
+    // or rustls/webpki rejects it with `UnsupportedCertVersion`.
+    // `openssl req -x509` without extensions emits v1 on some
+    // toolchains (Ubuntu CI's openssl 3.0 surfaced this where the
+    // macOS 3.6 dev environment did not). `-addext` (openssl
+    // 1.1.1+) injects the extensions so the cert ends up v3.
     run_openssl(&[
         "req",
         "-new",
@@ -70,6 +76,10 @@ fn generate_mtls_pki(server_cn: &str) -> (TempDir, ServerPaths, ClientMaterial) 
         "1",
         "-subj",
         "/CN=spectre-test-ca",
+        "-addext",
+        "basicConstraints=critical,CA:TRUE",
+        "-addext",
+        "keyUsage=critical,keyCertSign,cRLSign",
     ]);
 
     // 2. Server cert with SAN matching server_cn.

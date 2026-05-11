@@ -57,41 +57,35 @@ if ! grep -qE 'tls mode: mutual|"tls_mode":"mutual"' <<<"$ENGINE_LOGS"; then
 fi
 echo "[mtls-handshake] PASS: engine bound with mutual-TLS"
 
-# Step 3 — apply a tiny ScrapeJob that exercises the dial.
-# Reuses the kafka sample (lowest-overhead path in this chart).
-kubectl -n "$NAMESPACE" apply -f - <<EOF
-apiVersion: spectre.io/v1alpha2
-kind: ScrapeJob
-metadata:
-  name: mtls-smoke-handshake
-  namespace: $NAMESPACE
-spec:
-  dsl: |
-    name: mtls-smoke
-    target:
-      driver: curl-impersonate
-      url: "https://example.com/"
-    extract: []
-    output:
-      format: jsonl
-  engineRef:
-    endpoint: "${RELEASE}-engine:8090"
-  outputSink:
-    type: stdout
-EOF
+# Step 3 — apply the kafka.yaml sample which is a valid v1alpha2
+# ScrapeJob (the operator's CRD strict-decodes; an inline YAML
+# with the v1alpha1 field names rejects). Reuses the same fixture
+# production-smoke applies, so the dial path is the production
+# path with mTLS layered on. The job's actual completion is the
+# strong end-to-end signal; failure would surface either as a
+# scrape-side error (independent of mTLS) or a TLS-handshake
+# error (the negative signal step 4 checks).
+SAMPLE_PATH="build/helm/test/samples/kafka.yaml"
+SJ_NAME=$(awk '/^metadata:/{m=1} m && /  name:/{print $2; exit}' "$SAMPLE_PATH")
+if [[ -z "$SJ_NAME" ]]; then
+  echo "[mtls-handshake] FAIL: could not parse ScrapeJob name from $SAMPLE_PATH"
+  exit 1
+fi
+echo "[mtls-handshake] applying $SAMPLE_PATH (ScrapeJob/$SJ_NAME)"
+kubectl -n "$NAMESPACE" apply -f "$SAMPLE_PATH"
 
-echo "[mtls-handshake] applied ScrapeJob; waiting for status transition (timeout 120s)"
+echo "[mtls-handshake] waiting for ScrapeJob/$SJ_NAME terminal phase (timeout 300s)"
 
-# We accept Completed OR Failed because the engineRef and the
-# example.com extract aren't the point — we just want the dial
-# to occur. If TLS rejected the handshake the job would not
-# reach a terminal phase; instead the operator would emit
-# repeated dial errors.
-TIMEOUT=120
+# Completed OR Failed acceptable — the test asserts the operator's
+# RunJob RPC reaches the engine over mTLS, not that the scrape
+# itself returns rows. If the TLS handshake failed, the operator
+# wouldn't reach a terminal phase at all; instead repeated dial
+# errors would surface.
+TIMEOUT=300
 elapsed=0
 phase=""
 while [[ $elapsed -lt $TIMEOUT ]]; do
-  phase=$(kubectl -n "$NAMESPACE" get scrapejob mtls-smoke-handshake \
+  phase=$(kubectl -n "$NAMESPACE" get scrapejob "$SJ_NAME" \
     -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
   if [[ "$phase" == "Completed" || "$phase" == "Failed" ]]; then
     break
@@ -101,11 +95,11 @@ while [[ $elapsed -lt $TIMEOUT ]]; do
 done
 
 if [[ "$phase" != "Completed" && "$phase" != "Failed" ]]; then
-  echo "[mtls-handshake] FAIL: ScrapeJob did not reach terminal phase within ${TIMEOUT}s"
-  kubectl -n "$NAMESPACE" describe scrapejob mtls-smoke-handshake | tail -40
+  echo "[mtls-handshake] FAIL: ScrapeJob/$SJ_NAME did not reach terminal phase within ${TIMEOUT}s"
+  kubectl -n "$NAMESPACE" describe scrapejob "$SJ_NAME" | tail -40
   exit 1
 fi
-echo "[mtls-handshake] PASS: ScrapeJob reached terminal phase ($phase)"
+echo "[mtls-handshake] PASS: ScrapeJob/$SJ_NAME reached terminal phase ($phase)"
 
 # Step 4 — confirm no TLS handshake failures in either log stream.
 POST_OPERATOR=$(kubectl -n "$NAMESPACE" logs \
@@ -125,6 +119,6 @@ if [[ -n "$HANDSHAKE_ERRORS" ]]; then
 fi
 
 # Cleanup
-kubectl -n "$NAMESPACE" delete scrapejob mtls-smoke-handshake --ignore-not-found
+kubectl -n "$NAMESPACE" delete scrapejob "$SJ_NAME" --ignore-not-found
 
 echo "[mtls-handshake] OK: operator → engine mTLS handshake verified"
