@@ -33,12 +33,11 @@ from opentelemetry.instrumentation.grpc import server_interceptor
 from prometheus_client import CollectorRegistry, start_http_server
 from spectre.driver.v1alpha1 import driver_pb2_grpc
 
-from spectre_seleniumbase import PROTOCOL_VERSION, __version__
+from spectre_seleniumbase import PROTOCOL_VERSION, __version__, tls
 from spectre_seleniumbase.logging import configure as configure_logging
 from spectre_seleniumbase.redis_client import RedisClient
 from spectre_seleniumbase.server import DriverServicer, _default_driver_factory
 from spectre_seleniumbase.sessions import SessionManager
-from spectre_seleniumbase import tls
 from spectre_seleniumbase.telemetry import init as init_telemetry
 from spectre_seleniumbase.telemetry import register_metrics
 

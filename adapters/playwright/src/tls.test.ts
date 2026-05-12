@@ -10,7 +10,9 @@ import {
   detectMode,
 } from "./tls.js";
 
-function fakeEnv(env: Record<string, string>): (k: string) => string | undefined {
+function fakeEnv(
+  env: Record<string, string>,
+): (k: string) => string | undefined {
   return (k) => env[k];
 }
 

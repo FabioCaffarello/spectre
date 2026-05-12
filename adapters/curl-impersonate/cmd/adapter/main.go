@@ -229,7 +229,11 @@ func run() error {
 	if serverCreds != nil {
 		grpcOpts = append(grpcOpts, grpc.Creds(serverCreds))
 	}
-	slog.Info("tls ready", "mode", tlsCfg.Mode.String())
+	// Use `tls_mode` not `mode` for consistency with the Python +
+	// TypeScript adapters and with the engine's W3.3 log shape;
+	// `tools/test/verify-mtls-handshake.sh` greps for the
+	// `tls_mode=mutual` token across all four services.
+	slog.Info("tls ready", "tls_mode", tlsCfg.Mode.String())
 	grpcServer := grpc.NewServer(grpcOpts...)
 	driverv1alpha1.RegisterDriverServer(grpcServer, server.New(mgr, curlx.Fetch, variant, metrics))
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from spectre_seleniumbase.tls import (
@@ -16,7 +18,7 @@ from spectre_seleniumbase.tls import (
 )
 
 
-def make_getter(env: dict[str, str]):
+def make_getter(env: dict[str, str]) -> Callable[[str], str | None]:
     return lambda name: env.get(name)
 
 
@@ -59,9 +61,7 @@ def test_detect_mode_partial_raises() -> None:
 
 
 def test_detect_mode_empty_string_treated_as_unset() -> None:
-    cfg = detect_mode(
-        make_getter({CERT_PATH_ENV: "", KEY_PATH_ENV: "", CA_PATH_ENV: ""})
-    )
+    cfg = detect_mode(make_getter({CERT_PATH_ENV: "", KEY_PATH_ENV: "", CA_PATH_ENV: ""}))
     assert cfg.mode is TlsMode.PLAINTEXT
 
 
