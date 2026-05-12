@@ -13,7 +13,7 @@
 use std::path::Path;
 
 use thiserror::Error;
-use tonic::transport::{Certificate, Identity, ServerTlsConfig};
+use tonic::transport::{Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
 
 /// Errors raised while loading TLS material from disk.
 #[derive(Debug, Error)]
@@ -71,6 +71,54 @@ pub fn build_server_tls_config(
     let ca = Certificate::from_pem(&ca_pem);
 
     Ok(ServerTlsConfig::new().identity(identity).client_ca_root(ca))
+}
+
+/// Build a tonic `ClientTlsConfig` for outbound mTLS from PEM
+/// file paths.
+///
+/// The returned config presents the engine's identity to the
+/// peer (`identity` set from cert + key) and verifies the peer's
+/// server certificate against the configured trust bundle
+/// (`ca_certificate` set). ADR-0032 §4.2: engine ↔ adapter mTLS
+/// reuses the same engine cert that W3.3 uses for the
+/// operator → engine path (the engine cert's default cert-manager
+/// `usages` cover both server auth and client auth).
+///
+/// SNI / `domain_name` verification is left at its default — tonic
+/// derives it from the `Endpoint`'s URI host, which the chart
+/// renders to the adapter's K8s Service DNS (matching the
+/// adapter cert's SAN list per `spectre.certificate` helper).
+///
+/// # Errors
+///
+/// Returns `LoadError::Io` when any of the three PEM files cannot
+/// be read. Same surface as `build_server_tls_config` so the
+/// operator can correlate the error with the Secret mount.
+pub fn build_client_tls_config(
+    cert_path: &Path,
+    key_path: &Path,
+    ca_path: &Path,
+) -> Result<ClientTlsConfig, LoadError> {
+    let cert_pem = std::fs::read(cert_path).map_err(|source| LoadError::Io {
+        role: "cert",
+        path: cert_path.display().to_string(),
+        source,
+    })?;
+    let key_pem = std::fs::read(key_path).map_err(|source| LoadError::Io {
+        role: "key",
+        path: key_path.display().to_string(),
+        source,
+    })?;
+    let ca_pem = std::fs::read(ca_path).map_err(|source| LoadError::Io {
+        role: "ca",
+        path: ca_path.display().to_string(),
+        source,
+    })?;
+
+    let identity = Identity::from_pem(&cert_pem, &key_pem);
+    let ca = Certificate::from_pem(&ca_pem);
+
+    Ok(ClientTlsConfig::new().identity(identity).ca_certificate(ca))
 }
 
 /// Install rustls's process-level `CryptoProvider` so subsequent
