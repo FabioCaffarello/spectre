@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Wave 4 v1alpha2 pilot questionnaire (`docs/pilot/v1alpha2-questionnaire.md`).**
+  Per-layer structured questionnaire collecting qualitative
+  feedback from real-deployment users to inform Wave 5+
+  priorities. Nine sections mirror the framework v1alpha2
+  7-layer domain map (acquisition, workflow, observability,
+  data, input, driver abstraction, operational) plus intro
+  + overall-priorities synthesis. Open-ended questions
+  (~40-60 total); respondent picks relevant sections; no
+  attribution by default. Directly informs ADR-0028 §5
+  criterion #2 (two-provider design) for W5.1
+  proxy-broker, W5.1 feature scope, and W5.2+ slot ordering
+  across the ADR-0036 §3 catalog. Doc-only PR per
+  CONTRIBUTING.md v1alpha2 process rigor matrix.
+
 ## [0.1.0-alpha.3] - 2026-05-12
 
 All-mTLS milestone release. After Wave 3 closed (W3.1 engine +
