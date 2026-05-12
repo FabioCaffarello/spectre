@@ -43,6 +43,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- include "spectre.tlsVolumes" (dict "slot" "engine" "context" .) | nindent 6 }}
       containers:
         - name: engine
           image: {{ include "spectre.image" (dict "service" .Values.engine "context" .) }}
@@ -60,13 +61,41 @@ spec:
             {{- include "spectre.commonEnv" . | nindent 12 }}
             {{- include "spectre.adapterEndpoints" . | nindent 12 }}
             {{- include "spectre.observabilityEnv" . | nindent 12 }}
+            {{- include "spectre.tlsEnv" . | nindent 12 }}
             {{- with .Values.engine.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- include "spectre.tlsVolumeMounts" . | nindent 10 }}
+          # W3.3 follow-up: Kubernetes-native `grpc:` probes don't
+          # present a client certificate, so kubelet's probe is
+          # rejected at the TLS handshake when `certManager.enabled:
+          # true` enables `RequireAndVerifyClientCert` semantics on
+          # the engine. The chart falls back to a TCP probe in the
+          # mTLS posture — the engine binds its gRPC listener last
+          # in startup (after postgres / kafka / s3 / webhook /
+          # registry init), so the TCP listener being up is a
+          # reliable proxy for full readiness. The plaintext path
+          # keeps the gRPC health protocol via `engine.probes.*`
+          # defaults. mtls-smoke round 2 surfaced this.
+          {{- if .Values.certManager.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.engine.service.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.engine.service.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+          {{- else }}
           readinessProbe:
             {{- toYaml .Values.engine.probes.readiness | nindent 12 }}
           livenessProbe:
             {{- toYaml .Values.engine.probes.liveness | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.engine.resources | nindent 12 }}
 ---

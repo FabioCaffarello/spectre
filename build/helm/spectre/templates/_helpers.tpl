@@ -197,3 +197,124 @@ do NOT consume these envs.
 - name: SPECTRE_METRICS_PORT
   value: {{ .Values.observability.metricsPort | quote }}
 {{- end }}
+
+{{/*
+spectre.certificate — per-service cert-manager Certificate.
+
+Usage:
+  {{ include "spectre.certificate" (dict "slot" "engine" "context" .) }}
+
+Renders a Certificate per ADR-0032 §3.4 when
+`certManager.enabled: true`; renders nothing when disabled, so
+per-service `<slot>-cert.yaml` templates can include this helper
+unconditionally.
+
+Naming derives from the chart's `spectre.fullname` helper —
+`<fullname>-<slot>-cert` for the Certificate metadata.name and
+secretName — rather than ADR-0032 §3.3's `<release-name>-<slot>-cert`
+prose. The deviation is required because the deployment's K8s
+Service is `<fullname>-<slot>` (e.g. `<release>-spectre-engine`
+when Release.Name does not contain "spectre"); the cert's
+SAN list must match that DNS or peer verification fails. The
+ADR pattern is illustrative; the operational invariant is
+"uniform per-service naming" which both forms satisfy. The
+same Secret name is mounted by `spectre.tlsVolumes` below.
+
+The chart honours camelCase `certManager` rather than the
+hyphenated `cert-manager` ADR-0032 §2.4 nominally describes —
+Helm's Go templates cannot dot-traverse keys with hyphens
+(`.Values.cert-manager.enabled` parses as subtraction). The
+camelCase form keeps the value tree consistent with existing
+`controlPlane`, `playwrightAdapter`, etc.
+*/}}
+{{- define "spectre.certificate" -}}
+{{- if .context.Values.certManager.enabled -}}
+{{- $svc := printf "%s-%s" (include "spectre.fullname" .context) .slot -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $svc }}-cert
+  namespace: {{ .context.Release.Namespace }}
+  labels:
+    {{- include "spectre.labels" .context | nindent 4 }}
+    app.kubernetes.io/component: {{ .slot }}
+spec:
+  secretName: {{ $svc }}-cert
+  issuerRef:
+    {{- toYaml .context.Values.certManager.issuerRef | nindent 4 }}
+  commonName: {{ $svc }}.{{ .context.Release.Namespace }}.svc
+  dnsNames:
+    - {{ $svc }}
+    - {{ $svc }}.{{ .context.Release.Namespace }}
+    - {{ $svc }}.{{ .context.Release.Namespace }}.svc
+    - {{ $svc }}.{{ .context.Release.Namespace }}.svc.cluster.local
+  duration: 2160h  # 90 days — ADR-0032 §2.3
+  renewBefore: 720h  # 30 days before expiry — ADR-0032 §2.3
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+{{- end -}}
+{{- end }}
+
+{{/*
+spectre.tlsEnv — env vars naming the per-Pod mTLS material paths.
+
+Three vars are populated together when `certManager.enabled:
+true`, none when disabled. The Rust + Go TLS detectors (per
+ADR-0032 §4.1 + §5.1) treat all-three-set as MutualTls and
+none-set as Plaintext; any partial state is a fail-fast config
+error.
+
+Paths track the chart's volume mount in `spectre.tlsVolumeMounts`
+(`/etc/spectre/tls`) + cert-manager's Secret key layout
+(`tls.crt`, `tls.key`, `ca.crt`).
+*/}}
+{{- define "spectre.tlsEnv" -}}
+{{- if .Values.certManager.enabled }}
+- name: SPECTRE_TLS_CERT_PATH
+  value: /etc/spectre/tls/tls.crt
+- name: SPECTRE_TLS_KEY_PATH
+  value: /etc/spectre/tls/tls.key
+- name: SPECTRE_TLS_CA_PATH
+  value: /etc/spectre/tls/ca.crt
+{{- end }}
+{{- end }}
+
+{{/*
+spectre.tlsVolumes — pod-level volume binding the per-service
+cert-manager Secret.
+
+Usage:
+  {{ include "spectre.tlsVolumes" (dict "slot" "engine" "context" .) }}
+
+Renders a `volumes:` block (or nothing when disabled). Callers
+include this at the pod spec level; downstream containers reach
+it via `spectre.tlsVolumeMounts`.
+*/}}
+{{- define "spectre.tlsVolumes" -}}
+{{- if .context.Values.certManager.enabled }}
+volumes:
+  - name: tls-certs
+    secret:
+      secretName: {{ include "spectre.fullname" .context }}-{{ .slot }}-cert
+{{- end }}
+{{- end }}
+
+{{/*
+spectre.tlsVolumeMounts — container-level volume mount for the
+TLS material at `/etc/spectre/tls/` (ADR-0032 §4.1).
+
+Read-only by design — the credentials reload loop (Go: 30s
+ReloadingCredentials; Rust: 30s ReloadingCertResolver) re-reads
+the file contents under the same mount when cert-manager rotates
+the Secret in-place.
+*/}}
+{{- define "spectre.tlsVolumeMounts" -}}
+{{- if .Values.certManager.enabled }}
+volumeMounts:
+  - name: tls-certs
+    mountPath: /etc/spectre/tls
+    readOnly: true
+{{- end }}
+{{- end }}

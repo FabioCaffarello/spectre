@@ -1,0 +1,220 @@
+# Operator ↔ engine mTLS smoke gate (W3.3 first auth PR).
+#
+# Installs cert-manager, applies the SelfSigned → CA → CA-Issuer
+# bootstrap from build/helm/test/cluster-issuer-ci.yaml, installs
+# the chart with build/helm/test/values-ci-mtls.yaml
+# (`certManager.enabled: true`), then asserts:
+#
+#   1. The engine + control-plane Pods reach Ready with their
+#      cert-manager-issued Certificates and per-service Secrets.
+#   2. The operator's outbound RunJob RPC reaches the engine
+#      over verified mTLS (`tools/test/verify-mtls-handshake.sh`).
+#   3. A plaintext dial against the engine is rejected
+#      (`tools/test/verify-mtls-rejects-plaintext.sh`).
+#
+# Distinct from production-smoke.yml (sink-arrival assertions over
+# plaintext gRPC, the default `certManager.enabled: false` path).
+# Both gates run so we catch regressions in either posture.
+#
+# Triggers:
+#   - workflow_dispatch:  manual run.
+#   - pull_request:       chart, source, or workflow changes that
+#                         could regress mTLS.
+#   - schedule:           daily 07:00 UTC. Drift detection for
+#                         cert-manager + the chart's bootstrap
+#                         shape (a CRD bump that breaks the
+#                         SelfSigned → CA chain shows up here).
+#
+# Refs: ADR-0032 (mTLS framework), ADR-0030 §9 (production smoke
+# pattern this workflow mirrors), build/helm/test/values-ci-mtls.yaml,
+# build/helm/test/cluster-issuer-ci.yaml.
+
+name: mTLS smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'build/helm/**'
+      - 'engines/engine/**'
+      - 'operators/control-plane/**'
+      - 'proto/**'
+      - 'tools/test/verify-mtls-*.sh'
+      - '.github/workflows/mtls-smoke.yml'
+  schedule:
+    - cron: '0 7 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  mtls-smoke:
+    name: cert-manager + chart + handshake verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Mirrors production-smoke.yml — `environment: ci` resolves
+    # `secrets.DOCKERHUB_TOKEN` + `vars.DOCKERHUB_USERNAME` so the
+    # daemon pulls authenticated and bypasses the Docker Hub
+    # anonymous rate limit.
+    environment: ci
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.13.0'
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: extractions/setup-just@v4
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME || 'fabiocaffarello' }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Generate protocol bindings
+        run: |
+          cd proto && buf generate
+          cd "$GITHUB_WORKSPACE" && bash tools/codegen/post-generate.sh
+
+      # Build the five spectre-* images on the runner. Same shape
+      # as production-smoke; refs match the chart defaults.
+      - name: Build images via bake
+        env:
+          REGISTRY: docker.io/fabiocaffarello
+          TAG: 0.1.0-alpha.2
+          VCS_REF: ${{ github.sha }}
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
+        run: |
+          set -a
+          source build/docker/versions.env
+          set +a
+          docker buildx bake --load
+
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: spectre-w33
+          config: build/kind/cluster.yaml
+
+      - name: Sanity-check kind cluster
+        run: kubectl get nodes -o wide
+
+      - name: Load spectre images into kind
+        run: |
+          for img in engine control-plane curl-impersonate playwright seleniumbase; do
+            kind load docker-image \
+              "docker.io/fabiocaffarello/spectre-${img}:0.1.0-alpha.2" \
+              --name spectre-w33
+          done
+
+      # Pre-pull Bitnami subchart images (same workaround as
+      # production-smoke.yml — the chart still pins
+      # docker.io/bitnami/* paths Bitnami's distribution change
+      # moved to docker.io/bitnamilegacy/*).
+      - name: Pre-pull Bitnami subchart images (via bitnamilegacy) and load into kind
+        run: |
+          BITNAMI_IMAGES=(
+            "postgresql:17.0.0-debian-12-r0"
+            "redis:7.2.5-debian-12-r0"
+            "kafka:3.8.0-debian-12-r0"
+            "minio:2024.8.3-debian-12-r1"
+          )
+          for img in "${BITNAMI_IMAGES[@]}"; do
+            docker pull "docker.io/bitnamilegacy/${img}"
+            docker tag "docker.io/bitnamilegacy/${img}" "docker.io/bitnami/${img}"
+            kind load docker-image "docker.io/bitnami/${img}" --name spectre-w33
+          done
+
+      # cert-manager pinned to the v1.18.x line — current LTS as
+      # of 2026-05. Major bumps require a manual smoke; minor bumps
+      # are picked up via the scheduled cron. The all-in-one
+      # manifest installs the controller, the webhook, and the
+      # CRDs in one apply.
+      - name: Install cert-manager
+        run: |
+          kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.18.0/cert-manager.yaml
+          kubectl -n cert-manager wait deployment cert-manager --for=condition=Available --timeout=180s
+          kubectl -n cert-manager wait deployment cert-manager-webhook --for=condition=Available --timeout=180s
+          kubectl -n cert-manager wait deployment cert-manager-cainjector --for=condition=Available --timeout=180s
+
+      # Bootstrap the SelfSigned → CA → CA-Issuer chain. The CA
+      # ClusterIssuer named `spectre-selfsigned` is the issuerRef
+      # the chart's `certManager.issuerRef.name` default targets.
+      - name: Apply cert-manager bootstrap (SelfSigned → CA → CA Issuer)
+        run: |
+          kubectl apply -f build/helm/test/cluster-issuer-ci.yaml
+          # Wait for the CA Certificate to be Ready before the
+          # chart install — `helm install --wait` cannot wait for
+          # per-service Certificate resources to be issued, so
+          # gate on the root here so leaf certs can issue
+          # immediately when the chart renders them.
+          kubectl -n cert-manager wait certificate spectre-ca --for=condition=Ready --timeout=120s
+
+      - name: helm dependency update
+        working-directory: build/helm/spectre
+        run: helm dependency update
+
+      # Install with mTLS enabled. values-ci.yaml provides the
+      # base CI overrides; values-ci-mtls.yaml layers the
+      # `certManager.enabled: true` flip.
+      - name: helm install (mTLS enabled)
+        run: |
+          helm install spectre build/helm/spectre/ \
+              --namespace spectre-system \
+              --create-namespace \
+              --values build/helm/test/values-ci.yaml \
+              --values build/helm/test/values-ci-mtls.yaml \
+              --wait \
+              --timeout 10m
+
+      - name: kubectl get all
+        if: always()
+        run: |
+          kubectl -n spectre-system get all
+          kubectl -n spectre-system get certificate,secret -o wide
+
+      # Sanity: confirm engine + operator Certificates landed and
+      # the issued Secrets are mounted into the Pods.
+      - name: Verify per-service Certificates issued
+        run: |
+          for slot in engine control-plane; do
+            cert="spectre-${slot}-cert"
+            echo "=== Certificate/${cert} ==="
+            kubectl -n spectre-system wait certificate "${cert}" \
+              --for=condition=Ready --timeout=120s
+            kubectl -n spectre-system get secret "${cert}" -o jsonpath='{.data}' \
+              | jq -r 'keys[]' | sort
+          done
+
+      # mTLS positive test: the operator's outbound RunJob RPC
+      # must reach the engine over verified mTLS. The verifier
+      # checks operator logs for a successful engine dial after a
+      # ScrapeJob is applied.
+      - name: Verify mTLS handshake (operator → engine)
+        run: bash tools/test/verify-mtls-handshake.sh spectre-system spectre
+
+      # mTLS negative test: a plaintext dial against the engine
+      # must be rejected (the engine refuses connections without
+      # a valid client certificate).
+      - name: Verify plaintext dial is rejected
+        run: bash tools/test/verify-mtls-rejects-plaintext.sh spectre-system spectre
+
+      - name: Debug — operator logs
+        if: always()
+        run: kubectl -n spectre-system logs -l app.kubernetes.io/component=control-plane --tail=200 || true
+
+      - name: Debug — engine logs
+        if: always()
+        run: kubectl -n spectre-system logs -l app.kubernetes.io/component=engine --tail=200 || true
+
+      - name: Debug — cert-manager events
+        if: always()
+        run: |
+          kubectl -n spectre-system get events --sort-by='.lastTimestamp' || true
+          kubectl -n spectre-system describe certificate || true

@@ -47,6 +47,7 @@ spec:
       {{- end }}
       securityContext:
         runAsNonRoot: true
+      {{- include "spectre.tlsVolumes" (dict "slot" "control-plane" "context" .) | nindent 6 }}
       containers:
         - name: manager
           image: {{ include "spectre.image" (dict "service" .Values.controlPlane "context" .) }}
@@ -70,11 +71,22 @@ spec:
               containerPort: {{ .Values.observability.metricsPort }}
               protocol: TCP
           env:
+            # W3.3 ADR-0032: explicitly point the operator at the
+            # in-cluster engine Service DNS so the dial endpoint
+            # matches the engine certificate's SAN list. The
+            # binary's `defaultEngineEndpoint` is `127.0.0.1:8090`
+            # which is correct for the Compose+host-process posture
+            # (R6.2) but never reaches the engine from inside a Pod.
+            # Per-job overrides via `spec.engineRef` still apply.
+            - name: SPECTRE_ENGINE_ENDPOINT
+              value: "{{ include "spectre.fullname" . }}-engine:{{ .Values.engine.service.port }}"
             {{- include "spectre.commonEnv" . | nindent 12 }}
             {{- include "spectre.observabilityEnv" . | nindent 12 }}
+            {{- include "spectre.tlsEnv" . | nindent 12 }}
             {{- with .Values.controlPlane.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- include "spectre.tlsVolumeMounts" . | nindent 10 }}
           readinessProbe:
             {{- toYaml .Values.controlPlane.probes.readiness | nindent 12 }}
           livenessProbe:

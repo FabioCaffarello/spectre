@@ -1,0 +1,24 @@
+# mTLS-enabled overlay for the W3.3 mtls-smoke gate
+# (.github/workflows/mtls-smoke.yml).
+#
+# Layered on top of build/helm/test/values-ci.yaml — same
+# resource sizing, same image policy, same persistence — and flips
+# `certManager.enabled` on with an `issuerRef` pointing at the
+# SelfSigned ClusterIssuer the workflow applies separately
+# (build/helm/test/cluster-issuer-ci.yaml).
+#
+# The chart renders per-service `Certificate` resources via
+# `_helpers.tpl::spectre.certificate`; cert-manager observes them
+# and emits per-service Secrets which the engine + control-plane
+# Pods mount at `/etc/spectre/tls/`. The operator dials the engine
+# over mTLS and the engine accepts only verified peer
+# certificates (ADR-0032 §4.1).
+#
+# Plaintext-mode regression coverage stays in values-ci.yaml +
+# production-smoke.yml — both gates run.
+
+certManager:
+  enabled: true
+  issuerRef:
+    name: spectre-selfsigned
+    kind: ClusterIssuer

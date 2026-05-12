@@ -45,8 +45,43 @@ prost-types = "0.13"
 # `router` feature (axum-backed). The default feature set bundles
 # router/transport/codegen/prost; pulling those in by name keeps the
 # binary's `Server::builder().add_service(...)` chain compiling.
-tonic = { version = "0.13", default-features = false, features = ["codegen", "prost", "router", "transport"] }
+# W3.3 added the `tls-ring` feature for ADR-0032 mTLS — rustls
+# with the `ring` crypto provider. tonic 0.13.1 splits its TLS
+# surface across `tls-ring` / `tls-aws-lc` / `tls-native-roots` /
+# `tls-webpki-roots`; `tls-ring` is sufficient for the
+# server-side `ServerTlsConfig::identity` + `client_ca_root` path
+# the engine takes (mTLS, client cert required, internal CA chain
+# loaded from `/etc/spectre/tls/ca.crt`).
+#
+# tonic 0.13's `ServerTlsConfig` does NOT expose a rustls
+# `cert_resolver` injection — dynamic per-handshake credential
+# resolution (ADR-0032 §5.1) is therefore Wave 5+ work gated on a
+# tonic 0.14 migration. v1alpha1 first auth PR uses static-load-
+# at-startup; rotation triggers a Pod restart via the chart's
+# annotation pattern. ADR-0032 §5.2 accepts this for Python; Rust
+# carries the same operational shape.
+tonic = { version = "0.13", default-features = false, features = ["codegen", "prost", "router", "transport", "tls-ring"] }
 tonic-health = { version = "0.13", default-features = false }
+# PEM parsing — `rustls_pemfile::certs` and `private_key` read
+# `/etc/spectre/tls/{tls.crt,tls.key,ca.crt}` into the rustls
+# structs tonic's `Identity::from_pem` / `Certificate::from_pem`
+# consume. The 2.x line aligns with rustls 0.23 which tonic 0.13
+# brings transitively via `tls-ring`.
+rustls-pemfile = "2"
+# rustls 0.23 itself is pulled directly so we can call
+# `rustls::crypto::ring::default_provider().install_default()` at
+# the top of `main()`. rustls 0.23's auto-detection of the
+# process-level CryptoProvider bails when multiple consumers
+# (sqlx + reqwest + aws-sdk-s3 + tonic via tls-ring) sit in the
+# same build — `Server::tls_config(...)` then panics on the first
+# handshake. Explicit `install_default` resolves it. We match
+# tonic's `tls-ring` feature with the `ring` provider here so the
+# same crypto stack serves the whole binary.
+#
+# `default-features = false` strips the `aws-lc-rs` default
+# (avoids dragging in a second crypto provider that would re-trip
+# the ambiguity).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 
 # Tokio runtime: async I/O, signal handling, timeouts, channels, and
 # the multi-threaded scheduler the engine binary uses. The `process`
@@ -241,6 +276,15 @@ tonic-build = { version = "0.13", default-features = false, features = ["prost"]
 # tempfile is used by output-sink unit tests to allocate a
 # deterministic JSONL output path.
 tempfile = "3"
+
+# rcgen generates self-signed PKI material natively in Rust for
+# `tests/tls_integration.rs` (W3.3). Replaces an earlier
+# `openssl req -x509 -addext ...` invocation that produced X.509 v1
+# CAs on Ubuntu CI's OpenSSL 3.0 (passed locally on macOS OpenSSL 3.6,
+# where the same flags emitted v3) — rustls/webpki rejects v1 CAs
+# with `UnsupportedCertVersion`. rcgen always emits v3 with the
+# right extensions, eliminating the toolchain skew.
+rcgen = "0.13"
 
 # axum was a dev-dependency for `tests/webhook_integration.rs`
 # (R5.1 — ADR-0024 §4). W3.1 promoted it to a regular dependency

@@ -1,0 +1,3 @@
+{{- if .Values.controlPlane.enabled }}
+{{ include "spectre.certificate" (dict "slot" "control-plane" "context" .) }}
+{{- end }}

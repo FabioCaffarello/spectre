@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"net"
 	"os"
 	"time"
 
@@ -44,6 +45,7 @@ import (
 	"github.com/FabioCaffarello/spectre/operators/control-plane/internal/db"
 	"github.com/FabioCaffarello/spectre/operators/control-plane/internal/runner"
 	"github.com/FabioCaffarello/spectre/operators/control-plane/internal/telemetry"
+	spectretls "github.com/FabioCaffarello/spectre/operators/control-plane/internal/tls"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -279,6 +281,28 @@ func main() {
 	}
 	setupLog.Info("telemetry ready", "service", telemetry.ServiceName, "version", version)
 
+	// ADR-0032 §4.1: detect operator-side mTLS from the same three
+	// `SPECTRE_TLS_*_PATH` env vars the engine reads. Plaintext mode
+	// returns insecure credentials so the v1alpha1 dial path is
+	// unchanged; mTLS mode builds a `ReloadingCredentials` that
+	// auto-reloads the client key pair on the 30s cadence. Server
+	// SNI defaults to the endpoint host (stripping the port) so the
+	// engine cert's SAN matches.
+	tlsCfg, err := spectretls.DetectMode()
+	if err != nil {
+		setupLog.Error(err, "Failed to resolve TLS configuration")
+		os.Exit(1)
+	}
+	engineServerName := serverNameFromEndpoint(engineEndpoint)
+	engineCreds, err := spectretls.NewClientCredentials(tlsCfg, engineServerName)
+	if err != nil {
+		setupLog.Error(err, "Failed to build engine client credentials",
+			"mode", tlsCfg.Mode.String(), "server_name", engineServerName)
+		os.Exit(1)
+	}
+	setupLog.Info("engine client credentials ready",
+		"mode", tlsCfg.Mode.String(), "server_name", engineServerName)
+
 	// The reconciler constructs an EngineClientRunner per Reconcile
 	// (R3.2): each ScrapeJob's spec.engineRef may resolve to a
 	// different host:port, so the runner cannot be a long-lived
@@ -294,7 +318,10 @@ func main() {
 		DB:                    database.Pool,
 		Metrics:               metrics,
 		RunnerFactory: func(endpoint string) runner.JobRunner {
-			return &runner.EngineClientRunner{EngineEndpoint: endpoint}
+			return &runner.EngineClientRunner{
+				EngineEndpoint: endpoint,
+				Credentials:    engineCreds,
+			}
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScrapeJob")
@@ -316,4 +343,19 @@ func main() {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
+}
+
+// serverNameFromEndpoint strips the port from a host:port endpoint
+// so the TLS handshake's SNI / SAN check matches the cert's DNS
+// names (the chart's `spectre.certificate` template enumerates
+// short + namespaced + cluster-local + plain forms — any of those
+// satisfies the verification). Falls back to the raw endpoint
+// when SplitHostPort can't parse — e.g. a bare hostname with no
+// port; the TLS handshake will reject it anyway if SNI mismatches.
+func serverNameFromEndpoint(endpoint string) string {
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	return host
 }
