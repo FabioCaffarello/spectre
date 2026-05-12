@@ -39,7 +39,7 @@ if ! grep -q 'engine client credentials ready' <<<"$OPERATOR_LOGS"; then
   echo "$OPERATOR_LOGS" | tail -50
   exit 1
 fi
-if ! grep -q 'mode.*mutual\|"mode":"mutual"' <<<"$OPERATOR_LOGS"; then
+if ! grep -qE '"mode"[[:space:]]*:[[:space:]]*"mutual"|\bmode=mutual\b|\bmode["[:space:]]*:[[:space:]]*"?mutual' <<<"$OPERATOR_LOGS"; then
   echo "[mtls-handshake] FAIL: operator credential mode is not 'mutual'"
   grep -E 'engine client credentials ready' <<<"$OPERATOR_LOGS" || true
   exit 1
@@ -50,7 +50,7 @@ echo "[mtls-handshake] PASS: operator initialised with mutual TLS credentials"
 ENGINE_LOGS=$(kubectl -n "$NAMESPACE" logs \
   -l app.kubernetes.io/component=engine --tail=500 2>/dev/null || true)
 
-if ! grep -qE 'tls mode: mutual|"tls_mode":"mutual"' <<<"$ENGINE_LOGS"; then
+if ! grep -qE 'tls mode: mutual|"tls_mode"[[:space:]]*:[[:space:]]*"mutual"' <<<"$ENGINE_LOGS"; then
   echo "[mtls-handshake] FAIL: engine did not log mutual-TLS bind"
   echo "$ENGINE_LOGS" | tail -50
   exit 1
@@ -72,7 +72,11 @@ for slot in curl-impersonate-adapter seleniumbase-adapter playwright-adapter; do
   esac
   ADAPTER_LOGS=$(kubectl -n "$NAMESPACE" logs \
     -l "app.kubernetes.io/component=${component}" --tail=200 2>/dev/null || true)
-  if ! grep -q '"tls_mode":"mutual"\|tls_mode=mutual' <<<"$ADAPTER_LOGS"; then
+  # Match three log formatter shapes:
+  #   - Pino (TS) / Rust slog-JSON:     "tls_mode":"mutual"
+  #   - Python structlog/json.dumps:    "tls_mode": "mutual"   (space after colon)
+  #   - Go slog text fallback:          tls_mode=mutual
+  if ! grep -qE '"tls_mode"[[:space:]]*:[[:space:]]*"mutual"|tls_mode=mutual' <<<"$ADAPTER_LOGS"; then
     echo "[mtls-handshake] FAIL: ${slot} did not log mutual TLS readiness"
     echo "$ADAPTER_LOGS" | tail -30
     exit 1
