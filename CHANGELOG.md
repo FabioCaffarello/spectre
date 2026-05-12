@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.3] - 2026-05-12
+
+All-mTLS milestone release. After Wave 3 closed (W3.1 engine +
+operator OTel observability, W3.2 three-adapter OTel, W3.3
+operator ↔ engine mTLS, W3.4 engine ↔ adapter mTLS), every
+v1alpha1 service-to-service path can be authenticated via
+cert-manager-provisioned mTLS when the chart's
+`certManager.enabled: true` is set. The plaintext posture
+(default) is preserved end-to-end as the v1alpha1 baseline.
+Tagging `v0.1.0-alpha.3` exercises the cosign signing pipeline
+against the 5 multi-arch manifest lists on Docker Hub.
+
 ### Added
 
 - **Engine ↔ adapter mTLS — W3.4 (second auth PR of Wave 3,

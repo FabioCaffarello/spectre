@@ -8,8 +8,8 @@
 #
 # Image policy: R7.2's workflow builds the five spectre-* images
 # on the runner via bake with `REGISTRY=docker.io/fabiocaffarello
-# TAG=0.1.0-alpha.2`, yielding refs that match the chart's
-# defaults (`docker.io/fabiocaffarello/spectre-<name>:0.1.0-alpha.2`).
+# TAG=0.1.0-alpha.3`, yielding refs that match the chart's
+# defaults (`docker.io/fabiocaffarello/spectre-<name>:0.1.0-alpha.3`).
 # `kind load docker-image` preserves the exact ref; with
 # `pullPolicy=Never` kubelet uses the loaded copies and never
 # attempts a registry pull. The Bitnami subcharts pull from
