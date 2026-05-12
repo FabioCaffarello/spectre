@@ -1,0 +1,3 @@
+{{- if .Values.playwrightAdapter.enabled }}
+{{ include "spectre.certificate" (dict "slot" "playwright-adapter" "context" .) }}
+{{- end }}

@@ -43,6 +43,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- include "spectre.tlsVolumes" (dict "slot" "curl-impersonate-adapter" "context" .) | nindent 6 }}
       containers:
         - name: curl-impersonate-adapter
           image: {{ include "spectre.image" (dict "service" .Values.curlImpersonateAdapter "context" .) }}
@@ -59,13 +60,31 @@ spec:
               value: {{ .Values.curlImpersonateAdapter.service.port | quote }}
             {{- include "spectre.commonEnv" . | nindent 12 }}
             {{- include "spectre.observabilityEnv" . | nindent 12 }}
+            {{- include "spectre.tlsEnv" . | nindent 12 }}
             {{- with .Values.curlImpersonateAdapter.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- include "spectre.tlsVolumeMounts" . | nindent 10 }}
+          # W3.4 mTLS posture — see playwright-adapter.yaml.
+          {{- if .Values.certManager.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.curlImpersonateAdapter.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.curlImpersonateAdapter.service.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+          {{- else }}
           readinessProbe:
             {{- toYaml .Values.curlImpersonateAdapter.probes.readiness | nindent 12 }}
           livenessProbe:
             {{- toYaml .Values.curlImpersonateAdapter.probes.liveness | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.curlImpersonateAdapter.resources | nindent 12 }}
 ---

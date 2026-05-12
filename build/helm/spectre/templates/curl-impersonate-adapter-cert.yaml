@@ -1,0 +1,3 @@
+{{- if .Values.curlImpersonateAdapter.enabled }}
+{{ include "spectre.certificate" (dict "slot" "curl-impersonate-adapter" "context" .) }}
+{{- end }}

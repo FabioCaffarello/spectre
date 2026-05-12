@@ -1,0 +1,3 @@
+{{- if .Values.seleniumbaseAdapter.enabled }}
+{{ include "spectre.certificate" (dict "slot" "seleniumbase-adapter" "context" .) }}
+{{- end }}
