@@ -20,6 +20,8 @@ import { randomUUID } from "node:crypto";
 import * as http2 from "node:http2";
 import { chromium, type Locator, type Page } from "playwright";
 
+import { detectMode, loadTlsMaterial } from "./tls.js";
+
 import {
   Health,
   HealthCheckResponseSchema,
@@ -809,7 +811,42 @@ export async function startServer(
   const impl = createDriverService(sessions, options.metrics);
 
   const handler = connectNodeAdapter({ routes: driverRoutes(impl) });
-  const server = http2.createServer(handler);
+
+  // W3.4 Cluster D: when SPECTRE_TLS_{CERT,KEY,CA}_PATH env vars
+  // are configured, bind a secure HTTP/2 server that requires a
+  // client certificate (only the engine is an authorised caller
+  // per ADR-0032 §4.2). Plaintext mode falls back to the
+  // unencrypted createServer path — v1alpha1 default. Static load
+  // at startup; rotation triggers Pod restart per ADR-0032 §5.1
+  // (TypeScript row).
+  const tlsCfg = detectMode();
+  let server: http2.Http2Server | http2.Http2SecureServer;
+  if (tlsCfg.mode === "mutual") {
+    const material = loadTlsMaterial(tlsCfg);
+    server = http2.createSecureServer(
+      {
+        cert: material.cert,
+        key: material.key,
+        ca: material.ca,
+        requestCert: true,
+        rejectUnauthorized: true,
+        // ALPN: gRPC + Connect over HTTP/2 require h2; allow
+        // http/1.1 too for the curl-impersonate-style probe
+        // fallback if the caller speaks both.
+        ALPNProtocols: ["h2", "http/1.1"],
+      },
+      handler,
+    );
+  } else {
+    server = http2.createServer(handler);
+  }
+  try {
+    getLogger().info({ tls_mode: tlsCfg.mode }, "tls ready");
+  } catch {
+    // Logger not yet initialised (test contexts that bypass
+    // initTelemetry); silent fallthrough preserves the prior
+    // test setup.
+  }
 
   const boundPort = await new Promise<number>((resolve, reject) => {
     const onError = (err: Error) => {
