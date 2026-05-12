@@ -1,0 +1,331 @@
+// THIS PROTOCOL IS UNSTABLE.
+// Breaking changes are expected until v1.0.
+// Consumers should pin to a specific version path
+// (e.g. `protocol_version: spectre.proxy.v1alpha1` in service
+// metadata or SDK Cargo.toml). See
+// docs/adr/0004-protocol-versioning-strategy.md.
+//
+// Surface defined by docs/adr/0028-ancillary-infra-services-catalog.md
+// §4.1; admission criteria §5 (two-provider design proves the
+// abstraction absorbs vendor variation). Engine consumes via
+// `engines/engine/src/services/proxy.rs` per
+// docs/adr/0037-engine-as-orchestrator.md §4 / §5.
+
+syntax = "proto3";
+
+package spectre.proxy.v1alpha1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/proxy/v1alpha1;proxyv1alpha1";
+
+// Proxy is the contract between the Spectre engine and the
+// proxy-broker infra-service (slot 1 per ADR-0036 §3.1).
+//
+// The broker centralises proxy acquisition, cooldown tracking,
+// budget accounting, and provider-agnostic vendor routing.
+// Adapter processes do NOT consume this service directly —
+// the engine acquires a lease on behalf of the session and
+// passes the resulting `Lease.proxy_url` via
+// `spectre.driver.v1alpha1.Driver.Initialize`'s SessionConfig.
+//
+// The standard `grpc.health.v1.Health` service is wired by
+// the server alongside this one (ADR-0021 §6); gRPC
+// reflection is also enabled. Neither is declared here.
+//
+// RPC envelope naming follows the project convention from
+// `spectre.driver.v1alpha1.Driver` — every RPC takes a
+// dedicated `<Verb>Request` and returns a dedicated
+// `<Verb>Response` (buf STANDARD lint enforces this).
+service Proxy {
+  // Acquire a single proxy lease matching the constraints.
+  // The lease is owned by the caller until `Release` is
+  // invoked or its `expires_at` elapses, whichever comes
+  // first.
+  rpc Acquire(AcquireRequest) returns (AcquireResponse);
+
+  // Acquire N proxy leases in a single call. Preferred over
+  // serial `Acquire` calls when the engine knows it needs N
+  // concurrent sessions (per ADR-0037 §4.1 batch strategy).
+  // Returns a partial batch + per-slot errors when some
+  // leases could not be issued; the caller must inspect
+  // `leases` and `errors` together.
+  rpc AcquireBatch(AcquireBatchRequest) returns (AcquireBatchResponse);
+
+  // Release a lease. Idempotent: re-releasing a lease that's
+  // already released or expired is a no-op. The broker
+  // returns the proxy to its pool (or, for billing-aware
+  // providers, decrements the active-lease count).
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+
+  // Report a proxy as bad (banned, slow, returning errors,
+  // serving CAPTCHA). The broker records the report against
+  // cooldown / health-score state per ADR-0039 §3.1 Redis
+  // backend; future `Acquire` calls deprioritise or skip the
+  // reported proxy until its cooldown elapses.
+  rpc ReportFailure(ReportFailureRequest) returns (ReportFailureResponse);
+
+  // Query remaining budget for a scope. The request's scope
+  // fields are mutually exclusive — exactly one of
+  // `provider` / `region` / `tenant_id` must be set;
+  // ambiguous queries are rejected with `INVALID_ARGUMENT`.
+  rpc BudgetStatus(BudgetStatusRequest) returns (BudgetStatusResponse);
+}
+
+// AcquireRequest carries the constraints the engine wants
+// satisfied. All fields are optional — empty / unspecified
+// fields mean "no constraint".
+message AcquireRequest {
+  // Target region as ISO 3166-1 alpha-2 (e.g. "US", "BR", "DE").
+  // Empty string = any region.
+  string region = 1;
+
+  // Required proxy type. `PROXY_TYPE_UNSPECIFIED` is
+  // interpreted as `PROXY_TYPE_RESIDENTIAL` — the most
+  // permissive default for anti-bot evasion.
+  ProxyType type = 2;
+
+  // Stickiness: true = the broker should attempt to return
+  // the same exit IP for this lease's lifetime; false = each
+  // request through the proxy URL may rotate the underlying
+  // IP at the provider's discretion.
+  bool sticky = 3;
+
+  // Target domain (effective TLD+1) the lease will be used
+  // against. The broker uses this for per-domain cooldown
+  // coordination — don't return a proxy that another lease
+  // recently got banned on for the same target.
+  string target_domain = 4;
+
+  // Tenant identifier per ADR-0031 §3.4 mandated fields.
+  // Threads through structured logs + trace context; also
+  // gates per-tenant budget accounting.
+  string tenant_id = 5;
+}
+
+// AcquireResponse wraps the issued lease. A dedicated
+// response message (rather than `Lease` directly) keeps the
+// RPC naming convention consistent with the driver protocol
+// and leaves room for future response-side additions
+// (admission diagnostics, provider hints, etc.) without
+// breaking the wire format.
+message AcquireResponse {
+  // The issued lease.
+  Lease lease = 1;
+}
+
+// Lease is the issued proxy reservation. The caller dials
+// `proxy_url` directly; the broker does not proxy traffic.
+message Lease {
+  // Opaque lease identifier. The caller passes this to
+  // `Release` / `ReportFailure`. Format is broker-internal;
+  // consumers must not parse it.
+  string lease_id = 1;
+
+  // The proxy URL the consumer dials. Includes scheme,
+  // optional credentials, host, port:
+  // `http://user:pass@1.2.3.4:8080`. The credentials are
+  // provider-issued and rotate with the lease.
+  string proxy_url = 2;
+
+  // Provider that issued the lease (e.g. "brightdata",
+  // "stub"). Free-form string; consumers may use it for
+  // per-provider observability but should not hard-code
+  // provider names in business logic.
+  string provider = 3;
+
+  // Geo metadata observed at acquisition. May be empty when
+  // the provider doesn't expose geo per-IP. ISO 3166-1
+  // alpha-2 when present.
+  string region = 4;
+
+  // Lease expiry. The caller must `Release` or re-`Acquire`
+  // before this timestamp. After expiry the broker may
+  // re-lease the proxy to another caller; using the URL
+  // after expiry is undefined behaviour.
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+// AcquireBatchRequest acquires N leases in one call. All
+// leases share the same constraints; for heterogeneous
+// constraints, use multiple `Acquire` calls.
+message AcquireBatchRequest {
+  // Per-lease constraints. The broker uses these for every
+  // lease in the batch.
+  AcquireRequest constraints = 1;
+
+  // Number of leases to acquire. Must be > 0. The broker may
+  // return fewer if budget / pool constraints prevent the
+  // full count; see `AcquireBatchResponse.errors`.
+  uint32 count = 2;
+}
+
+// AcquireBatchResponse pairs the successfully-issued leases
+// with per-slot errors for failures. Slot indices are
+// 0-based; `leases` and `errors` together cover all
+// `AcquireBatchRequest.count` slots without overlap.
+message AcquireBatchResponse {
+  // Successfully issued leases. May be shorter than
+  // `AcquireBatchRequest.count`; check `errors` for the
+  // missing slots.
+  repeated Lease leases = 1;
+
+  // Per-slot errors for leases the broker could not issue.
+  // Empty when every slot was satisfied.
+  repeated BatchError errors = 2;
+}
+
+// BatchError reports a single slot's failure within an
+// `AcquireBatchResponse`.
+message BatchError {
+  // 0-based slot index within the original batch request.
+  uint32 slot_index = 1;
+
+  // Human-readable failure reason. Free-form; consumers
+  // surface it in observability + retry diagnostics.
+  string message = 2;
+}
+
+// ReleaseRequest returns a lease to the broker's pool.
+message ReleaseRequest {
+  // The `lease_id` from the original `Acquire` / batch slot.
+  string lease_id = 1;
+
+  // Tenant identifier per ADR-0031 §3.4. Cross-checked
+  // against the lease's recorded tenant; cross-tenant
+  // release is rejected.
+  string tenant_id = 2;
+}
+
+// ReleaseResponse — empty for now; reserved for future
+// response-side additions (refund accounting, etc.).
+message ReleaseResponse {}
+
+// ReportFailureRequest reports a proxy as misbehaving so
+// the broker updates its cooldown / health state per
+// ADR-0039 §3.1.
+message ReportFailureRequest {
+  // The `lease_id` the failure occurred under.
+  string lease_id = 1;
+
+  // What went wrong; drives the cooldown duration and the
+  // health-score decay.
+  FailureKind kind = 2;
+
+  // Tenant identifier per ADR-0031 §3.4.
+  string tenant_id = 3;
+
+  // Target domain the failure occurred against. Used for
+  // per-(proxy, target) cooldown coordination — a proxy
+  // banned on site A may still be usable for site B.
+  string target_domain = 4;
+}
+
+// ReportFailureResponse — empty for now; reserved for
+// future response-side additions (cooldown duration
+// echoed back to the caller for observability, etc.).
+message ReportFailureResponse {}
+
+// BudgetStatusRequest identifies which slice of usage the
+// caller is asking about. Exactly one scope field must be
+// set; the broker rejects ambiguous queries with
+// `INVALID_ARGUMENT`.
+message BudgetStatusRequest {
+  // Per-provider scope (e.g. "brightdata"). Empty unless
+  // querying provider-level totals.
+  string provider = 1;
+
+  // Per-region scope (ISO 3166-1 alpha-2). Empty unless
+  // querying region-level totals.
+  string region = 2;
+
+  // Per-tenant scope. Empty unless querying tenant-level
+  // totals.
+  string tenant_id = 3;
+}
+
+// BudgetStatusResponse reports current usage + remaining
+// capacity for the requested scope. Units are scope-dependent:
+// provider scopes typically GB-of-traffic; tenant scopes
+// typically lease-count-per-window.
+message BudgetStatusResponse {
+  // Spent units in the current window. Window length is
+  // provider- / configuration-defined.
+  uint64 spent = 1;
+
+  // Reserved units (issued leases that haven't yet been
+  // billed). spent + reserved + available = limit.
+  uint64 reserved = 2;
+
+  // Available units. Zero means "no headroom"; subsequent
+  // `Acquire` calls may fail with `RESOURCE_EXHAUSTED`.
+  uint64 available = 3;
+
+  // Total budget limit for the window. Zero means "no
+  // limit known" — the provider didn't expose a quota,
+  // or the scope has no configured cap.
+  uint64 limit = 4;
+
+  // Window end timestamp. After this, `spent` and
+  // `reserved` reset. May be unset for providers without
+  // a defined window.
+  google.protobuf.Timestamp window_ends_at = 5;
+}
+
+// ProxyType is the proxy infrastructure tier. Drives
+// pricing, fingerprint plausibility, and anti-bot evasion
+// effectiveness.
+enum ProxyType {
+  PROXY_TYPE_UNSPECIFIED = 0;
+
+  // Residential IPs sourced from real consumer devices.
+  // Highest cost; highest evasion success against
+  // sophisticated anti-bot products. The default when an
+  // `AcquireRequest` leaves `type` unspecified.
+  PROXY_TYPE_RESIDENTIAL = 1;
+
+  // Datacenter IPs from cloud / colocation pools. Lowest
+  // cost; lowest evasion success — many targets
+  // pre-emptively block cloud ASNs.
+  PROXY_TYPE_DATACENTER = 2;
+
+  // Mobile-carrier IPs (4G / 5G). Highest cost; highest
+  // evasion for sites that whitelist mobile traffic; finite
+  // IP pool means rotation cadence is provider-constrained.
+  PROXY_TYPE_MOBILE = 3;
+
+  // ISP / static residential — datacenter-hosted IPs
+  // registered against residential ISP ranges. Middle
+  // ground on both cost and evasion.
+  PROXY_TYPE_ISP = 4;
+}
+
+// FailureKind categorises why a proxy is being reported as
+// bad. Drives cooldown duration:
+//
+//   BANNED        long cooldown (per-domain)
+//   CAPTCHA       moderate cooldown (per-domain)
+//   TIMEOUT       short cooldown (proxy-wide)
+//   BAD_RESPONSE  short cooldown + investigate
+enum FailureKind {
+  FAILURE_KIND_UNSPECIFIED = 0;
+
+  // Target served 403, 429, or equivalent block response
+  // attributable to the proxy IP being banned.
+  FAILURE_KIND_BANNED = 1;
+
+  // Network timeout reaching the target through the proxy.
+  // May be transient (network blip) or proxy-side (slow
+  // exit node); the broker decays health score either way.
+  FAILURE_KIND_TIMEOUT = 2;
+
+  // Response shape was unexpected — wrong content type,
+  // truncated body, malformed HTML. Often indicates the
+  // proxy is intercepting / rewriting traffic.
+  FAILURE_KIND_BAD_RESPONSE = 3;
+
+  // Target served a CAPTCHA challenge. Cooldown is
+  // per-(proxy, target) — a proxy CAPTCHA'd on site A may
+  // still work for site B.
+  FAILURE_KIND_CAPTCHA = 4;
+}
