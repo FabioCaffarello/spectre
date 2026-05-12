@@ -6,8 +6,9 @@ this document captures the **operational shape** the v1alpha2
 platform actually ships, the env-var contract per-language SDKs
 honour, and the cluster-side prerequisites operators provision.
 
-The W3.3 first auth PR landed the operator ↔ engine wiring; W3.4
-extends to engine ↔ adapter; Wave 5+ infra-services inherit the
+The W3.3 first auth PR landed the operator ↔ engine wiring;
+**W3.4 extended mTLS to all three reference adapters** (closes
+Wave 3's auth scope); Wave 5+ infra-services inherit the
 canonical shape per [ADR-0036 §5.5](../adr/0036-microservices-catalog-expansion.md).
 
 ## When mTLS is on, when it is off
@@ -96,12 +97,13 @@ cadence).
 without service restart so cert-manager rotations propagate at
 the 30-day cadence. Per-language realities differ:
 
-| Language | Path | Reload behaviour |
-|---|---|---|
-| Rust (engine) | `engines/engine/src/tls/`; `tonic::Server::tls_config` | **Static load at startup.** tonic 0.13's `ServerTlsConfig` doesn't expose a rustls `cert_resolver` injection; dynamic reload requires a tonic 0.14 migration. Rotation triggers Pod restart via cert-manager annotation pattern. |
-| Go (operator) | `operators/control-plane/internal/tls/`; `credentials.NewTLS` + `GetClientCertificate` | **Dynamic 30-second reload** via `ReloadingCredentials`. Reads cert + key off disk at most every 30s; subsequent dials reuse the in-memory `tls.Certificate`. RootCAs loaded once (bundle rotation per `ADR-0032 §5.3` is rare). |
-| Python (Wave 5+) | `sdks/python/common/` | Restart-on-rotation per `ADR-0032 §5.1` Python entry. |
-| TypeScript (Wave 5+) | `sdks/typescript/common/` | Restart-on-rotation per `ADR-0032 §5.1` TypeScript entry. |
+| Language | Service | Path | Reload behaviour |
+|---|---|---|---|
+| Rust | engine (server + client) | `engines/engine/src/tls/`; `tonic::{Server,Endpoint}::tls_config` | **Static load at startup.** tonic 0.13's `ServerTlsConfig` and `ClientTlsConfig` don't expose a rustls `cert_resolver` injection; dynamic reload requires a tonic 0.14 migration. Rotation triggers Pod restart via cert-manager annotation pattern. |
+| Go | operator (client) | `operators/control-plane/internal/tls/`; `credentials.NewTLS` + `GetClientCertificate` | **Dynamic 30-second reload** via `ReloadingCredentials`. Reads cert + key off disk at most every 30s; subsequent dials reuse the in-memory `tls.Certificate`. RootCAs loaded once (bundle rotation per `ADR-0032 §5.3` is rare). |
+| Go | curl-impersonate adapter (server) | `adapters/curl-impersonate/internal/tls/`; `credentials.NewTLS` + `GetCertificate` | **Dynamic 30-second reload** via `ReloadingCredentials` (server-side symmetry to the operator's client-side hook). |
+| Python | seleniumbase adapter (server) | `adapters/seleniumbase/src/spectre_seleniumbase/tls.py`; `grpc.ssl_server_credentials` | **Static load at startup.** Python's gRPC bindings only accept static keypair bytes for server credentials; restart-on-rotation per ADR-0032 §5.1 Python entry. |
+| TypeScript | playwright adapter (server) | `adapters/playwright/src/tls.ts`; `http2.createSecureServer` | **Static load at startup.** Node's `http2.createSecureServer` consumes static PEM material; restart-on-rotation per ADR-0032 §5.1 TS entry. |
 
 The asymmetry is operationally acceptable: cert-manager rotates
 30 days before expiry, and Kubernetes' rolling update flow
@@ -113,18 +115,27 @@ platform's availability target.
 
 ## Verification
 
-The W3.3 mtls-smoke workflow (`.github/workflows/mtls-smoke.yml`,
+The mtls-smoke workflow (`.github/workflows/mtls-smoke.yml`,
 daily cron) installs cert-manager + the chart with
 `certManager.enabled: true` and runs two assertions:
 
-- `tools/test/verify-mtls-handshake.sh` — positive: operator's
-  RunJob RPC reaches engine over verified mTLS; no handshake
-  errors in either log stream.
-- `tools/test/verify-mtls-rejects-plaintext.sh` — negative: a
-  plaintext gRPC dial against the engine fails. The engine
-  enforces `RequireAndVerifyClientCert`-equivalent semantics
-  (tonic's `ServerTlsConfig::client_ca_root` set leaves
-  `client_auth_optional` at its `false` default).
+- `tools/test/verify-mtls-handshake.sh` — positive: operator
+  initialised with mutual creds; engine bound with mutual-TLS;
+  each of the 3 adapters bound with mutual-TLS; 3 ScrapeJobs
+  (one per driver) reach a terminal phase with no handshake
+  errors anywhere across operator + engine + 3 adapter logs.
+- `tools/test/verify-mtls-rejects-plaintext.sh` — negative:
+  plaintext gRPC dials to engine + each of the 3 adapter ports
+  (8090, 8091, 8092, 8093) all fail. Every service enforces
+  `RequireAndVerifyClientCert`-equivalent semantics:
+  - Rust (engine) — tonic's `ServerTlsConfig::client_ca_root`
+    set leaves `client_auth_optional` at its `false` default.
+  - Go (curl-impersonate) — `tls.RequireAndVerifyClientCert`
+    explicitly set on the `tls.Config`.
+  - Python (seleniumbase) — `grpc.ssl_server_credentials(...,
+    require_client_auth=True)`.
+  - TypeScript (playwright) — `http2.createSecureServer({
+    requestCert: true, rejectUnauthorized: true })`.
 
 Production-smoke (`.github/workflows/production-smoke.yml`) runs
 the plaintext path; both gates run on every relevant PR.

@@ -1,0 +1,35 @@
+# curl-impersonate variant of the kafka sample. W3.4 mtls-smoke
+# uses all three driver variants in parallel to exercise each
+# engine → adapter mTLS handshake. Same shape as kafka.yaml —
+# only the DSL's `driver:` differs.
+apiVersion: spectre.io/v1alpha2
+kind: ScrapeJob
+metadata:
+  name: hello-hackernews-kafka-curl-impersonate
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  jobDSL: |
+    spectre: v1alpha1
+    driver: curl-impersonate
+    steps:
+      - navigate: https://news.ycombinator.com
+      - extract:
+          selector: .titleline > a
+          fields:
+            title: textContent
+            url: href
+    output:
+      format: jsonl
+      path: ./stories.jsonl
+  engineRef:
+    service:
+      name: spectre-engine
+      namespace: spectre-system
+      port: 8090
+  outputSink:
+    kafka:
+      brokers:
+        - kafka.spectre-system.svc.cluster.local:9092
+      topic: spectre.rows.curl-impersonate

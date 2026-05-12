@@ -33,7 +33,9 @@ use spectre_engine::registry::AdapterRegistry;
 use spectre_engine::s3::{S3Error, S3Uploader};
 use spectre_engine::server::engine_server;
 use spectre_engine::telemetry::{Telemetry, TelemetryConfig, logs};
-use spectre_engine::tls::{TlsConfig, TlsMode, build_server_tls_config, install_crypto_provider};
+use spectre_engine::tls::{
+    TlsConfig, TlsMode, build_client_tls_config, build_server_tls_config, install_crypto_provider,
+};
 use spectre_engine::webhook::WebhookClient;
 use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
 use tonic::transport::Server;
@@ -171,7 +173,43 @@ async fn run() -> Result<()> {
     let registry = AdapterRegistry::from_env();
     log_registry(&registry);
 
-    let engine = Engine::with_registry(registry);
+    // ADR-0032 §4.1 + §4.2: detect mTLS env contract early so the
+    // same `TlsConfig` drives both the server-side bind (operator →
+    // engine, W3.3 Cluster B) and the client-side adapter dials
+    // (engine → adapter, W3.4 Cluster A). `Plaintext` keeps the
+    // v1alpha1 posture so deployments without cert-manager continue
+    // to work unchanged. `Mutual` loads the chart-mounted credentials
+    // and switches both the bind and outbound dials to mTLS.
+    // Partial env state is a fail-fast startup error (the chart
+    // cannot produce it; hand-rolled deployments learn from the
+    // misconfig in the Pod's Events stream).
+    let tls_config = TlsConfig::from_env().context("tls: env contract invalid")?;
+
+    // W3.4: the engine acts as a CLIENT to each adapter. When TLS
+    // is configured, build a shared `ClientTlsConfig` from the
+    // same PEM material the engine server uses (its cert acts as
+    // both server identity for operator → engine AND client
+    // identity for engine → adapter). Cert-manager's default
+    // `usages` cover both server auth and client auth, so no
+    // separate engine credential is needed.
+    let adapter_tls = match &tls_config.mode {
+        TlsMode::Plaintext => None,
+        TlsMode::Mutual {
+            cert_path,
+            key_path,
+            ca_path,
+        } => {
+            let client_tls = build_client_tls_config(cert_path, key_path, ca_path)
+                .context("tls: build ClientTlsConfig for adapter dials")?;
+            info!(
+                cert_path = %cert_path.display(),
+                "adapter client TLS ready (engine → adapter mTLS)"
+            );
+            Some(Arc::new(client_tls))
+        }
+    };
+
+    let engine = Engine::with_registry_and_tls(registry, adapter_tls);
     let svc = engine_server(
         engine,
         db,
@@ -189,14 +227,13 @@ async fn run() -> Result<()> {
         .set_service_status("spectre.engine.v1alpha1.Engine", ServingStatus::Serving)
         .await;
 
-    // ADR-0032 §4.1 first auth PR: detect mTLS env contract before
-    // binding. `Plaintext` keeps the v1alpha1 posture so deployments
-    // without cert-manager continue to work unchanged. `Mutual` loads
-    // the chart-mounted credentials and switches `tonic::Server` into
-    // client-cert-required TLS. Partial env state is a fail-fast
-    // startup error (the chart cannot produce it; hand-rolled
-    // deployments learn from the misconfig in the Pod's Events stream).
-    let tls_config = TlsConfig::from_env().context("tls: env contract invalid")?;
+    // Apply the (already-detected) mTLS mode to the server bind.
+    // The `tls_config` was resolved earlier so the engine's CLIENT
+    // role (adapter dials) and SERVER role (operator inbound) come
+    // from the same source. ADR-0032 §4.1 server-side bind:
+    // `Mutual` switches `tonic::Server` into client-cert-required
+    // TLS via `client_ca_root`; `Plaintext` leaves the v1alpha1
+    // bind path untouched.
     let mut server_builder = apply_tls_mode(Server::builder(), &tls_config.mode)?;
     let tls_mode_label = match &tls_config.mode {
         TlsMode::Plaintext => "plaintext",

@@ -59,6 +59,7 @@ import (
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/server"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/sessions"
 	"github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/telemetry"
+	adaptertls "github.com/FabioCaffarello/spectre/adapters/curl-impersonate/internal/tls"
 	driverv1alpha1 "github.com/FabioCaffarello/spectre/proto/gen/go/spectre/driver/v1alpha1"
 )
 
@@ -208,9 +209,32 @@ func run() error {
 	// server-kind span as a child of the engine's client-kind
 	// span (Cluster B of W3.1). The handler also auto-emits the
 	// gRPC stats it observes.
-	grpcServer := grpc.NewServer(
+	//
+	// W3.4 Cluster B: when `SPECTRE_TLS_{CERT,KEY,CA}_PATH` env
+	// vars are set, the adapter requires client certificates per
+	// ADR-0032 §4.2 (only the engine is an authorised caller).
+	// `tlsCfg.Mode == ModePlaintext` yields nil creds, preserving
+	// the v1alpha1 dial path. Partial env state is fail-fast.
+	tlsCfg, err := adaptertls.DetectMode()
+	if err != nil {
+		return fmt.Errorf("tls: resolve mode: %w", err)
+	}
+	serverCreds, err := adaptertls.NewServerCredentials(tlsCfg)
+	if err != nil {
+		return fmt.Errorf("tls: build server credentials (mode=%s): %w", tlsCfg.Mode, err)
+	}
+	grpcOpts := []grpc.ServerOption{
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-	)
+	}
+	if serverCreds != nil {
+		grpcOpts = append(grpcOpts, grpc.Creds(serverCreds))
+	}
+	// Use `tls_mode` not `mode` for consistency with the Python +
+	// TypeScript adapters and with the engine's W3.3 log shape;
+	// `tools/test/verify-mtls-handshake.sh` greps for the
+	// `tls_mode=mutual` token across all four services.
+	slog.Info("tls ready", "tls_mode", tlsCfg.Mode.String())
+	grpcServer := grpc.NewServer(grpcOpts...)
 	driverv1alpha1.RegisterDriverServer(grpcServer, server.New(mgr, curlx.Fetch, variant, metrics))
 
 	// ADR-0021 §6: register the gRPC standard health check.

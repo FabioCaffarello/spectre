@@ -12,10 +12,12 @@
 //! state lands in R4.2.
 
 use std::sync::Arc;
+use std::time::Duration;
 
+use tonic::transport::ClientTlsConfig;
 use tracing::{debug, info};
 
-use crate::client::Client;
+use crate::client::{Client, DEFAULT_CONNECT_TIMEOUT};
 use crate::dsl::Job;
 use crate::error::EngineError;
 use crate::executor::Executor;
@@ -29,15 +31,30 @@ use crate::telemetry::EngineMetrics;
 #[derive(Debug, Clone)]
 pub struct Engine {
     registry: AdapterRegistry,
+    /// Shared TLS config applied to every adapter dial when
+    /// `certManager.enabled: true` in the chart. `None` keeps the
+    /// v1alpha1 plaintext path. ADR-0032 §4.2 engine → adapter:
+    /// engine cert reused (same cert acts as server identity for
+    /// W3.3 operator→engine AND client identity for W3.4
+    /// engine→adapter; cert-manager's default `usages` include
+    /// both server auth + client auth).
+    adapter_tls: Option<Arc<ClientTlsConfig>>,
+    /// Connect timeout used by the per-call dial. Defaults to
+    /// [`crate::client::DEFAULT_CONNECT_TIMEOUT`].
+    connect_timeout: Duration,
 }
 
 impl Engine {
     /// Construct an engine reading adapter endpoints from the
     /// process environment via [`AdapterRegistry::from_env`].
+    /// Plaintext adapter dials; for mTLS use
+    /// [`Self::with_registry_and_tls`].
     #[must_use]
     pub fn from_env() -> Self {
         Self {
             registry: AdapterRegistry::from_env(),
+            adapter_tls: None,
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
         }
     }
 
@@ -46,13 +63,39 @@ impl Engine {
     /// [`Self::from_env`].
     #[must_use]
     pub fn with_registry(registry: AdapterRegistry) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            adapter_tls: None,
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+        }
+    }
+
+    /// Construct an engine that dials adapters over mTLS using
+    /// the supplied [`ClientTlsConfig`] (W3.4 / ADR-0032 §4.2).
+    /// `None` falls back to plaintext.
+    #[must_use]
+    pub fn with_registry_and_tls(
+        registry: AdapterRegistry,
+        adapter_tls: Option<Arc<ClientTlsConfig>>,
+    ) -> Self {
+        Self {
+            registry,
+            adapter_tls,
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+        }
     }
 
     /// The registry the engine uses for driver discovery.
     #[must_use]
     pub fn registry(&self) -> &AdapterRegistry {
         &self.registry
+    }
+
+    /// Whether the engine has TLS material configured for
+    /// adapter dials.
+    #[must_use]
+    pub fn adapter_tls_enabled(&self) -> bool {
+        self.adapter_tls.is_some()
     }
 
     /// Parse `yaml` and return the validated [`Job`] without running
@@ -97,10 +140,13 @@ impl Engine {
             driver = %plan.driver,
             endpoint = %endpoint,
             steps = plan.steps.len(),
+            tls = %self.adapter_tls_enabled(),
             "running plan"
         );
         debug!(?plan, "compiled plan");
-        let client = Client::dial(endpoint).await?;
+        let client =
+            Client::dial_with_tls(endpoint, self.adapter_tls.as_deref(), self.connect_timeout)
+                .await?;
         Executor::run(plan, &client, sink, metrics, service_label(&plan.driver)).await
     }
 }

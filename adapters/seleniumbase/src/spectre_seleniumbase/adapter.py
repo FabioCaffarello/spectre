@@ -33,7 +33,7 @@ from opentelemetry.instrumentation.grpc import server_interceptor
 from prometheus_client import CollectorRegistry, start_http_server
 from spectre.driver.v1alpha1 import driver_pb2_grpc
 
-from spectre_seleniumbase import PROTOCOL_VERSION, __version__
+from spectre_seleniumbase import PROTOCOL_VERSION, __version__, tls
 from spectre_seleniumbase.logging import configure as configure_logging
 from spectre_seleniumbase.redis_client import RedisClient
 from spectre_seleniumbase.server import DriverServicer, _default_driver_factory
@@ -173,7 +173,20 @@ def _create_server(
     health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
     health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
 
-    server.add_insecure_port(f"0.0.0.0:{port}")
+    # W3.4 Cluster C: when SPECTRE_TLS_{CERT,KEY,CA}_PATH env vars
+    # are configured, bind via add_secure_port with
+    # require_client_auth=True (only the engine is an authorised
+    # caller per ADR-0032 §4.2). Plaintext mode falls through to
+    # add_insecure_port — the v1alpha1 dial path. Static load at
+    # startup; rotation triggers Pod restart per ADR-0032 §5.1
+    # (Python).
+    tls_cfg = tls.detect_mode()
+    tls_creds = tls.build_server_credentials(tls_cfg)
+    if tls_creds is None:
+        server.add_insecure_port(f"0.0.0.0:{port}")
+    else:
+        server.add_secure_port(f"0.0.0.0:{port}", tls_creds)
+    structlog.get_logger().info("tls ready", tls_mode=tls_cfg.mode.value)
     return server
 
 

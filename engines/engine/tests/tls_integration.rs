@@ -29,7 +29,8 @@ use rcgen::{
     BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
     KeyUsagePurpose,
 };
-use spectre_engine::tls::install_crypto_provider;
+use spectre_engine::tls::{build_client_tls_config, install_crypto_provider};
+use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity, Server, ServerTlsConfig};
 use tonic_health::pb::HealthCheckRequest;
@@ -152,6 +153,51 @@ async fn mtls_round_trip_health_check_succeeds() {
         .domain_name("localhost")
         .ca_certificate(ca)
         .identity(identity);
+
+    let endpoint = Endpoint::from_shared(format!("https://{addr}"))
+        .expect("endpoint")
+        .tls_config(tls_config)
+        .expect("client tls_config");
+    let channel = endpoint.connect().await.expect("channel connect");
+
+    let mut client = HealthClient::new(channel);
+    let response = client
+        .check(HealthCheckRequest {
+            service: String::new(),
+        })
+        .await
+        .expect("health check");
+    assert_eq!(
+        response.into_inner().status,
+        tonic_health::pb::health_check_response::ServingStatus::Serving as i32
+    );
+}
+
+#[tokio::test]
+async fn build_client_tls_config_loads_pem_files_and_round_trips() {
+    // W3.4 Cluster A: validates the loader path the engine binary
+    // calls — `build_client_tls_config(cert_path, key_path,
+    // ca_path)` reads three PEM files from disk and returns a
+    // `ClientTlsConfig` that successfully dials a CA-signed
+    // server. Mirrors the engine → adapter dial shape with PEM
+    // bytes coming off disk rather than from rcgen's in-memory
+    // PEM strings (the engine binary mounts cert-manager Secret
+    // material at `/etc/spectre/tls/`).
+    install_crypto_provider();
+    let pki = generate_mtls_pki("localhost");
+    let addr = spawn_engine_like_server(&pki).await;
+
+    let dir = TempDir::new().expect("tempdir");
+    let cert_path = dir.path().join("tls.crt");
+    let key_path = dir.path().join("tls.key");
+    let ca_path = dir.path().join("ca.crt");
+    std::fs::write(&cert_path, &pki.client_cert_pem).unwrap();
+    std::fs::write(&key_path, &pki.client_key_pem).unwrap();
+    std::fs::write(&ca_path, &pki.ca_pem).unwrap();
+
+    let tls_config = build_client_tls_config(&cert_path, &key_path, &ca_path)
+        .expect("build_client_tls_config")
+        .domain_name("localhost");
 
     let endpoint = Endpoint::from_shared(format!("https://{addr}"))
         .expect("endpoint")

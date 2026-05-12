@@ -36,4 +36,6 @@ pub mod config;
 pub mod loader;
 
 pub use config::{TlsConfig, TlsConfigError, TlsMode};
-pub use loader::{LoadError, build_server_tls_config, install_crypto_provider};
+pub use loader::{
+    LoadError, build_client_tls_config, build_server_tls_config, install_crypto_provider,
+};

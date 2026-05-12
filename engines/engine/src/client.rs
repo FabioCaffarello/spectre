@@ -9,9 +9,13 @@
 //! # Endpoint format
 //!
 //! [`Client::dial`] accepts either a bare `host:port` string or a
-//! full `grpc://host:port` URI. Both formats are normalised to an
-//! `http://host:port` URI for the underlying [`Endpoint`]. TLS is
-//! out of scope for v1alpha1 — see ADR-0022 §6.
+//! full `grpc://host:port` URI. Plaintext dials normalise to
+//! `http://host:port`; TLS dials normalise to `https://host:port`
+//! (W3.3-era TLS-out-of-scope comment retired by W3.4). When a
+//! [`ClientTlsConfig`] is supplied, the channel is encrypted and
+//! SNI is derived from the URI's host — the chart renders adapter
+//! endpoints with DNS names matching the per-service Certificate
+//! SAN list so verification succeeds without per-dial overrides.
 //!
 //! # Connect/gRPC interop
 //!
@@ -33,7 +37,7 @@ use std::time::Duration;
 use opentelemetry::trace::{FutureExt as _, SpanKind, TraceContextExt as _, Tracer as _};
 use opentelemetry::{Context as OtelContext, global};
 use tonic::Request;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 
 use crate::error::EngineError;
 use crate::proto;
@@ -79,6 +83,7 @@ pub struct Client {
 impl Client {
     /// Dial the gRPC server listening at `endpoint`. Accepts
     /// `host:port`, `http://host:port`, or `grpc://host:port`.
+    /// Plaintext transport.
     ///
     /// # Errors
     ///
@@ -86,10 +91,11 @@ impl Client {
     /// parsed or the underlying TCP connection cannot be established
     /// within [`DEFAULT_CONNECT_TIMEOUT`].
     pub async fn dial(endpoint: &str) -> Result<Self, EngineError> {
-        Self::dial_with_timeout(endpoint, DEFAULT_CONNECT_TIMEOUT).await
+        Self::dial_with_tls(endpoint, None, DEFAULT_CONNECT_TIMEOUT).await
     }
 
     /// Like [`Self::dial`] with a caller-supplied connect timeout.
+    /// Plaintext transport.
     ///
     /// # Errors
     ///
@@ -98,10 +104,34 @@ impl Client {
         endpoint: &str,
         connect_timeout: Duration,
     ) -> Result<Self, EngineError> {
-        let uri = normalise_endpoint(endpoint);
-        let channel = Endpoint::from_shared(uri)
+        Self::dial_with_tls(endpoint, None, connect_timeout).await
+    }
+
+    /// Dial with an optional [`ClientTlsConfig`]. When `tls` is
+    /// `Some`, the channel performs an mTLS handshake (ADR-0032
+    /// §4.2 engine → adapter path); when `None`, the dial uses
+    /// plaintext gRPC (the v1alpha1 default).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::dial`], plus
+    /// [`EngineError::Transport`] when tonic rejects the supplied
+    /// [`ClientTlsConfig`] (e.g. invalid PEM material).
+    pub async fn dial_with_tls(
+        endpoint: &str,
+        tls: Option<&ClientTlsConfig>,
+        connect_timeout: Duration,
+    ) -> Result<Self, EngineError> {
+        let uri = normalise_endpoint(endpoint, tls.is_some());
+        let mut builder = Endpoint::from_shared(uri)
             .map_err(|e| EngineError::Transport(format!("endpoint: {e}")))?
-            .connect_timeout(connect_timeout)
+            .connect_timeout(connect_timeout);
+        if let Some(t) = tls {
+            builder = builder
+                .tls_config(t.clone())
+                .map_err(|e| EngineError::Transport(format!("tls_config: {e}")))?;
+        }
+        let channel = builder
             .connect()
             .await
             .map_err(|e| EngineError::Transport(format!("connect: {e}")))?;
@@ -280,16 +310,19 @@ pub struct InitializeOutcome {
     pub capability_names: Vec<String>,
 }
 
-fn normalise_endpoint(input: &str) -> String {
+fn normalise_endpoint(input: &str, tls: bool) -> String {
     let trimmed = input.trim();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        trimmed.to_owned()
+    let scheme = if tls { "https" } else { "http" };
+    if let Some(rest) = trimmed.strip_prefix("http://") {
+        format!("{scheme}://{rest}")
+    } else if let Some(rest) = trimmed.strip_prefix("https://") {
+        format!("{scheme}://{rest}")
     } else if let Some(rest) = trimmed.strip_prefix("grpc://") {
-        format!("http://{rest}")
+        format!("{scheme}://{rest}")
     } else if let Some(rest) = trimmed.strip_prefix("grpcs://") {
-        format!("https://{rest}")
+        format!("{scheme}://{rest}")
     } else {
-        format!("http://{trimmed}")
+        format!("{scheme}://{trimmed}")
     }
 }
 
@@ -314,7 +347,7 @@ mod tests {
     #[test]
     fn normalise_endpoint_accepts_bare_host_port() {
         assert_eq!(
-            normalise_endpoint("127.0.0.1:8091"),
+            normalise_endpoint("127.0.0.1:8091", false),
             "http://127.0.0.1:8091"
         );
     }
@@ -322,7 +355,7 @@ mod tests {
     #[test]
     fn normalise_endpoint_passes_http_through() {
         assert_eq!(
-            normalise_endpoint("http://playwright:8091"),
+            normalise_endpoint("http://playwright:8091", false),
             "http://playwright:8091"
         );
     }
@@ -330,15 +363,37 @@ mod tests {
     #[test]
     fn normalise_endpoint_rewrites_grpc_scheme() {
         assert_eq!(
-            normalise_endpoint("grpc://playwright:8091"),
+            normalise_endpoint("grpc://playwright:8091", false),
             "http://playwright:8091"
         );
     }
 
     #[test]
-    fn normalise_endpoint_rewrites_grpcs_scheme() {
+    fn normalise_endpoint_rewrites_grpcs_scheme_under_plaintext() {
+        // grpcs:// in the input is normalised to the active
+        // scheme — tls=false demotes it to http://. The dial
+        // would then fail at TLS-handshake-from-plaintext-server
+        // if the operator actually meant grpcs://; we trust the
+        // env-driven endpoint convention to be consistent with
+        // the engine's resolved TLS mode.
         assert_eq!(
-            normalise_endpoint("grpcs://playwright:8091"),
+            normalise_endpoint("grpcs://playwright:8091", false),
+            "http://playwright:8091"
+        );
+    }
+
+    #[test]
+    fn normalise_endpoint_promotes_to_https_when_tls() {
+        assert_eq!(
+            normalise_endpoint("playwright:8091", true),
+            "https://playwright:8091"
+        );
+        assert_eq!(
+            normalise_endpoint("http://playwright:8091", true),
+            "https://playwright:8091"
+        );
+        assert_eq!(
+            normalise_endpoint("grpc://playwright:8091", true),
             "https://playwright:8091"
         );
     }
@@ -346,7 +401,7 @@ mod tests {
     #[test]
     fn normalise_endpoint_trims_whitespace() {
         assert_eq!(
-            normalise_endpoint("  127.0.0.1:8091  "),
+            normalise_endpoint("  127.0.0.1:8091  ", false),
             "http://127.0.0.1:8091"
         );
     }
