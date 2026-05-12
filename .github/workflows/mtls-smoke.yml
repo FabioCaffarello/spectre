@@ -146,9 +146,34 @@ jobs:
       # Bootstrap the SelfSigned → CA → CA-Issuer chain. The CA
       # ClusterIssuer named `spectre-selfsigned` is the issuerRef
       # the chart's `certManager.issuerRef.name` default targets.
+      #
+      # `kubectl wait deployment cert-manager-webhook --for=Available`
+      # above guarantees the Pod is Ready, but the webhook's
+      # mutating/validating admission config routes through a
+      # ClusterIP Service whose endpoint propagation can lag a few
+      # seconds after Pod readiness — surfaced in W3.4 round 2 as
+      # `dial tcp <svc-ip>:443: connect: connection refused` on
+      # the cluster-issuer apply. Retry loop covers the race;
+      # alternatives (cmctl check api, additional 30s sleep) cost
+      # more without changing the outcome.
       - name: Apply cert-manager bootstrap (SelfSigned → CA → CA Issuer)
         run: |
-          kubectl apply -f build/helm/test/cluster-issuer-ci.yaml
+          for attempt in 1 2 3 4 5 6; do
+            if kubectl apply -f build/helm/test/cluster-issuer-ci.yaml; then
+              echo "cluster-issuer applied on attempt $attempt"
+              break
+            fi
+            echo "cluster-issuer apply attempt $attempt failed (cert-manager webhook not yet reachable); retrying in 10s"
+            sleep 10
+          done
+          # Final check: if the loop exited without success the
+          # next command surfaces the same error and fails the
+          # step.
+          kubectl get clusterissuer spectre-selfsigned-root || {
+            echo "ERROR: cluster-issuer bootstrap did not apply within 60s of webhook readiness"
+            kubectl -n cert-manager get pods,svc,endpoints
+            exit 1
+          }
           # Wait for the CA Certificate to be Ready before the
           # chart install — `helm install --wait` cannot wait for
           # per-service Certificate resources to be issued, so
