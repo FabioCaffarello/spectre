@@ -179,11 +179,12 @@ jobs:
           kubectl -n spectre-system get all
           kubectl -n spectre-system get certificate,secret -o wide
 
-      # Sanity: confirm engine + operator Certificates landed and
-      # the issued Secrets are mounted into the Pods.
+      # Sanity: confirm all 5 per-service Certificates landed and
+      # the issued Secrets are mounted into the Pods. W3.3 covered
+      # engine + control-plane; W3.4 added the 3 adapter certs.
       - name: Verify per-service Certificates issued
         run: |
-          for slot in engine control-plane; do
+          for slot in engine control-plane playwright-adapter seleniumbase-adapter curl-impersonate-adapter; do
             cert="spectre-${slot}-cert"
             echo "=== Certificate/${cert} ==="
             kubectl -n spectre-system wait certificate "${cert}" \

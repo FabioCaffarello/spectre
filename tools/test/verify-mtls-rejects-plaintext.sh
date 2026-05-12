@@ -17,60 +17,60 @@ set -euo pipefail
 
 NAMESPACE="${1:-spectre-system}"
 RELEASE="${2:-spectre}"
-ENGINE_SVC="${RELEASE}-engine"
-PORT=8090
 
-echo "[mtls-rejects-plaintext] namespace=$NAMESPACE engine=$ENGINE_SVC:$PORT"
+# W3.4 extends the negative-path coverage from engine alone
+# (W3.3) to engine + all 3 adapters. Each target rejects
+# plaintext gRPC under mTLS posture (ADR-0032 §4.1 + §4.2).
+TARGETS=(
+  "engine:8090"
+  "playwright-adapter:8091"
+  "seleniumbase-adapter:8092"
+  "curl-impersonate-adapter:8093"
+)
 
-PROBE_POD="mtls-probe-$RANDOM"
+probe_target() {
+  local svc_port="$1"
+  local svc="${svc_port%:*}"
+  local port="${svc_port#*:}"
+  local probe_pod="mtls-probe-${svc}-$RANDOM"
+  local full_svc="${RELEASE}-${svc}"
 
-# Use fullstorydev/grpcurl which has a static binary in
-# ghcr — pull-through cache would also work but the docker.io
-# path keeps us aligned with the rest of the workflow.
-kubectl -n "$NAMESPACE" run "$PROBE_POD" \
-  --image=fullstorydev/grpcurl:v1.9.1 \
-  --restart=Never \
-  --command -- \
-  /bin/grpcurl -plaintext -connect-timeout 10 \
-  "${ENGINE_SVC}:${PORT}" grpc.health.v1.Health/Check
+  echo "[mtls-rejects-plaintext] probing ${full_svc}:${port}"
 
-echo "[mtls-rejects-plaintext] probe Pod launched; waiting for terminal state"
+  kubectl -n "$NAMESPACE" run "$probe_pod" \
+    --image=fullstorydev/grpcurl:v1.9.1 \
+    --restart=Never \
+    --command -- \
+    /bin/grpcurl -plaintext -connect-timeout 10 \
+    "${full_svc}:${port}" grpc.health.v1.Health/Check || true
 
-# Wait up to 60s for the Pod to complete (either Succeeded or
-# Failed). Note: grpcurl exits non-zero on TLS error which makes
-# the Pod transition to Failed — that's the success case for us.
-TIMEOUT=60
-elapsed=0
-phase=""
-while [[ $elapsed -lt $TIMEOUT ]]; do
-  phase=$(kubectl -n "$NAMESPACE" get pod "$PROBE_POD" \
-    -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-  if [[ "$phase" == "Succeeded" || "$phase" == "Failed" ]]; then
-    break
+  local phase=""
+  local elapsed=0
+  while [[ $elapsed -lt 60 ]]; do
+    phase=$(kubectl -n "$NAMESPACE" get pod "$probe_pod" \
+      -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+    if [[ "$phase" == "Succeeded" || "$phase" == "Failed" ]]; then
+      break
+    fi
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+
+  local probe_logs
+  probe_logs=$(kubectl -n "$NAMESPACE" logs "$probe_pod" 2>&1 || true)
+  kubectl -n "$NAMESPACE" delete pod "$probe_pod" \
+    --ignore-not-found --grace-period=0 --force >/dev/null 2>&1 || true
+
+  if [[ "$phase" == "Succeeded" ]]; then
+    echo "[mtls-rejects-plaintext] FAIL: plaintext dial to ${full_svc}:${port} SUCCEEDED — TLS not enforced"
+    echo "$probe_logs"
+    return 1
   fi
-  sleep 3
-  elapsed=$((elapsed + 3))
+  echo "[mtls-rejects-plaintext] PASS: ${full_svc}:${port} rejected plaintext dial"
+}
+
+for target in "${TARGETS[@]}"; do
+  probe_target "$target"
 done
 
-PROBE_LOGS=$(kubectl -n "$NAMESPACE" logs "$PROBE_POD" 2>&1 || true)
-
-kubectl -n "$NAMESPACE" delete pod "$PROBE_POD" --ignore-not-found --grace-period=0 --force >/dev/null 2>&1 || true
-
-if [[ "$phase" == "Succeeded" ]]; then
-  echo "[mtls-rejects-plaintext] FAIL: plaintext dial SUCCEEDED — engine is not enforcing TLS"
-  echo "$PROBE_LOGS"
-  exit 1
-fi
-
-# Negative case: phase==Failed AND the logs show a TLS-related
-# rejection (the engine speaks HTTP/2 over TLS only; a plaintext
-# client sees connection reset / TLS handshake).
-echo "[mtls-rejects-plaintext] probe Pod failed as expected; log excerpt:"
-echo "$PROBE_LOGS" | tail -20
-
-if ! grep -qE 'connection reset|connection refused|EOF|protocol error|TLS handshake|handshake failed|unexpected EOF' <<<"$PROBE_LOGS"; then
-  echo "[mtls-rejects-plaintext] WARN: probe Pod failed but the failure cause is not obviously a TLS rejection"
-  echo "[mtls-rejects-plaintext] WARN: still treating as PASS — Failed phase means the plaintext dial did not succeed"
-fi
-
-echo "[mtls-rejects-plaintext] OK: plaintext dial rejected by engine"
+echo "[mtls-rejects-plaintext] OK: plaintext dials rejected by engine + all 3 adapters"

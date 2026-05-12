@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Engine ↔ adapter mTLS — W3.4 (second auth PR of Wave 3,
+  ADR-0032 §4.2 wiring landed end-to-end; closes Wave 3 auth
+  scope).** Builds on the W3.3 cert-manager scaffolding to
+  extend mTLS to the three reference adapters (Playwright TS /
+  SeleniumBase Python / curl-impersonate Go). Engine acts as
+  CLIENT to each adapter; new `build_client_tls_config` mirrors
+  the W3.3 server-side loader and reuses the same engine cert
+  (cert-manager's default `usages` cover both server auth +
+  client auth). `Client::dial_with_tls(endpoint,
+  Option<&ClientTlsConfig>, timeout)` is the new internal
+  surface; `normalise_endpoint` rewrites the scheme to
+  `https://` when TLS is active so SNI matches the per-adapter
+  Certificate SAN list. Each adapter requires client certs on
+  the server side: curl-impersonate (Go) gets dynamic 30s
+  reload via `tls.Config.GetCertificate` (server-side
+  symmetry to the operator's W3.3 client-side hook);
+  SeleniumBase (Python) uses `grpc.ssl_server_credentials(...,
+  require_client_auth=True)` with restart-on-rotation per
+  ADR-0032 §5.1; Playwright (TypeScript) switches from
+  `http2.createServer` to `http2.createSecureServer({
+  requestCert: true, rejectUnauthorized: true })`. Chart adds
+  three new `<adapter>-cert.yaml` templates (invoking the
+  existing `spectre.certificate` helper); the 3 adapter
+  Deployments mount the per-service Secret at
+  `/etc/spectre/tls/` and switch their probes from `grpc:` to
+  `tcpSocket:` when `certManager.enabled` (same W3.3 fix —
+  kubelet doesn't present client certs). Two new ScrapeJob
+  samples (`kafka-seleniumbase.yaml`, `kafka-curl-impersonate.yaml`)
+  let `verify-mtls-handshake.sh` exercise all three adapter
+  dial paths in parallel; the negative verifier
+  (`verify-mtls-rejects-plaintext.sh`) now probes engine +
+  each adapter port. `docs/architecture/authentication.md`
+  records the per-language reload table (now 5 entries) and
+  the verifier semantics. PR #TBD; ADR-0032 §4.2 + §5.1.
+
 - **Operator ↔ engine mTLS — W3.3 (first auth PR of Wave 3,
   ADR-0032 §4.1 wiring landed end-to-end).** The chart's new
   `certManager.enabled` flag (default `false` — v1alpha1

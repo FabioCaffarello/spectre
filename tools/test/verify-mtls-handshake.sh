@@ -57,68 +57,104 @@ if ! grep -qE 'tls mode: mutual|"tls_mode":"mutual"' <<<"$ENGINE_LOGS"; then
 fi
 echo "[mtls-handshake] PASS: engine bound with mutual-TLS"
 
-# Step 3 — apply the kafka.yaml sample which is a valid v1alpha2
-# ScrapeJob (the operator's CRD strict-decodes; an inline YAML
-# with the v1alpha1 field names rejects). Reuses the same fixture
-# production-smoke applies, so the dial path is the production
-# path with mTLS layered on. The job's actual completion is the
-# strong end-to-end signal; failure would surface either as a
-# scrape-side error (independent of mTLS) or a TLS-handshake
-# error (the negative signal step 4 checks).
-SAMPLE_PATH="build/helm/test/samples/kafka.yaml"
-SJ_NAME=$(awk '/^metadata:/{m=1} m && /  name:/{print $2; exit}' "$SAMPLE_PATH")
-if [[ -z "$SJ_NAME" ]]; then
-  echo "[mtls-handshake] FAIL: could not parse ScrapeJob name from $SAMPLE_PATH"
-  exit 1
-fi
-echo "[mtls-handshake] applying $SAMPLE_PATH (ScrapeJob/$SJ_NAME)"
-kubectl -n "$NAMESPACE" apply -f "$SAMPLE_PATH"
-
-echo "[mtls-handshake] waiting for ScrapeJob/$SJ_NAME terminal phase (timeout 300s)"
-
-# Completed OR Failed acceptable — the test asserts the operator's
-# RunJob RPC reaches the engine over mTLS, not that the scrape
-# itself returns rows. If the TLS handshake failed, the operator
-# wouldn't reach a terminal phase at all; instead repeated dial
-# errors would surface.
-TIMEOUT=300
-elapsed=0
-phase=""
-while [[ $elapsed -lt $TIMEOUT ]]; do
-  phase=$(kubectl -n "$NAMESPACE" get scrapejob "$SJ_NAME" \
-    -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-  if [[ "$phase" == "Completed" || "$phase" == "Failed" ]]; then
-    break
+# Step 3 — confirm each adapter logged a mutual-TLS bind (W3.4).
+# Each Go/Python/TS adapter emits a `tls ready` / `tls_mode=mutual`
+# (or equivalent) log line at startup. Plain `mutual` token match
+# is permissive enough to cover the three logger shapes (slog
+# JSON for curl-impersonate, structlog JSON for seleniumbase,
+# Pino JSON for playwright).
+for slot in curl-impersonate-adapter seleniumbase-adapter playwright-adapter; do
+  adapter_label="${slot%-adapter}"
+  case "$adapter_label" in
+    curl-impersonate) component=curl-impersonate-adapter ;;
+    seleniumbase)     component=seleniumbase-adapter ;;
+    playwright)       component=playwright-adapter ;;
+  esac
+  ADAPTER_LOGS=$(kubectl -n "$NAMESPACE" logs \
+    -l "app.kubernetes.io/component=${component}" --tail=200 2>/dev/null || true)
+  if ! grep -q '"tls_mode":"mutual"\|tls_mode=mutual' <<<"$ADAPTER_LOGS"; then
+    echo "[mtls-handshake] FAIL: ${slot} did not log mutual TLS readiness"
+    echo "$ADAPTER_LOGS" | tail -30
+    exit 1
   fi
-  sleep 5
-  elapsed=$((elapsed + 5))
+  echo "[mtls-handshake] PASS: ${slot} bound with mutual-TLS"
 done
 
-if [[ "$phase" != "Completed" && "$phase" != "Failed" ]]; then
-  echo "[mtls-handshake] FAIL: ScrapeJob/$SJ_NAME did not reach terminal phase within ${TIMEOUT}s"
-  kubectl -n "$NAMESPACE" describe scrapejob "$SJ_NAME" | tail -40
+# Step 4 — apply all three driver-variant ScrapeJob samples
+# (playwright via kafka.yaml; seleniumbase + curl-impersonate
+# variants added in W3.4 Cluster E). Each exercises a distinct
+# engine → adapter dial path. Job completion is the strong
+# end-to-end signal; failure would surface as TLS-handshake
+# errors (caught in Step 5) or scrape-side errors (independent
+# of mTLS).
+SAMPLES=(
+  "build/helm/test/samples/kafka.yaml"
+  "build/helm/test/samples/kafka-seleniumbase.yaml"
+  "build/helm/test/samples/kafka-curl-impersonate.yaml"
+)
+SJ_NAMES=()
+for sample in "${SAMPLES[@]}"; do
+  sj_name=$(awk '/^metadata:/{m=1} m && /  name:/{print $2; exit}' "$sample")
+  if [[ -z "$sj_name" ]]; then
+    echo "[mtls-handshake] FAIL: could not parse ScrapeJob name from $sample"
+    exit 1
+  fi
+  echo "[mtls-handshake] applying $sample (ScrapeJob/$sj_name)"
+  kubectl -n "$NAMESPACE" apply -f "$sample"
+  SJ_NAMES+=("$sj_name")
+done
+
+echo "[mtls-handshake] waiting for all ScrapeJobs terminal phase (timeout 360s)"
+
+# Completed OR Failed acceptable — the test asserts the operator
+# → engine + engine → adapter dial paths reach all three adapters
+# over mTLS, not that the scrape returns rows.
+TIMEOUT=360
+elapsed=0
+remaining=("${SJ_NAMES[@]}")
+while [[ $elapsed -lt $TIMEOUT && ${#remaining[@]} -gt 0 ]]; do
+  next=()
+  for sj in "${remaining[@]}"; do
+    phase=$(kubectl -n "$NAMESPACE" get scrapejob "$sj" \
+      -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+    if [[ "$phase" == "Completed" || "$phase" == "Failed" ]]; then
+      echo "[mtls-handshake] PASS: ScrapeJob/$sj reached terminal phase ($phase)"
+    else
+      next+=("$sj")
+    fi
+  done
+  remaining=("${next[@]}")
+  if [[ ${#remaining[@]} -gt 0 ]]; then
+    sleep 10
+    elapsed=$((elapsed + 10))
+  fi
+done
+
+if [[ ${#remaining[@]} -gt 0 ]]; then
+  for sj in "${remaining[@]}"; do
+    echo "[mtls-handshake] FAIL: ScrapeJob/$sj did not reach terminal phase within ${TIMEOUT}s"
+    kubectl -n "$NAMESPACE" describe scrapejob "$sj" | tail -40
+  done
   exit 1
 fi
-echo "[mtls-handshake] PASS: ScrapeJob/$SJ_NAME reached terminal phase ($phase)"
 
-# Step 4 — confirm no TLS handshake failures in either log stream.
-POST_OPERATOR=$(kubectl -n "$NAMESPACE" logs \
-  -l app.kubernetes.io/component=control-plane --tail=500 2>/dev/null || true)
-POST_ENGINE=$(kubectl -n "$NAMESPACE" logs \
-  -l app.kubernetes.io/component=engine --tail=500 2>/dev/null || true)
-
-# Grep is grep-without-pcre so we OR the literal patterns. A
-# match in EITHER log fails the check.
-HANDSHAKE_ERRORS=$(printf '%s\n%s\n' "$POST_OPERATOR" "$POST_ENGINE" \
-  | grep -E 'authentication handshake failed|certificate signed by unknown authority|tls: bad certificate|tls: certificate required' \
-  || true)
+# Step 5 — confirm no TLS handshake failures across operator,
+# engine, or any of the three adapter log streams.
+ALL_LOGS=$(
+  for component in control-plane engine playwright-adapter seleniumbase-adapter curl-impersonate-adapter; do
+    kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/component=${component}" --tail=500 2>/dev/null || true
+  done
+)
+HANDSHAKE_ERRORS=$(grep -E 'authentication handshake failed|certificate signed by unknown authority|tls: bad certificate|tls: certificate required|TLS handshake error|x509: certificate' <<<"$ALL_LOGS" || true)
 if [[ -n "$HANDSHAKE_ERRORS" ]]; then
   echo "[mtls-handshake] FAIL: TLS handshake errors detected"
-  echo "$HANDSHAKE_ERRORS"
+  echo "$HANDSHAKE_ERRORS" | head -30
   exit 1
 fi
 
 # Cleanup
-kubectl -n "$NAMESPACE" delete scrapejob "$SJ_NAME" --ignore-not-found
+for sj in "${SJ_NAMES[@]}"; do
+  kubectl -n "$NAMESPACE" delete scrapejob "$sj" --ignore-not-found
+done
 
-echo "[mtls-handshake] OK: operator → engine mTLS handshake verified"
+echo "[mtls-handshake] OK: operator → engine + engine → 3 adapters mTLS handshakes verified"
