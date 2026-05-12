@@ -1,0 +1,23 @@
+# Cargo workspace for the Spectre Rust SDKs.
+#
+# Per ADR-0027, each per-service SDK lives in its own crate under
+# `sdks/rust/<service>/<version>/`. The workspace exists so a `cargo
+# check` / `cargo test` from `sdks/rust/` exercises every SDK in
+# lockstep (catches breaking changes that touch multiple SDKs from
+# a single proto change before downstream consumers see them).
+#
+# W5.1 adds the first SDK: `proxy/v1alpha1`. Future Wave 5+
+# services append members here when their consumers materialise
+# per D14 (SDK lands when consumer exists, not before).
+
+[workspace]
+members = [
+    "proxy/v1alpha1",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0-alpha.3"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/FabioCaffarello/spectre"

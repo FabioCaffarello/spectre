@@ -1,0 +1,50 @@
+[package]
+name = "spectre-sdk-proxy-v1alpha1"
+description = "Spectre proxy-broker gRPC client SDK (spectre.proxy.v1alpha1)."
+keywords = ["spectre", "proxy-broker", "grpc", "sdk"]
+categories = ["api-bindings"]
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# tonic + prost 0.13 line — must move in lockstep with the
+# spectre-engine crate's tonic version to keep generated types
+# ABI-compatible across the path-dep boundary. See the engine
+# Cargo.toml comment block on the four-crate diamond constraint.
+prost = "0.13"
+prost-types = "0.13"
+tonic = { version = "0.13", default-features = false, features = [
+    "codegen",
+    "prost",
+    "transport",
+    "tls-ring",
+] }
+
+# Tokio runtime — the SDK's retry loop uses `tokio::time::sleep`
+# for backoff. The caller's runtime must be a multi-thread tokio
+# runtime; we don't constrain feature flags here.
+tokio = { version = "1", features = ["time"] }
+
+# Tracing — every SDK call opens a client-kind span so the
+# caller's trace context propagates downstream via the
+# tonic-otel stats handler.
+tracing = "0.1"
+
+# Error plumbing.
+thiserror = "2"
+
+[build-dependencies]
+# tonic-build at build time generates the prost types + tonic
+# client stubs from `proto/spectre/proxy/v1alpha1/proxy.proto`.
+# Resolves relative to the crate root: `../../../../proto/...`.
+tonic-build = { version = "0.13", default-features = false, features = ["prost"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
