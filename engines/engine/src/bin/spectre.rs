@@ -32,12 +32,14 @@ use spectre_engine::kafka::KafkaProducer;
 use spectre_engine::registry::AdapterRegistry;
 use spectre_engine::s3::{S3Error, S3Uploader};
 use spectre_engine::server::engine_server;
+use spectre_engine::services::EngineProxyClient;
 use spectre_engine::telemetry::{Telemetry, TelemetryConfig, logs};
 use spectre_engine::tls::{
     TlsConfig, TlsMode, build_client_tls_config, build_server_tls_config, install_crypto_provider,
 };
 use spectre_engine::webhook::WebhookClient;
 use spectre_engine::{ENGINE_VERSION, Engine, PROTOCOL_VERSION};
+use spectre_sdk_proxy_v1alpha1::ProxyClient as ProxySdkClient;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 use tracing::{info, warn};
@@ -47,6 +49,16 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 
 const DEFAULT_PORT: u16 = 8090;
 const PORT_ENV: &str = "SPECTRE_ENGINE_PORT";
+
+/// W5.1 — `SPECTRE_PROXY_BROKER_URL` opts the engine into the
+/// proxy-broker service. When unset, the engine boots with no
+/// proxy client (v1alpha1 plaintext proxy-less behaviour); the
+/// chart's `proxyBroker.enabled=false` deployments stay
+/// unchanged. When set (typical k8s shape: `proxy-broker:8094`
+/// rendered by the Helm chart), the engine dials the broker
+/// at startup and holds an `EngineProxyClient` for future
+/// per-job acquire consumption (W5.3 engine refactor).
+const PROXY_BROKER_URL_ENV: &str = "SPECTRE_PROXY_BROKER_URL";
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> ExitCode {
@@ -209,6 +221,29 @@ async fn run() -> Result<()> {
         }
     };
 
+    // W5.1 — proxy-broker consumer per ADR-0037. Optional at
+    // startup: when `SPECTRE_PROXY_BROKER_URL` is unset, the
+    // engine boots without a proxy client (v1alpha1 plaintext
+    // posture). When set, the engine dials the broker and
+    // constructs an `EngineProxyClient` (SDK + circuit breaker
+    // + per-session sticky-lease cache). Per-job acquire
+    // routing lands in W5.3 (engine refactor); W5.1 just wires
+    // the client + verifies reachability at startup.
+    let proxy_broker = build_proxy_broker_client(adapter_tls.as_ref())?;
+    if let Some(ref client) = proxy_broker {
+        info!(
+            tls_enabled = adapter_tls.is_some(),
+            breaker = spectre_engine::services::proxy::BREAKER_NAME,
+            "proxy-broker client ready"
+        );
+        let _ = client; // silence unused-binding lint; W5.3 wires per-job consumption
+    } else {
+        info!(
+            "proxy-broker not configured ({}=unset)",
+            PROXY_BROKER_URL_ENV
+        );
+    }
+
     let engine = Engine::with_registry_and_tls(registry, adapter_tls);
     let svc = engine_server(
         engine,
@@ -264,6 +299,44 @@ async fn run() -> Result<()> {
     serve_result?;
     info!("spectre engine shut down");
     Ok(())
+}
+
+/// Construct an `EngineProxyClient` when `SPECTRE_PROXY_BROKER_URL`
+/// is set. Returns `Ok(None)` when the env var is unset (the
+/// v1alpha1 proxy-less behaviour). Returns `Err` only when the
+/// env var is set but the channel can't be built (URI parse
+/// error or TLS-config rejection). Network connectivity is
+/// deferred to first-call time via tonic's lazy channel — the
+/// broker doesn't need to be reachable at engine startup.
+fn build_proxy_broker_client(
+    tls: Option<&Arc<tonic::transport::ClientTlsConfig>>,
+) -> Result<Option<EngineProxyClient>> {
+    let raw = match env::var(PROXY_BROKER_URL_ENV) {
+        Ok(v) if !v.is_empty() => v,
+        _ => return Ok(None),
+    };
+    let uri = if raw.starts_with("http://") || raw.starts_with("https://") {
+        raw
+    } else if tls.is_some() {
+        format!("https://{raw}")
+    } else {
+        format!("http://{raw}")
+    };
+    let mut endpoint = tonic::transport::Endpoint::from_shared(uri)
+        .with_context(|| format!("proxy-broker: invalid endpoint from {PROXY_BROKER_URL_ENV}"))?;
+    if let Some(t) = tls {
+        endpoint = endpoint
+            .tls_config(t.as_ref().clone())
+            .context("proxy-broker: tls_config rejected")?;
+    }
+    // `connect_lazy` returns a Channel without dialling — first
+    // RPC triggers the connection. Matches the W3.4 adapter dial
+    // pattern: an unreachable downstream at engine startup
+    // shouldn't fail the engine, just surface as the first
+    // RPC's `Unavailable`.
+    let channel = endpoint.connect_lazy();
+    let sdk = ProxySdkClient::new(channel);
+    Ok(Some(EngineProxyClient::new(sdk)))
 }
 
 fn apply_tls_mode(server: Server, mode: &TlsMode) -> Result<Server> {

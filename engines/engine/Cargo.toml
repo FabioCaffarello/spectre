@@ -83,6 +83,14 @@ rustls-pemfile = "2"
 # the ambiguity).
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 
+# W5.1 — proxy-broker consumer per ADR-0037. Path dep so the
+# engine builds against the in-tree SDK at sdks/rust/proxy/
+# v1alpha1/. Per ADR-0027 + D14: SDK lands when consumer exists;
+# the engine's `services::proxy::EngineProxyClient` is the
+# consumer. Future Wave 5-10 services append parallel path deps
+# here as their consumer wrappers land in `services/`.
+spectre-sdk-proxy-v1alpha1 = { path = "../../sdks/rust/proxy/v1alpha1" }
+
 # Tokio runtime: async I/O, signal handling, timeouts, channels, and
 # the multi-threaded scheduler the engine binary uses. The `process`
 # feature went away with the subprocess launcher in R2.3.

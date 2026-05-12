@@ -2943,6 +2943,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "spectre-sdk-proxy-v1alpha1",
  "sqlx",
  "tempfile",
  "thiserror",
@@ -2956,6 +2957,19 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "spectre-sdk-proxy-v1alpha1"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "prost 0.13.5",
+ "prost-types 0.13.5",
+ "thiserror",
+ "tokio",
+ "tonic 0.13.1",
+ "tonic-build",
+ "tracing",
 ]
 
 [[package]]
