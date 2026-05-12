@@ -6,6 +6,7 @@ replace github.com/FabioCaffarello/spectre/proto/gen/go => ../../proto/gen/go
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
+	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.19.0
 )
 
