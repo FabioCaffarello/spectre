@@ -129,3 +129,81 @@ func (c *Client) SetCooldown(ctx context.Context, proxyID string, kind string, d
 	}
 	return nil
 }
+
+// LeaseInfo carries the broker-side metadata recorded against
+// a lease. The server stores this on Acquire and looks it up
+// on Release / ReportFailure so the provider-side Release call
+// can locate the right provider client.
+type LeaseInfo struct {
+	ProxyID      string
+	Provider     string
+	TenantID     string
+	TargetDomain string
+	IssuedAt     time.Time
+}
+
+// RecordLease persists lease metadata with a TTL matching the
+// lease's expiry. Expired keys auto-delete; the server treats
+// a missing lease as already-released (idempotent semantics).
+func (c *Client) RecordLease(ctx context.Context, leaseID string, info LeaseInfo, ttl time.Duration) error {
+	if ttl <= 0 {
+		return fmt.Errorf("state: lease TTL must be positive, got %v", ttl)
+	}
+	key := keyLease(leaseID)
+	if err := c.rdb.HSet(ctx, key, map[string]interface{}{
+		"proxy_id":      info.ProxyID,
+		"provider":      info.Provider,
+		"tenant_id":     info.TenantID,
+		"target_domain": info.TargetDomain,
+		"issued_at":     info.IssuedAt.Unix(),
+	}).Err(); err != nil {
+		return fmt.Errorf("state: HSET lease %s: %w", leaseID, err)
+	}
+	if err := c.rdb.Expire(ctx, key, ttl).Err(); err != nil {
+		return fmt.Errorf("state: EXPIRE lease %s: %w", leaseID, err)
+	}
+	return nil
+}
+
+// LookupLease returns the lease metadata for `leaseID`. The
+// boolean is false when the lease is unknown / expired (callers
+// treat that as already-released).
+func (c *Client) LookupLease(ctx context.Context, leaseID string) (LeaseInfo, bool, error) {
+	key := keyLease(leaseID)
+	m, err := c.rdb.HGetAll(ctx, key).Result()
+	if err != nil {
+		return LeaseInfo{}, false, fmt.Errorf("state: HGETALL lease %s: %w", leaseID, err)
+	}
+	if len(m) == 0 {
+		return LeaseInfo{}, false, nil
+	}
+	issued, _ := parseUnix(m["issued_at"])
+	return LeaseInfo{
+		ProxyID:      m["proxy_id"],
+		Provider:     m["provider"],
+		TenantID:     m["tenant_id"],
+		TargetDomain: m["target_domain"],
+		IssuedAt:     issued,
+	}, true, nil
+}
+
+// DeleteLease removes the lease record. Idempotent — deleting
+// an absent key is a no-op (Redis DEL returns 0).
+func (c *Client) DeleteLease(ctx context.Context, leaseID string) error {
+	if err := c.rdb.Del(ctx, keyLease(leaseID)).Err(); err != nil {
+		return fmt.Errorf("state: DEL lease %s: %w", leaseID, err)
+	}
+	return nil
+}
+
+func parseUnix(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	var n int64
+	_, err := fmt.Sscan(s, &n)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Unix(n, 0), nil
+}
