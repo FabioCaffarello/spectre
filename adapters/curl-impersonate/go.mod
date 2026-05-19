@@ -9,7 +9,7 @@ require github.com/FabioCaffarello/spectre/proto/gen/go v0.0.0-00010101000000-00
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
-	github.com/alicebob/miniredis/v2 v2.37.0
+	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/antchfx/htmlquery v1.3.6
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/google/uuid v1.6.0
