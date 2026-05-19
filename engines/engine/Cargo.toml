@@ -232,7 +232,7 @@ opentelemetry-semantic-conventions = "0.32"
 # spans and surfaces the active span's trace_id/span_id in
 # tracing events — the engine's JSON log layer (Cluster D) reads
 # these fields from the span context per ADR-0031 §3.4.
-tracing-opentelemetry = "0.32"
+tracing-opentelemetry = "0.33"
 
 # Prometheus crate: provides the `Registry` opentelemetry-prometheus
 # exports into, the `TextEncoder` for serving `/metrics` in
