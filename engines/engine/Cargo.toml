@@ -284,7 +284,7 @@ tempfile = "3"
 # where the same flags emitted v3) — rustls/webpki rejects v1 CAs
 # with `UnsupportedCertVersion`. rcgen always emits v3 with the
 # right extensions, eliminating the toolchain skew.
-rcgen = "0.13"
+rcgen = "0.14"
 
 # axum was a dev-dependency for `tests/webhook_integration.rs`
 # (R5.1 — ADR-0024 §4). W3.1 promoted it to a regular dependency
