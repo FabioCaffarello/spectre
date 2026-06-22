@@ -33,7 +33,7 @@ jobs:
       publish_dry_run: ${{ steps.filter.outputs.publish_dry_run }}
       helm: ${{ steps.filter.outputs.helm }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -163,7 +163,7 @@ jobs:
     if: needs.changes.outputs.proto == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # Version-coherence gate: every PR runs through this job (the
@@ -191,7 +191,7 @@ jobs:
       run:
         working-directory: engines/engine
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -240,7 +240,7 @@ jobs:
       run:
         working-directory: ${{ matrix.module }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           # Pin to the version declared in our go.mod files. Using
@@ -288,7 +288,7 @@ jobs:
       run:
         working-directory: adapters/playwright
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9
@@ -348,7 +348,7 @@ jobs:
           --health-timeout 3s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -507,7 +507,7 @@ jobs:
       run:
         working-directory: operators/control-plane
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           # Match the toolchain kubebuilder v4 scaffolds in go.mod.
@@ -590,7 +590,7 @@ jobs:
             changed: ${{ needs.changes.outputs.image_seleniumbase }}
             smoke_recipe: sb-image-smoke
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - if: matrix.changed == 'true'
         uses: docker/setup-buildx-action@v4
       - if: matrix.changed == 'true'
@@ -637,7 +637,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - uses: extractions/setup-just@v4
       - uses: actions/setup-go@v6
@@ -794,7 +794,7 @@ jobs:
     # rebuild on a cold cache without leaving large headroom.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - name: Bake build (multi-arch where supported, no push)
@@ -831,7 +831,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Helm
         uses: azure/setup-helm@v4

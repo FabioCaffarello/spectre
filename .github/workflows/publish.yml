@@ -62,7 +62,7 @@ jobs:
     # "Password required"). Closing it as part of R7.1.
     environment: ci
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # QEMU registers binfmt_misc handlers so BuildKit can RUN
       # arm64 commands on an amd64 runner during multi-arch
