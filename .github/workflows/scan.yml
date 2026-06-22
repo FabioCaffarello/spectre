@@ -63,7 +63,7 @@ jobs:
           - playwright
           - seleniumbase
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - uses: extractions/setup-just@v4
 

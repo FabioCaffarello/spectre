@@ -58,7 +58,7 @@ jobs:
     # anonymous rate limit.
     environment: ci
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Helm
         uses: azure/setup-helm@v4
