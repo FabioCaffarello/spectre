@@ -409,7 +409,7 @@ jobs:
       - if: matrix.package == 'tools/conformance'
         name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
@@ -478,7 +478,7 @@ jobs:
       - if: matrix.package == 'tools/conformance'
         name: Cache curl-impersonate release
         id: curl-imp-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /opt/curl-impersonate
           key: curl-impersonate-${{ runner.os }}-${{ steps.curl-imp-pin.outputs.version }}
@@ -535,7 +535,7 @@ jobs:
       # downloads. The cache key is keyed on go.sum so a controller-
       # runtime bump invalidates the cache automatically.
       - name: Cache kubebuilder tool chain
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: operators/control-plane/bin
           key: kubebuilder-bin-${{ runner.os }}-${{ hashFiles('operators/control-plane/go.sum') }}
